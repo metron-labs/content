@@ -590,6 +590,32 @@ def query_malops(
 
     return malop_process_type, malop_loggon_session_type
 
+def query_malop_management(
+    client: Client, start_time) -> Any:
+    end_time = round(datetime.now().timestamp()) * 1000
+    demisto.debug(f"initiating query_malop_management function start_time: {start_time} endtime: {end_time}")
+    json_body = {
+            "search": {},
+            "range": {
+                "from": start_time,
+                "to" : end_time
+            },
+            "pagination": {
+                "pageSize": 50,
+                "offset": 0
+            },
+            "federation": {
+                "groups": []
+            },
+            "sort":[{
+                "field": "LastUpdateTime",
+                "order": "desc"
+            }]
+        }
+    demisto.debug(f"mmng/v2 query: {json_body}")
+    malop_response = client.cybereason_api_call('POST', '/rest/mmng/v2/malops', json_body=json_body)
+    return malop_response
+
 
 def isolate_machine_command(client: Client, args: dict):
     machine = str(args.get('machine'))
@@ -1508,25 +1534,25 @@ def fetch_incidents(client: Client):
         }]
     else:
         raise Exception('Given filter to fetch by is invalid.')
+    
+    malop_management_response = query_malop_management(client, last_update_time)
+    demisto.debug(f"query_malop_management: {malop_management_response}")
 
-    malop_process_type, malop_loggon_session_type = query_malops(client, total_result_limit=10000, per_group_limit=10000,
-                                                                 filters=filters)
     incidents = []
-
-    for response in (malop_process_type, malop_loggon_session_type):
-        malops = dict_safe_get(response, ['data', 'resultIdToElementDataMap'], default_return_value={},
-                               return_type=dict)
-
-        for malop in list(malops.values()):
-            simple_values = dict_safe_get(malop, ['simpleValues'], default_return_value={}, return_type=dict)
-            simple_values.pop('iconBase64', None)
-            simple_values.pop('malopActivityTypes', None)
-            malop_update_time = int(dict_safe_get(simple_values, ['malopLastUpdateTime', 'values', 0]))
-            if int(malop_update_time) > int(max_update_time):
-                max_update_time = malop_update_time
-
-            incident = malop_to_incident(malop)
-            incidents.append(incident)
+    malops = malop_management_response['data']['data']
+    demisto.debug(f"malops for mmngv2: {malops}")
+    for malop in malops:
+        if malop_is_edr:
+            # call crimes unified
+        else:
+            # call detection details
+        malop_update_time = malop['lastUpdateTime']
+        demisto.debug(f'malop_update_time: {malop_update_time}')
+        if int(malop_update_time) > int(max_update_time):
+            max_update_time = malop_update_time
+        demisto.debug("Appending malop to incident")
+        incident = malop_to_incident(malop)
+        incidents.append(incident)
 
     # Enable Polling for Cybereason EPP Malops
     non_edr = get_non_edr_malop_data(client, last_update_time)
