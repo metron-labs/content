@@ -1,26 +1,13 @@
 commonfields:
   id: b73ae0bc-71fc-4f57-8230-c98050d78ef5
-  version: 34
+  version: 36
 vcShouldKeepItemLegacyProdMachine: false
 name: CreateDSPMRiskSlackBlocks
 script: |
   register_module_line('CreateDSPMRiskSlackBlocks', 'start', __line__())
   ### pack version: 3.4.14
 
-  def create_slack_block(incident, list_of_project, rule_names_list):
-      # Create project options for the static_select element
-      project_options = [
-          {
-              "text": {
-                  "type": "plain_text",
-                  "text": f"{project}",
-                  "emoji": True
-              },
-              "value": f"{project}"
-          }
-          for index, project in enumerate(list_of_project)
-      ]
-
+  def create_slack_block(incident, rule_names_list):
       rule_name = incident.get('ruleName')
 
       # Slack block structure
@@ -39,31 +26,21 @@ script: |
                   "block_id": "section_incident_details",
                   "text": {
                       "type": "mrkdwn",
-                      "text": f"*Incident ID:* {incident['incidentId']}\n"
-                              f"*Rule Name:* {incident['ruleName']}\n"
-                              f"*Severity:* {incident['severity']}\n"
-                              f"*Asset Name:* {incident['assetName']}\n"
-                              f"*Asset ID:* {incident['assetId']}\n"
-                              f"*Project ID:* {incident['projectId']}\n"
-                              f"*Cloud Provider:* {incident['cloudProvider']}\n"
-                              f"*Cloud Environment:* {incident['cloudEnvironment']}\n"
-                              f"*First Discovered:* {incident['firstDiscovered']}\n"
-                              f"*Service Type:* {incident['serviceType']}\n"
-                              f"*Data Type Groups:* {', '.join(incident['dataTypeGroups']) if incident['dataTypeGroups'] else 'None'}\n"
-                              f"*Open to World:* {incident['openToWorld']}\n"
-                              f"*Risk Type:* {incident['ruleName']}\n"
+                      "text": f"*XSOAR Incident ID:* {incident.get('incidentId')}\n"
+                              f"*DSPM Risk ID:* {incident.get('riskFindingId')}\n"
+                              f"*Rule Name:* {incident.get('ruleName')}\n"
+                              f"*Severity:* {incident.get('severity')}\n"
+                              f"*Asset Name:* {incident.get('assetName')}\n"
+                              f"*Asset ID:* {incident.get('assetId')}\n"
+                              f"*Project ID:* {incident.get('projectId')}\n"
+                              f"*Cloud Provider:* {incident.get('cloudProvider')}\n"
+                              f"*serviceType:* {incident.get('serviceType')}\n"
+                              f"*First Discovered:* {incident.get('firstDetectedOn')}\n"
+                              f"*Remediate Instruction:* {incident.get('remediateInstruction')}\n"
                   }
               },
               {
                   "type": "divider"
-              },
-              {
-                  "type": "section",
-                  "text": {
-                      "type": "mrkdwn",
-                      "text": f"*Remediation Description*: {incident.get('remediateDescription', 'No remediation details available.')}"
-                              f"*Remediation Steps*: {incident.get('remediateSteps', 'No remediation details available.')}"
-                  }
               },
               {
                   "type": "actions",
@@ -87,61 +64,17 @@ script: |
               {
                   "type": "input",
                   "element": {
-                      "type": "static_select",
+                      "type": "plain_text_input",
                       "placeholder": {
                           "type": "plain_text",
-                          "text": "Select Project Name",
+                          "text": "Please enter valide Project Name",
                           "emoji": True
                       },
-                      "options": project_options,
-                      "action_id": "static_select-action"
+                      "action_id": "project_name"
                   },
                   "label": {
                       "type": "plain_text",
-                      "text": "Project Name",
-                      "emoji": True
-                  }
-              },
-              {
-                  "type": "input",
-                  "element": {
-                      "type": "static_select",
-                      "placeholder": {
-                          "type": "plain_text",
-                          "text": "Select Issue Type",
-                          "emoji": True
-                      },
-                      "options": [
-                          {
-                              "text": {
-                                  "type": "plain_text",
-                                  "text": "Bug",
-                                  "emoji": True
-                              },
-                              "value": "Bug"
-                          },
-                          {
-                              "text": {
-                                  "type": "plain_text",
-                                  "text": "Task",
-                                  "emoji": True
-                              },
-                              "value": "Task"
-                          },
-                          {
-                              "text": {
-                                  "type": "plain_text",
-                                  "text": "Story",
-                                  "emoji": True
-                              },
-                              "value": "Story"
-                          }
-                      ],
-                      "action_id": "static_select-action"
-                  },
-                  "label": {
-                      "type": "plain_text",
-                      "text": "Issue Type",
+                      "text": "Enter Project Name",
                       "emoji": True
                   }
               },
@@ -149,11 +82,16 @@ script: |
                   "type": "input",
                   "element": {
                       "type": "plain_text_input",
-                      "action_id": "plain_text_input-action"
+                      "placeholder": {
+                          "type": "plain_text",
+                          "text": "Please enter valide Issue type",
+                          "emoji": True
+                      },
+                      "action_id": "Issue_type"
                   },
                   "label": {
                       "type": "plain_text",
-                      "text": "Jira Assignee Email",
+                      "text": "Enter Issue Type",
                       "emoji": True
                   }
               },
@@ -163,16 +101,24 @@ script: |
           ]
       }
 
+      # Log the block structure to verify correctness
+      print(f"Block structure before modification: {json.dumps(block, indent=2)}")
+
       # Add the "Remediate a Risk" radio button option if ruleName exists in rule_names_list
       if rule_name in rule_names_list:
-          block['blocks'][4]['elements'][0]['options'].insert(0, {
-              "text": {
-                  "type": "plain_text",
-                  "text": "Remediate a Risk",
-                  "emoji": True
-              },
-              "value": "Remediate a Risk"
-          })
+          try:
+              # Ensure the 'actions' block exists at the correct index
+              block['blocks'][3]['elements'][0]['options'].insert(0, {
+                  "text": {
+                      "type": "plain_text",
+                      "text": "Remediate a Risk",
+                      "emoji": True
+                  },
+                  "value": "Remediate a Risk"
+              })
+          except IndexError as e:
+              demisto.error(f"Error inserting 'Remediate a Risk' option: {str(e)}")
+              raise
 
       return block
 
@@ -187,9 +133,8 @@ script: |
       ]
       try:
           incident = demisto.args().get("dspm_incident")
-          list_of_project = demisto.args().get("list_of_project")
 
-          block = create_slack_block(incident, list_of_project, rule_names_list)
+          block = create_slack_block(incident, rule_names_list)
           demisto.results(block)
 
           list_name = f"slack block of Incident ID : {incident['incidentId']}"
@@ -205,6 +150,7 @@ script: |
 
       except Exception as excep:
           demisto.error(traceback.format_exc())  # print the traceback
+          demisto.setContext("OnError.Message", f"Error while creating DSPM risk slack block for {incident['incidentId']}: {str(excep)}")
           return_error(f'Failed to execute CreateDSPMRiskSlackBlocks. Error: {str(excep)}')
 
 
@@ -224,14 +170,11 @@ comment: This XSOAR automation script generates a Slack message block to notify 
 enabled: true
 args:
 - name: dspm_incident
-- name: list_of_project
-  description: list of jira project
-  isArray: true
 outputs:
 - contextPath: block_list_name
 scripttarget: 0
 subtype: python3
-timeout: 362.88ms
+timeout: 100800h0m0s
 pswd: ""
 runonce: false
 dockerimage: demisto/python3:3.11.9.104957

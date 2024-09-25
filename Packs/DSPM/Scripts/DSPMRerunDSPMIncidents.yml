@@ -1,8 +1,8 @@
 commonfields:
   id: f7db1bc3-6da1-4001-875c-0ae10a66d98a
-  version: 45
+  version: 49
 vcShouldKeepItemLegacyProdMachine: false
-name: RerunDSPMIncidents
+name: DSPMRerunDSPMIncidents
 script: |-
   import json
   import requests
@@ -89,7 +89,7 @@ script: |-
   if __name__ == "__builtin__" or __name__ == "builtins":
       main()
 
-  register_module_line('test-script', 'end', __line__())
+  register_module_line('DSPMRerunDSPMIncidents', 'end', __line__())
 type: python
 tags: []
 enabled: true
@@ -98,7 +98,7 @@ args:
   description: Time Duration under which we are going to re-run the incident
 scripttarget: 0
 subtype: python3
-timeout: 362.88ms
+timeout: 100800h0m0s
 pswd: ""
 runonce: false
 dockerimage: demisto/google-cloud-storage:1.0.0.76046

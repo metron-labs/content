@@ -1,15 +1,21 @@
 id: a15685ad-bfab-427a-8b1d-22c4cdad063e
-version: 20
+version: 22
 vcShouldKeepItemLegacyProdMachine: false
 name: DSPM Re-run incident
+description: The "DSPM Re-run Incident" playbook is designed to automatically re-run
+  DSPM incidents. It starts by executing the RerunDSPMIncidents task, which reinitiates
+  the incidents for further investigation or processing. After completing this task,
+  the playbook proceeds to close the current incident using the closeInvestigation
+  script. This playbook ensures that DSPM incidents can be efficiently retried and
+  closed upon completion.
 starttaskid: "0"
 tasks:
   "0":
     id: "0"
-    taskid: 5f0e103d-76bb-4c29-8a04-c3de5472ed4d
+    taskid: e7fa86fe-de47-4a54-8dbf-8b064efc55c1
     type: start
     task:
-      id: 5f0e103d-76bb-4c29-8a04-c3de5472ed4d
+      id: e7fa86fe-de47-4a54-8dbf-8b064efc55c1
       version: -1
       name: ""
       iscommand: false
@@ -35,10 +41,10 @@ tasks:
     isautoswitchedtoquietmode: false
   "2":
     id: "2"
-    taskid: 15366e68-fd21-44d0-8191-8093326a3f67
+    taskid: 694e2f05-8646-4575-84bf-83915e437da9
     type: regular
     task:
-      id: 15366e68-fd21-44d0-8191-8093326a3f67
+      id: 694e2f05-8646-4575-84bf-83915e437da9
       version: -1
       name: closeInvestigation
       description: Close the current incident
@@ -64,13 +70,13 @@ tasks:
     isautoswitchedtoquietmode: false
   "3":
     id: "3"
-    taskid: ffee9380-e8dc-48e6-8fc7-0b174fa30326
+    taskid: 58a0683c-e5a3-4b0c-8f7d-c704007b0506
     type: regular
     task:
-      id: ffee9380-e8dc-48e6-8fc7-0b174fa30326
+      id: 58a0683c-e5a3-4b0c-8f7d-c704007b0506
       version: -1
       name: RerunDSPMIncidents
-      scriptName: RerunDSPMIncidents
+      scriptName: DSPMRerunDSPMIncidents
       type: regular
       iscommand: false
       brand: ""

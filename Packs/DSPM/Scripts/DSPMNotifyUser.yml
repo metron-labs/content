@@ -1,0 +1,106 @@
+commonfields:
+  id: 78236705-3eaa-4b7c-8750-757217ed0c81
+  version: 23
+vcShouldKeepItemLegacyProdMachine: false
+name: DSPMNotifyUser
+script: |+
+  from typing import Dict, Any
+  import traceback
+
+
+  ''' DSPM NOTIFY USER '''
+  '''
+  Script Name: DSPMNotifyUser
+  '''
+
+  def update_list_data(list_name, new_value):
+      try:
+          if list_name is None:
+              list_name = f"slack block of Incident ID : {incident.get('id')}"
+          # Fetch the existing list
+          existing_list = demisto.executeCommand('getList', {'listName': list_name})
+
+          # Update the list with the new value
+          demisto.executeCommand('createList', {'listName': list_name, 'listData': new_value})
+
+          demisto.results(f"Successfully created/updated the list: {list_name}")
+      except Exception as excep:
+          demisto.error(traceback.format_exc())  # print the traceback
+          return_error(f'Failed to create/update list {list_name}. Error: {str(excep)}')
+
+  def create_message_to_send_user(incident):
+      if isinstance(incident, list):
+          incident = incident[0]
+      message = (f"There is an error while running the incident {incident.get('id')}. "
+                 f"It will re-run again as per the time you have provided in lifetime for slack notification.")
+      return message
+
+  def create_slack_notification_block(message):
+      # Message to be sent
+      # message = (f"You have not responded to the {incident_id} incident notification in a timely manner. "
+      #           f"We are coming to an end of the {incident_id} incident playbook from XSOAR. "
+      #           "You are welcome to reopen it. Regards.")
+
+      # Slack block structure
+      block = {
+          "blocks": [
+              {
+                  "type": "section",
+                  "text": {
+                      "type": "mrkdwn",
+                      "text": message
+                  }
+              }
+          ]
+      }
+
+      return block
+
+  def main():  # pragma: no cover
+      try:
+          incident = demisto.args().get("dspm_incident")
+          list_name = demisto.args().get("list_name", None)
+          message = demisto.args().get("message", None)
+          if message is None:
+              message = create_message_to_send_user(incident)
+          # Create a Slack notification block
+          block = create_slack_notification_block(message)
+
+          # Overwrite the list value
+          update_list_data(list_name, block)
+
+          # Delete the context value
+          res = demisto.executeCommand("delContext", {"key":"OnError"})
+          print(res)
+          # Send the Slack block as a result
+          demisto.results(block)
+
+
+      except Exception as excep:
+          demisto.error(traceback.format_exc())  # print the traceback
+          return_error(f'Failed to execute script. Error: {str(excep)}')
+
+
+  ''' ENTRY POINT '''
+
+  if __name__ in ('__main__', '__builtin__', 'builtins'):  # pragma: no cover
+      main()
+
+type: python
+tags: []
+enabled: true
+args:
+- name: dspm_incident
+- name: list_name
+- name: message
+outputs:
+- contextPath: block_list_name
+scripttarget: 0
+subtype: python3
+timeout: 100800h0m0s
+pswd: ""
+runonce: false
+dockerimage: demisto/python3:3.11.9.104957
+runas: DBotWeakRole
+engineinfo: {}
+mainengineinfo: {}

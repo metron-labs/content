@@ -1,49 +1,87 @@
 commonfields:
   id: 74e2f486-22da-4b9b-8a8d-18c51d79d43c
-  version: 26
+  version: 50
 vcShouldKeepItemLegacyProdMachine: false
 name: DSPMIncidentList
 script: |-
   from typing import Dict, Any
   import traceback
+  from datetime import datetime
 
 
   ''' STANDALONE FUNCTION '''
 
-  INCIDENT_LIST = "IncidentList"
+  def get_incident_data(incident_list, incident_id):
+      incident_time = ""
+      for incident in incident_list:
+          if incident.get("incident_id") == incident_id:
+              incident_time = incident.get("incident_created")
+      return incident_time
 
-  def create_incident_list(incident_object):
+  def timeDifferenceInHours(incident_time):
+      """
+        Function will fetch the time difference and
+        if the difference is more than 48 hours then
+        we will re-open the investigation.
+      """
+      time_duration = get_slack_lifetime()
+      given_time = datetime.strptime(incident_time, "%Y-%m-%d %H:%M:%S.%f")
+      current_time = datetime.now()
+      difference = current_time - given_time
+      hours_difference = difference.total_seconds() / 3600
+      if hours_difference >= float(time_duration):
+          return True
+      return False
+
+  def get_slack_lifetime():
+      time_duration = 48
+      resp = demisto.executeCommand("dspm-get-integration-config", {})
+      if resp[0].get("Contents"):
+          integration_config = resp[0].get("Contents",{}).get('integration_config',{})
+          if integration_config:
+              time_duration = integration_config.get("slackMsgLifetime", 48)
+      return time_duration
+
+
+  def handle_incident_list(incident_object):
       status = ""
       incident_object = incident_object.get("incident_data")
       if isinstance(incident_object, list):
           incident_object = incident_object[0]
+      # incident_object = json.loads(incident_object)
       incident_id = incident_object.get("incidentId")
       incident_data = {
           "incident_id": incident_id,
           "incident_created": incident_object.get("incidentCreated"),
       }
-      incident_list = demisto.executeCommand("getList", {"listName": "INCIDENT_LIST"})
+      incident_list = demisto.executeCommand("getList", {"listName": "INCIDENT_LIST2"})
       if (
          incident_list[0].get("Contents") == "null"
          or incident_list[0].get("Contents") is None
          or 'Item not found' in incident_list[0].get("Contents")
       ):
-          create_list = demisto.executeCommand("createList", {"listName": "INCIDENT_LIST","listData":[incident_data]})
+          create_list = demisto.executeCommand("createList", {"listName": "INCIDENT_LIST2","listData":[incident_data]})
           status = f"Successfully created incident list with incident id :- {incident_id}"
       else:
           # Check if the value exists in any dictionary
           incident_list = json.loads(incident_list[0].get("Contents"))
-          exists = any(data.get("incident_id") == incident_id for data in incident_list)
-          if exists:
-              # Remove the incident_data with the incident_id
-              incident_list = [incident for incident in incident_list if incident["incident_id"] != incident_id]
-              delete_incident = demisto.executeCommand("setList", {"listName":"INCIDENT_LIST","listData": incident_list})
-              status = f"Deleted incident data with incident id {incident_id} from the list."
+          incident_time = get_incident_data(incident_list, incident_id)
+          if incident_time:
+             differenceInHours = timeDifferenceInHours(incident_time)
+             if differenceInHours:
+                  # Remove the incident_data with the incident_id
+                  incident_list = [incident for incident in incident_list if incident["incident_id"] != incident_id]
+                  delete_incident = demisto.executeCommand("setList", {"listName":"INCIDENT_LIST2","listData": incident_list})
+                  status = f"Deleted incident data with incident id {incident_id} from the list."
+             else:
+                     status = f"Re-run time limit is not exceeded"
           else:
+              print("incident_data", incident_data)
               incident_list.append(incident_data)
-              add_incident = demisto.executeCommand("setList", {"listName":"INCIDENT_LIST","listData": incident_list})
+              add_incident = demisto.executeCommand("createList", {"listName":"INCIDENT_LIST2","listData": incident_list})
+              print("add_incident", add_incident)
               status = f"Successfully added incident data with incident id {incident_id} in the list."
-      incident_list = demisto.executeCommand("getList", {"listName": "INCIDENT_LIST"})
+      incident_list = demisto.executeCommand("getList", {"listName": "INCIDENT_LIST2"})
       return status
 
   ''' MAIN FUNCTION '''
@@ -51,7 +89,8 @@ script: |-
 
   def main():
       try:
-          return_results(create_incident_list(demisto.args()))
+          demisto.setContext("User.Action", 'no_response')
+          return_results(handle_incident_list(demisto.args()))
       except Exception as ex:
           demisto.error(traceback.format_exc())  # print the traceback
           return_error(f'Failed to execute DSPMIncidentList. Error: {str(ex)}')
@@ -72,7 +111,7 @@ args:
   type: unknown
 scripttarget: 0
 subtype: python3
-timeout: 362.88ms
+timeout: 100800h0m0s
 pswd: ""
 runonce: false
 dockerimage: demisto/python3:3.11.9.107902

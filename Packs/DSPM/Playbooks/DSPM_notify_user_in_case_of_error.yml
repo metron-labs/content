@@ -1,16 +1,17 @@
-id: ede87603-5081-4c93-8ad4-7bdcfe23ecc2
-version: 3
+id: 69a93ff8-cb41-4514-8c2e-53fe46eadf40
+version: 23
 vcShouldKeepItemLegacyProdMachine: false
-name: DSPM Risk Finding Initial Response
-description: A playbook to handle new DSPM Risk Finding incidents
+name: DSPM notify user in case of error
+description: The DSPM Notify User in Case of Error playbook is designed to handle
+  errors in DSPM incidents by notifying users and managing Slack notifications.
 starttaskid: "0"
 tasks:
   "0":
     id: "0"
-    taskid: 9e957980-95c4-4d8f-8093-155ee2bddfaa
+    taskid: 3567892c-d111-48c0-81c4-e34848980867
     type: start
     task:
-      id: 9e957980-95c4-4d8f-8093-155ee2bddfaa
+      id: 3567892c-d111-48c0-81c4-e34848980867
       version: -1
       name: ""
       iscommand: false
@@ -36,31 +37,33 @@ tasks:
     isautoswitchedtoquietmode: false
   "1":
     id: "1"
-    taskid: 455ae2c9-69f3-413d-8887-a857e45e63aa
+    taskid: 0ec83706-3b4a-437a-8b9d-92b32626a2f1
     type: regular
     task:
-      id: 455ae2c9-69f3-413d-8887-a857e45e63aa
+      id: 0ec83706-3b4a-437a-8b9d-92b32626a2f1
       version: -1
-      name: fetch incident details
-      scriptName: DSPM_fetch_incident_details
+      name: Notify user in case of error
+      scriptName: DSPMNotifyUser
       type: regular
       iscommand: false
       brand: ""
     nexttasks:
       '#none#':
-      - "4"
+      - "2"
     scriptarguments:
-      get_all_incidents:
+      dspm_incident:
         simple: ${incident}
-      get_incident_details:
-        simple: ${incident}
+      list_name:
+        simple: ${block_list_name}
+      message:
+        simple: ${OnError.Message}
     separatecontext: false
     continueonerrortype: ""
     view: |-
       {
         "position": {
           "x": 450,
-          "y": 210
+          "y": 190
         }
       }
     note: false
@@ -72,27 +75,36 @@ tasks:
     isautoswitchedtoquietmode: false
   "2":
     id: "2"
-    taskid: 8761ba87-8477-4702-8d2a-c3d8960b6caf
+    taskid: bb09ec76-45f6-4365-8577-d3741894ffeb
     type: regular
     task:
-      id: 8761ba87-8477-4702-8d2a-c3d8960b6caf
+      id: bb09ec76-45f6-4365-8577-d3741894ffeb
       version: -1
-      name: closeInvestigation
-      description: commands.local.cmd.close.inv
-      script: Builtin|||closeInvestigation
+      name: Send slack notification to user
+      description: SlackBlockBuilder will format a given Slack block into a format
+        readable by the SlackV3 integration. The script will also send the block to
+        the given destination. Make sure to mark **Trust any certificate** and fill
+        the **XSOAR API Key integration** parameters if you want to get a response
+        to the incident context.
+      scriptName: SlackBlockBuilder
       type: regular
-      iscommand: true
-      brand: Builtin
+      iscommand: false
+      brand: ""
+    nexttasks:
+      '#none#':
+      - "4"
     scriptarguments:
-      closeNotes:
-        simple: Slack notification was sent.
+      list_name:
+        simple: ${block_list_name}
+      user:
+        simple: ${userSlackEmail}
     separatecontext: false
     continueonerrortype: ""
     view: |-
       {
         "position": {
           "x": 450,
-          "y": 870
+          "y": 360
         }
       }
     note: false
@@ -104,37 +116,26 @@ tasks:
     isautoswitchedtoquietmode: false
   "3":
     id: "3"
-    taskid: a17e0d3c-e875-4cae-84bc-1ba93206ee5a
+    taskid: 714d27a5-f76e-41a6-874e-b75bf8f873d5
     type: regular
     task:
-      id: a17e0d3c-e875-4cae-84bc-1ba93206ee5a
+      id: 714d27a5-f76e-41a6-874e-b75bf8f873d5
       version: -1
-      name: Send risk to slack app
-      scriptName: DSPM_send_risk_to_slack_app
+      name: Remove slack block from XSOAR list
+      scriptName: DSPMRemoveSlackBlockList
       type: regular
       iscommand: false
       brand: ""
-    nexttasks:
-      '#none#':
-      - "2"
     scriptarguments:
-      custom_object:
-        simple: ${custom_object}
-      incident:
-        simple: ${incident_details}
-      incident_details:
-        simple: ${incident_details}
-      incident_object:
-        simple: ${incident_object}
-      projects_list:
-        simple: ${projects_list}
+      list_name:
+        simple: ${block_list_name}
     separatecontext: false
     continueonerrortype: ""
     view: |-
       {
         "position": {
           "x": 450,
-          "y": 650
+          "y": 730
         }
       }
     note: false
@@ -146,26 +147,29 @@ tasks:
     isautoswitchedtoquietmode: false
   "4":
     id: "4"
-    taskid: 1f6c9779-8d53-4ef5-802a-b4a4e8020c50
+    taskid: 6cc306cd-bc43-47b6-84fa-84f308380f77
     type: regular
     task:
-      id: 1f6c9779-8d53-4ef5-802a-b4a4e8020c50
+      id: 6cc306cd-bc43-47b6-84fa-84f308380f77
       version: -1
-      name: Fetch list of projects
-      scriptName: DSPM_fetch_list_of_jira_project
+      name: Add incident for re-run
+      scriptName: DSPMIncidentList
       type: regular
       iscommand: false
       brand: ""
     nexttasks:
       '#none#':
       - "3"
+    scriptarguments:
+      incident_data:
+        simple: ${incident_object}
     separatecontext: false
     continueonerrortype: ""
     view: |-
       {
         "position": {
           "x": 450,
-          "y": 460
+          "y": 550
         }
       }
     note: false
@@ -180,7 +184,7 @@ view: |-
     "linkLabelsPosition": {},
     "paper": {
       "dimensions": {
-        "height": 915,
+        "height": 775,
         "width": 380,
         "x": 450,
         "y": 50
@@ -189,3 +193,4 @@ view: |-
   }
 inputs: []
 outputs: []
+quiet: true
