@@ -1,0 +1,100 @@
+type: map
+mapping:
+  allRead:
+    type: bool
+  allReadWrite:
+    type: bool
+  data:
+    type: str
+  dbotCreatedBy:
+    type: str
+  description:
+    type: str
+  fromVersion:
+    type: str
+    required: true
+  hasRole:
+    type: bool
+  id:
+    type: str
+    required: true
+  itemVersion:
+    type: str
+    required: true
+  locked:
+    type: bool
+    required: true
+  name:
+    type: str
+    required: true
+  nameLocked:
+    type: bool
+    required: true
+  packID:
+    type: str
+    required: true
+  previousAllRead:
+    type: bool
+  previousAllWrite:
+    type: bool
+  previousRoles:
+    type: seq
+    sequence:
+    - includes: previousRoles_schema
+  roles:
+    type: seq
+    sequence:
+    - includes: roles_schema
+  system:
+    type: bool
+    required: true
+  tags:
+    type: seq
+    sequence:
+    - type: str
+  toVersion:
+    type: str
+  truncated:
+    type: bool
+  type:
+    type: str
+    required: true
+  version:
+    type: number
+    required: true
+
+  description:xsoar:
+    type: str
+  description:marketplacev2:
+    type: str
+  description:xpanse:
+    type: str
+  description:xsoar_saas:
+    type: str
+  description:xsoar_on_prem:
+    type: str
+  name:xsoar:
+    type: str
+  name:marketplacev2:
+    type: str
+  name:xpanse:
+    type: str
+  name:xsoar_saas:
+    type: str
+  name:xsoar_on_prem:
+    type: str
+  id:xsoar:
+    type: str
+  id:marketplacev2:
+    type: str
+  id:xpanse:
+    type: str
+  id:xsoar_saas:
+    type: str
+  id:xsoar_on_prem:
+    type: str
+schema;previousRoles_schema:
+  type: any
+
+schema;roles_schema:
+  type: any

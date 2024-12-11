@@ -1,0 +1,183 @@
+type: map
+mapping:
+  typeId:
+    type: str
+    required: true
+  TypeName:
+    type: str
+  version:
+    type: number
+  kind:
+    type: str
+    required: true
+  fromVersion:
+    type: str
+  toVersion:
+    type: str
+    required: true
+  system:
+    type: bool
+  description:
+    type: str
+  id:
+    type: str
+  layout:
+    type: map
+    mapping:
+      id:
+        type: str
+        required: true
+      system:
+        type: bool
+      TypeName:
+        type: str
+      version:
+        type: number
+      kind:
+        type: str
+      typeId:
+        type: str
+        required: true
+      modified:
+        type: str
+      name:
+        type: str
+      tabs:
+        type: seq
+        sequence:
+        - include: tabs_schema
+      sections:
+        type: seq
+        sequence:
+        - include: section_schema
+      name:xsoar:
+        type: str
+      name:marketplacev2:
+        type: str
+      name:xpanse:
+        type: str
+      name:xsoar_saas:
+        type: str
+      name:xsoar_on_prem:
+        type: str
+      id:xsoar:
+        type: str
+      id:marketplacev2:
+        type: str
+      id:xpanse:
+        type: str
+      id:xsoar_saas:
+        type: str
+      id:xsoar_on_prem:
+        type: str
+  definitionId:
+    type: str
+
+  description:xsoar:
+    type: str
+  description:marketplacev2:
+    type: str
+  description:xpanse:
+    type: str
+  description:xsoar_saas:
+    type: str
+  description:xsoar_on_prem:
+    type: str
+  id:xsoar:
+    type: str
+  id:marketplacev2:
+    type: str
+  id:xpanse:
+    type: str
+  id:xsoar_saas:
+    type: str
+  id:xsoar_on_prem:
+    type: str
+schema;tabs_schema:
+  type: any
+
+schema;section_schema:
+  type: map
+  mapping:
+    id:
+      type: str
+    version:
+      type: number
+    modified:
+      type: str
+    name:
+      type: str
+    type:
+      type: str
+    isVisible:
+      type: bool
+    readOnly:
+      type: bool
+    description:
+      type: str
+    query:
+      type: any
+    queryType:
+      type: str
+    sortValues:
+      type: str
+    fields:
+      type: seq
+      sequence:
+      - include: field_schema
+
+    name:xsoar:
+      type: str
+    name:marketplacev2:
+      type: str
+    name:xpanse:
+      type: str
+    name:xsoar_saas:
+      type: str
+    name:xsoar_on_prem:
+      type: str
+    description:xsoar:
+      type: str
+    description:marketplacev2:
+      type: str
+    description:xpanse:
+      type: str
+    description:xsoar_saas:
+      type: str
+    description:xsoar_on_prem:
+      type: str
+    id:xsoar:
+      type: str
+    id:marketplacev2:
+      type: str
+    id:xpanse:
+      type: str
+    id:xsoar_saas:
+      type: str
+    id:xsoar_on_prem:
+      type: str
+schema;field_schema:
+  type: map
+  mapping:
+    id:
+      type: str
+    version:
+      type: number
+    modified:
+      type: str
+    fieldId:
+      type: str
+    isVisible:
+      type: bool
+    sortValues:
+      type: str
+    id:xsoar:
+      type: str
+    id:marketplacev2:
+      type: str
+    id:xpanse:
+      type: str
+    id:xsoar_saas:
+      type: str
+    id:xsoar_on_prem:
+      type: str

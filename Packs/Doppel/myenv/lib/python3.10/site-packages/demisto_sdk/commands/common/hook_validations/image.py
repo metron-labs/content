@@ -1,0 +1,305 @@
+import base64
+import glob
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from xml.etree.ElementTree import ParseError
+
+import imagesize
+
+from demisto_sdk.commands.common.constants import (
+    DEFAULT_DBOT_IMAGE_BASE64,
+    DEFAULT_IMAGE_BASE64,
+    PACKS_INTEGRATION_NON_SPLIT_YML_REGEX,
+    PNG_IMAGE_REGEX,
+    SVG_IMAGE_REGEX,
+)
+from demisto_sdk.commands.common.errors import Errors
+from demisto_sdk.commands.common.hook_validations.base_validator import (
+    BaseValidator,
+    error_codes,
+)
+from demisto_sdk.commands.common.logger import logger
+from demisto_sdk.commands.common.tools import get_yaml, os, re
+
+
+class ImageValidator(BaseValidator):
+    """ImageValidator was designed to make sure we use images within the permitted limits.
+
+    Attributes:
+        file_path (string): Path to the checked file.
+        _is_valid (bool): the attribute which saves the valid/in-valid status of the current file.
+    """
+
+    IMAGE_MAX_SIZE = 10 * 1024  # 10kB
+    IMAGE_WIDTH = 120
+    IMAGE_HEIGHT = 50
+
+    def __init__(
+        self,
+        file_path,
+        ignored_errors=None,
+        json_file_path=None,
+        specific_validations=None,
+    ):
+        super().__init__(
+            ignored_errors=ignored_errors,
+            json_file_path=json_file_path,
+            specific_validations=specific_validations,
+        )
+        self._is_valid = True
+        self.file_path = ""
+        if file_path.endswith(".png") or file_path.endswith(".svg"):
+            self.file_path = file_path
+        # For integrations that are not in a package format, the image is within the yml
+        else:
+            data_dictionary = get_yaml(file_path)
+            if not data_dictionary:
+                return
+            # For old integration in which image is inside the yml.
+            elif data_dictionary.get("image", ""):
+                self.file_path = file_path
+            # For new integrations -  Get the image from the folder.
+            else:
+                try:
+                    self.file_path = glob.glob(
+                        os.path.join(os.path.dirname(file_path), "*.png")
+                    )[0]
+                except IndexError:
+                    error_message, error_code = Errors.no_image_given()
+                    self.file_path = file_path.replace(".yml", "_image.png")
+                    if self.handle_error(
+                        error_message, error_code, file_path=self.file_path
+                    ):
+                        self._is_valid = False
+
+    def is_valid(self):
+        """Validate that the image exists and that it is in the permitted size limits."""
+        if (
+            self._is_valid is False
+        ):  # In case we encountered an IndexError in the init - we don't have an image
+            return self._is_valid
+
+        is_existing_image = False
+        # validating dimensions as well because validating integration image
+        self.validate_size(allow_empty_image_file=True, should_validate_dimensions=True)
+        if ".png" not in self.file_path:
+            is_existing_image = self.is_existing_image()
+        if is_existing_image or ".png" in self.file_path:
+            self.is_not_default_image()
+        if ".png" in self.file_path:
+            self.is_valid_image_name()
+
+        return self._is_valid
+
+    @error_codes("IM101,IM111,IM108")
+    def validate_size(
+        self,
+        allow_empty_image_file: bool,
+        maximum_size: int = IMAGE_MAX_SIZE,
+        should_validate_dimensions: bool = False,
+        allowed_width: int = IMAGE_WIDTH,
+        allowed_height: int = IMAGE_HEIGHT,
+    ) -> None:
+        """
+        Checks if image has a valid size.
+        if 'allow_empty_image_file' is true, checks that the image file is not empty.
+        Args:
+            allow_empty_image_file (bool): Whether empty image file is an error.
+            maximum_size (int): Maximum allowed size.
+            should_validate_dimensions (bool): Should validate the image dimensions.
+            allowed_height (int): the allowed height of the image
+            allowed_width (int): the allowed weight of the image
+        """
+        if re.match(PNG_IMAGE_REGEX, self.file_path, re.IGNORECASE):
+            image_size = os.path.getsize(self.file_path)
+            if image_size > maximum_size:  # disable-secrets-detection
+                error_message, error_code = Errors.image_too_large()
+                if self.handle_error(
+                    error_message, error_code, file_path=self.file_path
+                ):
+                    self._is_valid = False
+            if should_validate_dimensions:
+                width, height = imagesize.get(self.file_path)
+                if (width, height) != (allowed_width, allowed_height):
+                    error_message, error_code = Errors.invalid_image_dimensions(
+                        width, height
+                    )
+                    if self.handle_error(
+                        error_message, error_code, file_path=self.file_path
+                    ):
+                        self._is_valid = False
+        elif re.match(SVG_IMAGE_REGEX, self.file_path, re.IGNORECASE):
+            image_size = os.path.getsize(self.file_path)
+            logger.info(
+                f"SVG image size: {image_size}. No size validation done for SVG images."
+            )
+
+            try:
+                ET.parse(self.file_path)
+            except ParseError as pe:
+                logger.error(
+                    f"Exception trying to parse {self.file_path} as XML, {pe.msg}."
+                )
+                error_message, error_code = Errors.svg_image_not_valid(pe.msg)
+                if self.handle_error(
+                    error_message, error_code, file_path=self.file_path
+                ):
+                    self._is_valid = False
+                return
+
+            if should_validate_dimensions:
+                width, height = self.get_size_svg_image()
+                logger.info(
+                    f"SVG image dimensions: {width}, {height}. No dimensions validation done for SVG images."
+                )
+        else:
+            data_dictionary = get_yaml(self.file_path)
+
+            if not data_dictionary:
+                return
+
+            image = data_dictionary.get("image", "")
+            image_size = int(((len(image) - 22) / 4) * 3)
+            if image_size > self.IMAGE_MAX_SIZE:  # disable-secrets-detection
+                error_message, error_code = Errors.image_too_large()
+                if self.handle_error(
+                    error_message, error_code, file_path=self.file_path
+                ):
+                    self._is_valid = False
+
+        if not allow_empty_image_file and image_size == 0:
+            error_message, error_code = Errors.image_is_empty(self.file_path)
+            if self.handle_error(error_message, error_code, file_path=self.file_path):
+                self._is_valid = False
+
+    def get_size_svg_image(self):
+        tree = ET.parse(self.file_path)
+        root = tree.getroot()
+
+        if "width" in root.attrib and "height" in root.attrib:
+            try:
+                width = int(root.attrib["width"])
+                height = int(root.attrib["height"])
+                return width, height
+            except Exception:
+                # these values can be hard to parse, e.g. 1280.000000pt. Try the viewBox
+                pass
+
+        if "viewBox" in root.attrib:
+            viewBox = root.attrib["viewBox"]
+            viewBox_splitted = viewBox.split()
+            # The values can be float. e.g. 1280.000000
+            return int(float(viewBox_splitted[2])), int(float(viewBox_splitted[3]))
+
+    @error_codes("IM102,IM100")
+    def is_existing_image(self):
+        """Check if the integration has an image."""
+        is_image_in_yml = False
+        is_image_in_package = False
+
+        data_dictionary = get_yaml(self.file_path)
+
+        if not data_dictionary:
+            return False
+
+        if data_dictionary.get("image"):
+            is_image_in_yml = True
+        if not re.match(
+            PACKS_INTEGRATION_NON_SPLIT_YML_REGEX, self.file_path, re.IGNORECASE
+        ):
+            package_path = os.path.dirname(self.file_path)
+            image_path = glob.glob(package_path + "/*.png")
+            if image_path:
+                is_image_in_package = True
+        if is_image_in_package and is_image_in_yml:
+            error_message, error_code = Errors.image_in_package_and_yml()
+            if self.handle_error(error_message, error_code, file_path=self.file_path):
+                self._is_valid = False
+                return False
+
+        if not (is_image_in_package or is_image_in_yml):
+            error_message, error_code = Errors.no_image_given()
+            if self.handle_error(error_message, error_code, file_path=self.file_path):
+                self._is_valid = False
+                return False
+
+        return True
+
+    @error_codes("IM103,IM104,IM105")
+    def load_image_from_yml(self):
+        data_dictionary = get_yaml(self.file_path)
+
+        if not data_dictionary:
+            error_message, error_code = Errors.not_an_image_file()
+            if self.handle_error(error_message, error_code, file_path=self.file_path):
+                self._is_valid = False
+
+        image = data_dictionary.get("image", "")
+
+        if not image:
+            error_message, error_code = Errors.no_image_field_in_yml()
+            if self.handle_error(error_message, error_code, file_path=self.file_path):
+                self._is_valid = False
+
+        image_data = image.split("base64,")
+        if image_data and len(image_data) == 2:
+            return image_data[1]
+
+        else:
+            error_message, error_code = Errors.image_field_not_in_base64()
+            if self.handle_error(error_message, error_code, file_path=self.file_path):
+                self._is_valid = False
+
+    def load_image(self):
+        if re.match(PNG_IMAGE_REGEX, self.file_path, re.IGNORECASE):
+            with open(self.file_path, "rb") as image:
+                image_data = image.read()
+                image = base64.b64encode(image_data)  # type: ignore
+                if isinstance(image, bytes):
+                    image = image.decode("utf-8")
+
+        elif re.match(SVG_IMAGE_REGEX, self.file_path, re.IGNORECASE):
+            # SVG is clear text (XML) already
+            with open(self.file_path, "rb") as image_file:
+                image = image_file.read()  # type: ignore
+        else:
+            image = self.load_image_from_yml()
+
+        return image
+
+    @error_codes("IM106")
+    def is_not_default_image(self):
+        """Check if the image is the default one"""
+        image = self.load_image()
+
+        if image in [
+            DEFAULT_IMAGE_BASE64,
+            DEFAULT_DBOT_IMAGE_BASE64,
+        ]:  # disable-secrets-detection
+            error_message, error_code = Errors.default_image_error()
+            if self.handle_error(error_message, error_code, file_path=self.file_path):
+                self._is_valid = False
+                return False
+        return True
+
+    @error_codes("IM107")
+    def is_valid_image_name(self):
+        """Check if the image name is valid"""
+        image_path = self.file_path
+        image_file = Path(image_path)
+        integrations_folder = image_file.parent.name
+
+        # drop '_image' suffix and file extension
+        image_file_base_name = image_file.name.rsplit("_", 1)[0]
+
+        if (
+            not image_path.endswith("_image.png")
+            or integrations_folder != image_file_base_name
+        ):
+            error_message, error_code = Errors.invalid_image_name()
+
+            if self.handle_error(error_message, error_code, file_path=image_path):
+                self._is_valid = False
+                return False
+
+        return True

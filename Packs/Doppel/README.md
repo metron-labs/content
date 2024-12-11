@@ -43,7 +43,7 @@ While debugging the integration script, you want make sure that the integration 
             "DEMISTO_PARAMS": "{\"url\": \"https://api.doppel.com\",\"credentials\": {\"password\": \"<API-KEY>\"}}"
          },
    `
-3. With above variable, `demisto.params()` function will give you corrent app configuration
+3. With above variable, `demisto.params()` function will give you current app configuration
 
 
 ### Setup commands and arguments for debugging
@@ -55,7 +55,7 @@ While debugging the integration script, you want make sure that the integration 
     "cmd": "get-alert",
     "id": "TST-31"
    }`
-4. Click on the debug button for *Python: Debug Integration locally*. The breackpoint will hit and you will get the correct params, command and args while debugging.
+4. Click on the debug button for *Python: Debug Integration locally*. The breakpoint will hit and you will get the correct params, command and args while debugging.
 
 
 ## Test the pack on XSOAR tenant

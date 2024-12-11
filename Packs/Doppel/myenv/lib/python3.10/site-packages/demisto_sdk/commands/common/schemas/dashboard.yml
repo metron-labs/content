@@ -1,0 +1,112 @@
+type: map
+mapping:
+  id:
+    type: str
+    required: true
+  version:
+    type: number
+    required: true
+  fromVersion:
+    type: str
+  toVersion:
+    type: str
+  name:
+    type: str
+    required: true
+  description:
+    type: str
+    required: true
+  fromDateLicense:
+    type: str
+  isPredefined:
+    type: bool
+    required: true
+  fromDate:
+    type: str
+  toDate:
+    type: str
+  period:
+    type: map
+    allowempty: true
+  layout:
+    type: seq
+    sequence:
+    - include: layout_schema
+  marketplaces:
+    type: seq
+    sequence:
+    - type: str
+      enum: ['xsoar', 'marketplacev2', 'xpanse', 'xsoar_saas', 'xsoar_on_prem']
+
+
+
+  name:xsoar:
+    type: str
+  name:marketplacev2:
+    type: str
+  name:xpanse:
+    type: str
+  name:xsoar_saas:
+    type: str
+  name:xsoar_on_prem:
+    type: str
+  description:xsoar:
+    type: str
+  description:marketplacev2:
+    type: str
+  description:xpanse:
+    type: str
+  description:xsoar_saas:
+    type: str
+  description:xsoar_on_prem:
+    type: str
+  id:xsoar:
+    type: str
+  id:marketplacev2:
+    type: str
+  id:xpanse:
+    type: str
+  id:xsoar_saas:
+    type: str
+  id:xsoar_on_prem:
+    type: str
+schema;layout_schema:
+  type: map
+  mapping:
+    id:
+      type: str
+      required: true
+    forceRange:
+      type: bool
+      required: true
+    x:
+      type: number
+      required: true
+    y:
+      type: number
+      required: true
+    h:
+      type: number
+      required: true
+    w:
+      type: number
+      required: true
+    i:
+      type: str
+      required: true
+    widget:
+      type: map
+      required: true
+      allowempty: true
+    reflectDimensions:
+      type: bool
+    id:xsoar:
+      type: str
+    id:marketplacev2:
+      type: str
+    id:xpanse:
+      type: str
+    id:xsoar_saas:
+      type: str
+    id:xsoar_on_prem:
+      type: str

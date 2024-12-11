@@ -1,5 +1,5 @@
 import demistomock as demisto  # noqa: F401
-from CommonServerPython import *  # noqa: F401
+# from CommonServerPython import BaseClient  # noqa: F401
 """Doppel for Cortex XSOAR (aka Demisto)
 
 This integration contains features to mirror the alerts from Doppel to create incidents in XSOAR and 
@@ -59,6 +59,50 @@ class Client(BaseClient):
             full_url=api_url            
         )
         return response_content
+    
+    def test_connectivity(self) -> bool:
+        api_name = "alerts"
+        api_url = f"{self._base_url}/{api_name}"
+        self._http_request(
+            method="GET",
+            full_url=api_url
+        )
+        return True
+
+    def create_alert(self, entity: str) -> Dict[str, Any]:
+        api_name = "alert"
+        api_url = f"{self._base_url}/{api_name}"
+        response_content = self._http_request(
+            method="POST",
+            full_url=api_url,
+            json_data={"entity": entity}
+        )
+        return response_content
+
+    def update_alert(self, alert_id: Optional[str] = None, entity: Optional[str] = None, queue_state: Optional[str] = None, entity_state: Optional[str] = None) -> Dict[str, Any]:
+        api_name = "alert"
+        api_url = f"{self._base_url}/{api_name}"
+        
+        # Validate alert_id or entity are provided and assign them to payload
+        if alert_id:
+            payload = {"alert_id": str(alert_id), "queue_state": queue_state, "entity_state": entity_state}
+        elif entity:
+            payload = {"entity": str(entity), "queue_state": queue_state, "entity_state": entity_state}
+        else:
+            raise ValueError("Either 'alert_id' or 'entity' must be specified.")
+        
+        # Validate queue_state and entity_state are provided
+        if not queue_state or not entity_state:
+            raise ValueError("Both 'queue_state' and 'entity_state' must be specified.")
+
+        response_content = self._http_request(
+            method="PATCH",
+            full_url=api_url,
+            json_data=payload
+        )
+        return response_content
+
+
 
 
 ''' HELPER FUNCTIONS '''
@@ -69,10 +113,10 @@ class Client(BaseClient):
 
 
 def test_module(client: Client) -> str:
-    """Tests API connectivity and authentication'
+    """Tests API connectivity and authentication.
 
     Returning 'ok' indicates that the integration works like it is supposed to.
-    Connection to the service is successful.password
+    Connection to the service is successful.
     Raises exceptions if something goes wrong.
 
     :type client: ``Client``
@@ -81,19 +125,23 @@ def test_module(client: Client) -> str:
     :return: 'ok' if test passed, anything else will fail the test.
     :rtype: ``str``
     """
-
     message: str = ''
     try:
-        # TODO: ADD HERE some code to test connectivity and authentication to your service.
-        # This  should validate all the inputs given in the integration configuration panel,
-        # either manually or by using an API that uses them.
-        message = 'ok'
+        # Attempt connectivity test using client
+        if client.test_connectivity():
+            message = 'ok'
+        else:
+            raise ValueError('Connectivity test failed: Unable to connect to the service.')
     except DemistoException as e:
-        if 'Forbidden' in str(e) or 'Authorization' in str(e):  # TODO: make sure you capture authentication errors
+        if 'Forbidden' in str(e) or 'Authorization' in str(e):  # Capture authentication errors
             message = 'Authorization Error: make sure API Key is correctly set'
         else:
             raise e
+    except Exception as ex:
+        # Catch generic exceptions
+        message = f'Failed to test connectivity: {str(ex)}'
     return message
+
 
 
 def get_alert_command(client: Client, args: Dict[str, Any]) -> CommandResults:
@@ -113,42 +161,83 @@ def get_alert_command(client: Client, args: Dict[str, Any]) -> CommandResults:
         outputs=result,
     )
 
+def create_alert_command(client: Client, args: Dict[str, Any]) -> CommandResults:
+    entity = args.get('entity')
+    if not entity:
+        raise ValueError("Entity must be specified to create an alert.")
+
+    result = client.create_alert(entity=entity)
+
+    return CommandResults(
+        outputs_prefix='Doppel.CreatedAlert',
+        outputs_key_field='id',
+        outputs=result,
+    )
+
+
+def update_alert_command(client: Client, args: Dict[str, Any]) -> CommandResults:
+    alert_id = args.get('alert_id')
+    entity = args.get('entity')
+    queue_state = args.get('queue_state')
+    entity_state = args.get('entity_state')
+
+    if not queue_state or not entity_state:
+        raise ValueError("Both 'queue_state' and 'entity_state' must be specified.")
+    if alert_id and entity:
+        raise ValueError("Only one of 'alert_id' or 'entity' can be specified.")
+    if not alert_id and not entity:
+        raise ValueError("Either 'alert_id' or 'entity' must be specified.")
+
+    result = client.update_alert(alert_id=str(alert_id), entity=str(entity), queue_state=queue_state, entity_state=entity_state)
+
+    return CommandResults(
+        outputs_prefix='Doppel.UpdatedAlert',
+        outputs_key_field='id',
+        outputs=result,
+    )
 
 ''' MAIN FUNCTION '''
 
 
 def main() -> None:
-    """main function, parses params and runs command functions
+    """Main function, parses params and runs command functions.
 
-    :return:
-    :rtype:
+    :return: None
+    :rtype: None
     """
     api_key = demisto.params().get('credentials', {}).get('password')
-
-    # get the service API url
     base_url = urljoin(demisto.params()['url'], '/v1')
 
     demisto.debug(f'Command being called is {demisto.command()}')
     try:
-        client = Client(
-            base_url=base_url,
-            api_key=api_key)
+        client = Client(base_url=base_url, api_key=api_key)
 
-        current_command: str = demisto.command()
+        current_command = demisto.command()
+        
         if current_command == 'test-module':
             # This is the call made when pressing the integration Test button.
             result = test_module(client)
             return_results(result)
+        
         elif current_command == 'get-alert':
             return_results(get_alert_command(client, demisto.args()))
+        
+        elif current_command == 'create-alert':
+            return_results(create_alert_command(client, demisto.args()))
+        
+        elif current_command == 'update-alert':
+            return_results(update_alert_command(client, demisto.args()))
+        
+        # Add more commands as necessary
+        # elif current_command == 'some-other-command':
+        #     return_results(some_other_command(client, demisto.args()))
 
-    # Log exceptions and return errors
     except Exception as e:
         return_error(f'Failed to execute {demisto.command()} command.\nError:\n{str(e)}')
 
 
 ''' ENTRY POINT '''
 
-
 if __name__ in ('__main__', '__builtin__', 'builtins'):
     main()
+

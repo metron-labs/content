@@ -14,24 +14,53 @@ configuration:
   required: true
   hiddenusername: true
   type: 9
-description: '[Enter a comprehensive, yet concise, description of what the integration does, what use cases it is designed for, etc.]'
+description: 'This integration allows you to interact with Doppel, fetching and updating alerts, and creating new alerts based on the specified entity.'
 display: Doppel
 name: Doppel
 script:
   commands:
   - name: get-alert
-    description: 'Retrieves the alert details by ID or entity. Must include exactly one of either id or entity'
+    description: 'Retrieves the alert details by ID or entity. Must include exactly one of either id or entity.'
     arguments:
     - name: id
-      description: 'The ID of the alert to retrieve details for'
+      description: 'The ID of the alert to retrieve details for.'
       required: false
     - name: entity
-      description: 'The alerted entity to retrieve details for'
+      description: 'The alerted entity to retrieve details for.'
       required: false
     outputs:
-    - contextPath: Doppel.doppel_link
-      description: 'Link to the alert in the Doppel portal'
-      type: String
+    - contextPath: Doppel.Alert
+      description: 'Details of the alert retrieved from Doppel.'
+      type: Dict
+  - name: create-alert
+    description: 'Creates a new alert based on the provided entity.'
+    arguments:
+    - name: entity
+      description: 'The entity to associate with the new alert.'
+      required: true
+    outputs:
+    - contextPath: Doppel.CreatedAlert
+      description: 'The newly created alert details.'
+      type: Dict
+  - name: update-alert
+    description: 'Updates an existing alert based on the alert ID or entity.'
+    arguments:
+    - name: alert_id
+      description: 'The ID of the alert to update.'
+      required: false
+    - name: entity
+      description: 'The entity of the alert to update.'
+      required: false
+    - name: queue_state
+      description: 'The state of the alert queue.'
+      required: true
+    - name: entity_state
+      description: 'The state of the alert entity.'
+      required: true
+    outputs:
+    - contextPath: Doppel.UpdatedAlert
+      description: 'The updated alert details.'
+      type: Dict
   runonce: false
   script: '-'
   type: python

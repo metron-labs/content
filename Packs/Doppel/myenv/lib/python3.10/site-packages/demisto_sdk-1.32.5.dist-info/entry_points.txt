@@ -1,0 +1,12 @@
+[console_scripts]
+demisto-sdk=demisto_sdk.__main__:main
+init-validation=demisto_sdk.scripts.init_validation_script:main
+merge-coverage-report=demisto_sdk.scripts.merge_coverage_report:main
+merge-pytest-reports=demisto_sdk.scripts.merge_pytest_reports:main
+prevent-mypy-global-ignore=demisto_sdk.scripts.prevent_mypy_global_ignore:main
+sdk-changelog=demisto_sdk.scripts.changelog.changelog:main
+validate-conf-json=demisto_sdk.scripts.validate_conf_json:main
+validate-content-path=demisto_sdk.scripts.validate_content_path:main
+validate-deleted-files=demisto_sdk.scripts.validate_deleted_files:main
+validate-file-permission-changes=demisto_sdk.scripts.validate_file_permission_changes:main
+

@@ -1,0 +1,704 @@
+type: map
+mapping:
+  contentitemexportablefields:
+    type: map
+    mapping:
+      contentitemfields:
+        type: map
+        mapping:
+          propagationLabels:
+            type: any
+  beta:
+    type: bool
+  elasticcommonfields:
+    type: map
+    allowempty: true
+  id:
+    type: str
+    required: true
+  id_x2:
+    type: str
+  version:
+    type: int
+    required: true
+  sourceplaybookid:
+    type: str
+    required: false
+  name:
+    type: str
+    required: true
+  name_x2:
+    type: str
+  description:
+    type: str
+    required: true
+  description_x2:
+    type: str
+  hidden:
+    type: bool
+  deprecated:
+    type: bool
+  starttaskid:
+    type: str
+    required: true
+  view:
+    type: str
+    required: true
+  contentitemfields:
+    type: map
+    required: false
+    mapping:
+      propagationLabels:
+        type: any
+        required: false
+  outputs:
+    type: seq
+    sequence:
+    - include: output_schema
+  outputSections:
+    type: seq
+    sequence:
+    - include: outputsSection_schema
+  inputs:
+    type: seq
+    sequence:
+    - include: input_schema
+  inputSections:
+    type: seq
+    sequence:
+    - include: inputsSection_schema
+  tags:
+    type: seq
+    sequence:
+    - type: str
+  tasks:
+    type: map
+    required: true
+    matching-rule: 'all'
+    mapping:
+      regex;(^[0-9]+(:?(xsoar|marketplacev2|xpanse|xsoar_saas|xsoar_on_prem))?$):
+        type: map
+        mapping:
+          id:
+            type: text
+            required: true
+          taskid:
+            type: str
+            required: true
+          type:
+            type: str
+            required: true
+            enum: ['regular', 'playbook', 'condition', 'start', 'title', 'section', 'standard', 'collection']
+          form:
+            type: map
+            allowempty: true
+          form:xsoar:
+            type: map
+            allowempty: true
+          form:marketplacev2:
+            type: map
+            allowempty: true
+          form:xpanse:
+            type: map
+            allowempty: true
+          form:xsoar_saas:
+            type: map
+            allowempty: true
+          form:xsoar_on_prem:
+            type: map
+            allowempty: true
+          message:
+            type: map
+            allowempty: true
+          message:xsoar:
+            type: map
+            allowempty: true
+          message:marketplacev2:
+            type: map
+            allowempty: true
+          message:xpanse:
+            type: map
+            allowempty: true
+          message:xsoar_saas:
+            type: map
+            allowempty: true
+          message:xsoar_on_prem:
+            type: map
+            allowempty: true
+          defaultassigneecomplex:
+            type: map
+            allowempty: true
+          sla:
+            type: map
+            allowempty: true
+          slareminder:
+            type: map
+            allowempty: true
+          quietmode:
+            type: int
+          restrictedcompletion:
+            type: bool
+          scriptarguments:
+            type: map
+            allowempty: true
+          scriptarguments:xsoar:
+            type: map
+            allowempty: true
+          scriptarguments:marketplacev2:
+            type: map
+            allowempty: true
+          scriptarguments:xpanse:
+            type: map
+            allowempty: true
+          scriptarguments:xsoar_saas:
+            type: map
+            allowempty: true
+          scriptarguments:xsoar_on_prem:
+            type: map
+            allowempty: true
+          timertriggers:
+            allowempty: true
+            type: seq
+            sequence:
+            - include: timertriggers_schema
+          ignoreworker:
+            type: bool
+          skipunavailable:
+            type: bool
+            required: false
+          isoversize:
+            type: bool
+            required: false
+          isautoswitchedtoquietmode:
+            type: bool
+            required: false
+          quiet:
+            type: bool
+          evidencedata:
+            required: false
+            type: map
+            mapping:
+              description:
+                type: map
+                required: false
+                mapping:
+                  simple:
+                    type: text
+              customfields:
+                type: map
+                required: false
+                allowempty: true
+              occurred:
+                required: false
+                type: map
+                allowempty: true
+                mapping:
+                  simple:
+                    type: text
+              tags:
+                type: map
+                required: false
+                allowempty: true
+                mapping:
+                  simple:
+                    type: text
+          task:
+            type: map
+            required: true
+            mapping:
+              id:
+                type: text
+                required: true
+              version:
+                type: int
+                required: true
+              name:
+                type: str
+                required: true
+              name_x2:
+                type: str
+              playbookName:
+                type: str
+              playbookName_x2:
+                type: str
+              playbookId:
+                type: str
+              playbookId_x2:
+                type: str
+              description:
+                type: str
+                required: true
+              description_x2:
+                type: str
+              scriptName:
+                type: str
+              scriptName_x2:
+                type: str
+              script:
+                type: str
+              script_x2:
+                type: str
+              tags:
+                sequence:
+                - type: str
+              type:
+                type: str
+                enum: ['regular', 'playbook', 'condition', 'start', 'title', 'section', 'standard', 'collection']
+              iscommand:
+                type: bool
+                required: true
+              elasticcommonfields:
+                type: map
+                allowempty: true
+              brand:
+                type: text
+                required: true
+              issystemtask:
+                type: bool
+              clonedfrom:
+                type: str
+              name:xsoar:
+                type: str
+              name:marketplacev2:
+                type: str
+              name:xpanse:
+                type: str
+              name:xsoar_saas:
+                type: str
+              name:xsoar_on_prem:
+                type: str
+              description:xsoar:
+                type: str
+              description:marketplacev2:
+                type: str
+              description:xpanse:
+                type: str
+              description:xsoar_saas:
+                type: str
+              description:xsoar_on_prem:
+                type: str
+              id:xsoar:
+                type: text
+              id:marketplacev2:
+                type: text
+              id:xpanse:
+                type: text
+              id:xsoar_saas:
+                type: text
+              id:xsoar_on_prem:
+                type: text
+          note:
+            type: bool
+          nexttasks:
+            type: map
+            mapping:
+              regex;(.+):
+                type: seq
+                sequence:
+                - type: str
+          loop:
+            type: map
+            mapping:
+              iscommand:
+                type: bool
+              builtincondition:
+                type: seq
+                sequence:
+                - include: arg_filters_schema
+              scriptId:
+                type: str
+              scriptId_x2:
+                type: str
+              scriptId:xsoar:
+                type: str
+              scriptId:marketplacev2:
+                type: str
+              scriptId:xpanse:
+                type: str
+              scriptId:xsoar_saas:
+                type: str
+              scriptId:xsoar_on_prem:
+                type: str
+              scriptArguments:
+                type: map
+                allowempty: true
+              scriptArguments:xsoar:
+                type: map
+                allowempty: true
+              scriptArguments:marketplacev2:
+                type: map
+                allowempty: true
+              scriptArguments:xpanse:
+                type: map
+                allowempty: true
+              scriptArguments:xsoar_saas:
+                type: map
+                allowempty: true
+              scriptArguments:xsoar_on_prem:
+                type: map
+                allowempty: true
+              exitCondition:
+                type: str
+              max:
+                type: int
+              wait:
+                type: int
+              forEach:
+                type: bool
+          conditions:
+            type: seq
+            sequence:
+            - include: condition_schema
+          view:
+            type: str
+            required: true
+          results:
+            type: seq
+            sequence:
+            - type: str
+          continueonerror:
+            type: bool
+          continueonerrortype:
+            type: str
+            enum: ["errorPath", ""]
+          reputationcalc:
+            type: int
+          separatecontext:
+            type: bool
+          fieldMapping:
+            type: seq
+            sequence:
+            - type: map
+              allowempty: true
+
+          id:xsoar:
+            type: text
+          id:marketplacev2:
+            type: text
+          id:xpanse:
+            type: text
+          id:xsoar_saas:
+            type: text
+          id:xsoar_on_prem:
+            type: text
+  system:
+    type: bool
+  fromversion:
+    type: text
+    required: true
+  toversion:
+    type: text
+  quiet:
+    type: bool
+  tests:
+    type: seq
+    sequence:
+    - type: str
+  rolename:
+    type: seq
+    sequence:
+    - type: str
+  marketplaces:
+    type: seq
+    sequence:
+    - type: str
+      enum: ['xsoar', 'marketplacev2', 'xpanse', 'xsoar_saas', 'xsoar_on_prem']
+
+
+# playbook->tasks
+  name:xsoar:
+    type: str
+  name:marketplacev2:
+    type: str
+  name:xpanse:
+    type: str
+  name:xsoar_saas:
+    type: str
+  name:xsoar_on_prem:
+    type: str
+  description:xsoar:
+    type: str
+  description:marketplacev2:
+    type: str
+  description:xpanse:
+    type: str
+  description:xsoar_saas:
+    type: str
+  description:xsoar_on_prem:
+    type: str
+  deprecated:xsoar:
+    type: bool
+  deprecated:marketplacev2:
+    type: bool
+  deprecated:xpanse:
+    type: bool
+  deprecated:xsoar_saas:
+    type: bool
+  deprecated:xsoar_on_prem:
+    type: bool
+  id:xsoar:
+    type: str
+  id:marketplacev2:
+    type: str
+  id:xpanse:
+    type: str
+  id:xsoar_saas:
+    type: str
+  id:xsoar_on_prem:
+    type: str
+schema;task_schema:
+  type: map
+  allowempty: true
+
+# playbook->inputs
+schema;input_schema:
+  type: map
+  mapping:
+    key:
+      type: str
+      required: true
+    value:
+      type: any
+    description:
+      type: str
+      required: true
+    description_x2:
+      type: str
+    required:
+      type: bool
+    playbookInputQuery:
+      type: any
+    key:xsoar:
+      type: str
+    key:marketplacev2:
+      type: str
+    key:xpanse:
+      type: str
+    key:xsoar_saas:
+      type: str
+    key:xsoar_on_prem:
+      type: str
+    value:xsoar:
+      type: any
+    value:marketplacev2:
+      type: any
+    value:xpanse:
+      type: any
+    value:xsoar_saas:
+      type: any
+    value:xsoar_on_prem:
+      type: any
+    description:xsoar:
+      type: str
+    description:marketplacev2:
+      type: str
+    description:xpanse:
+      type: str
+    description:xsoar_saas:
+      type: str
+    description:xsoar_on_prem:
+      type: str
+    required:xsoar:
+      type: bool
+    required:marketplacev2:
+      type: bool
+    required:xpanse:
+      type: bool
+    required:xsoar_saas:
+      type: bool
+    required:xsoar_on_prem:
+      type: bool
+    playbookInputQuery:xsoar:
+      type: any
+    playbookInputQuery:marketplacev2:
+      type: any
+    playbookInputQuery:xpanse:
+      type: any
+    playbookInputQuery:xsoar_saas:
+      type: any
+    playbookInputQuery:xsoar_on_prem:
+      type: any
+schema;inputsSection_schema:
+  type: map
+  mapping:
+    name:
+      type: str
+      required: true
+    description:
+      type: str
+      required: true
+    inputs:
+      type: seq
+      sequence:
+      - type: str
+
+# playbook->outputs
+    name:xsoar:
+      type: str
+    name:marketplacev2:
+      type: str
+    name:xpanse:
+      type: str
+    name:xsoar_saas:
+      type: str
+    name:xsoar_on_prem:
+      type: str
+    description:xsoar:
+      type: str
+    description:marketplacev2:
+      type: str
+    description:xpanse:
+      type: str
+    description:xsoar_saas:
+      type: str
+    description:xsoar_on_prem:
+      type: str
+schema;output_schema:
+  type: map
+  mapping:
+    contextPath:
+      type: str
+      required: true
+    type:
+      type: text
+    description:
+      type: str
+      required: true
+    description_x2:
+      type: str
+
+# playbook->outputSections
+    description:xsoar:
+      type: str
+    description:marketplacev2:
+      type: str
+    description:xpanse:
+      type: str
+    description:xsoar_saas:
+      type: str
+    description:xsoar_on_prem:
+      type: str
+schema;outputsSection_schema:
+  type: map
+  mapping:
+    name:
+      type: str
+      required: true
+    description:
+      type: str
+      required: true
+    outputs:
+      type: seq
+      sequence:
+      - type: str
+
+# playbook->tasks->conditions
+    name:xsoar:
+      type: str
+    name:marketplacev2:
+      type: str
+    name:xpanse:
+      type: str
+    name:xsoar_saas:
+      type: str
+    name:xsoar_on_prem:
+      type: str
+    description:xsoar:
+      type: str
+    description:marketplacev2:
+      type: str
+    description:xpanse:
+      type: str
+    description:xsoar_saas:
+      type: str
+    description:xsoar_on_prem:
+      type: str
+schema;condition_schema:
+  type: map
+  mapping:
+    label:
+      type: str
+      required: true
+    condition:
+      type: seq
+      sequence:
+      - include: arg_filters_schema
+
+
+schema;arg_filters_schema:
+  type: seq
+  sequence:
+  - include: arg_filter_schema
+
+schema;arg_filter_schema:
+  type: map
+  mapping:
+    operator:
+      type: str
+      required: true
+    ignorecase:
+      type: bool
+    left:
+      include: left_or_right_schema
+      required: true
+    left:xsoar:
+      include: left_or_right_schema
+    left:marketplacev2:
+      include: left_or_right_schema
+    left:xpanse:
+      include: left_or_right_schema
+    left:xsoar_saas:
+      include: left_or_right_schema
+    left:xsoar_on_prem:
+      include: left_or_right_schema
+    right:
+      include: left_or_right_schema
+    right:xsoar:
+      include: left_or_right_schema
+    right:marketplacev2:
+      include: left_or_right_schema
+    right:xpanse:
+      include: left_or_right_schema
+    right:xsoar_saas:
+      include: left_or_right_schema
+    right:xsoar_on_prem:
+      include: left_or_right_schema
+
+schema;timertriggers_schema:
+  type: map
+  mapping:
+    fieldname:
+      type: str
+    action:
+      type: str
+
+schema;left_or_right_schema:
+  type: map
+  mapping:
+    value:
+      type: any
+      required: true
+    value:xsoar:
+      type: any
+    value:marketplacev2:
+      type: any
+    value:xpanse:
+      type: any
+    value:xsoar_saas:
+      type: any
+    value:xsoar_on_prem:
+      type: any
+    value_x2:
+      type: any
+    iscontext:
+      type: bool
+    iscontext:xsoar:
+      type: bool
+    iscontext:marketplacev2:
+      type: bool
+    iscontext:xpanse:
+      type: bool
+    iscontext:xsoar_saas:
+      type: bool
+    iscontext:xsoar_on_prem:
+      type: bool

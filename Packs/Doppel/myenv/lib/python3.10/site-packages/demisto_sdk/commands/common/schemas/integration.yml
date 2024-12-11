@@ -1,0 +1,484 @@
+type: map
+mapping:
+  commonfields:
+    type: map
+    required: true
+    mapping:
+      id:
+        type: str
+        required: true
+      version:
+        type: int
+        required: true
+      sortvalues:
+        type: seq
+        sequence:
+        - type: str
+      id:xsoar:
+        type: str
+      id:marketplacev2:
+        type: str
+      id:xpanse:
+        type: str
+      id:xsoar_saas:
+        type: str
+      id:xsoar_on_prem:
+        type: str
+  name:
+    type: str
+    required: true
+  display:
+    type: str
+    required: true
+  deprecated:
+    type: bool
+  beta:
+    type: bool
+  category:
+    type: str
+    required: true
+  sectionOrder:
+    type: seq
+    sequence:
+    - type: str
+  sectionorder:
+    type: seq
+    sequence:
+    - type: str
+  fromversion:
+    type: str
+  toversion:
+    type: str
+  image:
+    type: str
+  description:
+    type: str
+    required: true
+  defaultmapperin:
+    type: str
+  defaultmapperout:
+    type: str
+  defaultmapperout_x2:
+    type: str
+  defaultclassifier:
+    type: str
+  detaileddescription:
+    type: str
+  autoconfiginstance:
+    type: bool
+  supportlevelheader:
+    type: str
+    enum: ['xsoar', 'partner', 'community']
+  configuration:
+    type: seq
+    required: true
+    sequence:
+    - include: configuration_schema
+  script:
+    type: map
+    required: true
+    mapping:
+      script:
+        type: str
+        required: true
+      type:
+        type: str
+        enum: ['javascript', 'python', 'powershell']
+        required: true
+      dockerimage:
+        type: str
+      dockerimage45:
+        type: str
+      alt_dockerimages:
+        type: seq
+        sequence:
+        - type: str
+      nativeImage:
+        type: seq
+        sequence:
+        - type: str
+      isfetch:
+        type: bool
+      isfetchevents:
+        type: bool
+      isfetchassets:
+        type: bool
+      longRunning:
+        type: bool
+      longRunningPort:
+        type: bool
+      ismappable:
+        type: bool
+      isremotesyncin:
+        type: bool
+      isremotesyncin_x2:
+        type: bool
+      isremotesyncout:
+        type: bool
+      isremotesyncout_x2:
+        type: bool
+      commands:
+        type: seq
+        sequence:
+        - include: command_schema
+      runonce:
+        type: bool
+      subtype:
+        type: str
+        enum: ['python2', 'python3']
+      feed:
+        type: bool
+      isFetchSamples:
+        type: bool
+      resetContext:
+        type: bool
+      isfetch:xsoar:
+        type: bool
+      isfetch:marketplacev2:
+        type: bool
+      isfetch:xpanse:
+        type: bool
+      isfetch:xsoar_saas:
+        type: bool
+      isfetch:xsoar_on_prem:
+        type: bool
+      isfetchevents:xsoar:
+        type: bool
+      isfetchevents:marketplacev2:
+        type: bool
+      isfetchevents:xpanse:
+        type: bool
+      isfetchevents:xsoar_saas:
+        type: bool
+      isfetchevents:xsoar_on_prem:
+        type: bool
+  system:
+    type: bool
+  hidden:
+    type: bool
+  videos:
+    type: seq
+    sequence:
+    - type: str
+  versionedfields:
+    type: any
+  defaultEnabled:
+    type: bool
+  tests:
+    type: seq
+    sequence:
+    - type: str
+  scriptNotVisible:
+    type: bool
+  autoUpdateDockerImage:
+    type: bool
+  marketplaces:
+    type: seq
+    sequence:
+    - type: str
+      enum: ['xsoar', 'marketplacev2', 'xpanse', 'xsoar_saas', 'xsoar_on_prem']
+  hybrid:
+    type: bool
+
+# integration->configuration
+  name:xsoar:
+    type: str
+  name:marketplacev2:
+    type: str
+  name:xpanse:
+    type: str
+  name:xsoar_saas:
+    type: str
+  name:xsoar_on_prem:
+    type: str
+  description:xsoar:
+    type: str
+  description:marketplacev2:
+    type: str
+  description:xpanse:
+    type: str
+  description:xsoar_saas:
+    type: str
+  description:xsoar_on_prem:
+    type: str
+  deprecated:xsoar:
+    type: bool
+  deprecated:marketplacev2:
+    type: bool
+  deprecated:xpanse:
+    type: bool
+  deprecated:xsoar_saas:
+    type: bool
+  deprecated:xsoar_on_prem:
+    type: bool
+schema;configuration_schema:
+  type: map
+  required: true
+  mapping:
+    display:
+      type: str
+    section:
+      type: str
+    advanced:
+      type: bool
+    defaultvalue:
+      type: any
+    name:
+      type: str
+      required: true
+    type:
+      type: int
+      required: true
+    required:
+      type: bool
+    hidden:
+      type: any
+    hidden_x2:
+      type: bool
+    options:
+      type: seq
+      sequence:
+      - type: str
+    additionalinfo:
+      type: str
+    displaypassword:
+      type: str
+    hiddenusername:
+      type: bool
+    hiddenpassword:
+      type: bool
+    fromlicense:
+      type: str
+
+# integration->script->command
+    defaultvalue:xsoar:
+      type: any
+    defaultvalue:marketplacev2:
+      type: any
+    defaultvalue:xpanse:
+      type: any
+    defaultvalue:xsoar_saas:
+      type: any
+    defaultvalue:xsoar_on_prem:
+      type: any
+    name:xsoar:
+      type: str
+    name:marketplacev2:
+      type: str
+    name:xpanse:
+      type: str
+    name:xsoar_saas:
+      type: str
+    name:xsoar_on_prem:
+      type: str
+    required:xsoar:
+      type: bool
+    required:marketplacev2:
+      type: bool
+    required:xpanse:
+      type: bool
+    required:xsoar_saas:
+      type: bool
+    required:xsoar_on_prem:
+      type: bool
+schema;command_schema:
+  type: map
+  mapping:
+    name:
+      type: str
+      required: true
+    execution:
+      type: bool
+    description:
+      type: str
+      required: true
+    deprecated:
+      type: bool
+    system:
+      type: bool
+    arguments:
+      type: seq
+      sequence:
+      - include: argument_schema
+    outputs:
+      type: seq
+      sequence:
+      - include: output_schema
+    important:
+      type: seq
+      sequence:
+      - include: important_schema
+    timeout:
+      type: int
+    hidden:
+      type: bool
+    hidden_x2:
+      type: bool
+    polling:
+      type: bool
+
+# int
+    name:xsoar:
+      type: str
+    name:marketplacev2:
+      type: str
+    name:xpanse:
+      type: str
+    name:xsoar_saas:
+      type: str
+    name:xsoar_on_prem:
+      type: str
+    description:xsoar:
+      type: str
+    description:marketplacev2:
+      type: str
+    description:xpanse:
+      type: str
+    description:xsoar_saas:
+      type: str
+    description:xsoar_on_prem:
+      type: str
+    deprecated:xsoar:
+      type: bool
+    deprecated:marketplacev2:
+      type: bool
+    deprecated:xpanse:
+      type: bool
+    deprecated:xsoar_saas:
+      type: bool
+    deprecated:xsoar_on_prem:
+      type: bool
+schema;argument_schema:
+  type: map
+  mapping:
+    name:
+      type: str
+      required: true
+    required:
+      type: bool
+    default:
+      type: bool
+    description:
+      type: str
+      required: true
+    auto:
+      type: str
+      enum: ['PREDEFINED']
+    predefined:
+      type: seq
+      sequence:
+      - type: str
+    isArray:
+      type: bool
+    defaultValue:
+      type: any
+    secret:
+      type: bool
+    deprecated:
+      type: bool
+    type:
+      type: str
+    hidden:
+      type: bool
+
+
+# integration->script->command->outputs
+    name:xsoar:
+      type: str
+    name:marketplacev2:
+      type: str
+    name:xpanse:
+      type: str
+    name:xsoar_saas:
+      type: str
+    name:xsoar_on_prem:
+      type: str
+    required:xsoar:
+      type: bool
+    required:marketplacev2:
+      type: bool
+    required:xpanse:
+      type: bool
+    required:xsoar_saas:
+      type: bool
+    required:xsoar_on_prem:
+      type: bool
+    description:xsoar:
+      type: str
+    description:marketplacev2:
+      type: str
+    description:xpanse:
+      type: str
+    description:xsoar_saas:
+      type: str
+    description:xsoar_on_prem:
+      type: str
+    defaultValue:xsoar:
+      type: any
+    defaultValue:marketplacev2:
+      type: any
+    defaultValue:xpanse:
+      type: any
+    defaultValue:xsoar_saas:
+      type: any
+    defaultValue:xsoar_on_prem:
+      type: any
+    deprecated:xsoar:
+      type: bool
+    deprecated:marketplacev2:
+      type: bool
+    deprecated:xpanse:
+      type: bool
+    deprecated:xsoar_saas:
+      type: bool
+    deprecated:xsoar_on_prem:
+      type: bool
+schema;output_schema:
+  type: map
+  mapping:
+    contentPath:
+      type: str
+    contextPath:
+      type: str
+    description:
+      type: str
+      required: true
+    important:
+      type: bool
+    importantDescription:
+      type: str
+    type:
+      type: str
+
+# integration->script->command->important
+    description:xsoar:
+      type: str
+    description:marketplacev2:
+      type: str
+    description:xpanse:
+      type: str
+    description:xsoar_saas:
+      type: str
+    description:xsoar_on_prem:
+      type: str
+schema;important_schema:
+  type: map
+  mapping:
+    contextPath:
+      type: str
+      required: true
+    description:
+      type: str
+      required: true
+    related:
+      type: str
+    description:xsoar:
+      type: str
+    description:marketplacev2:
+      type: str
+    description:xpanse:
+      type: str
+    description:xsoar_saas:
+      type: str
+    description:xsoar_on_prem:
+      type: str

@@ -1,0 +1,59 @@
+type: map
+mapping:
+  feed:
+    type: bool
+  incidentSamples:
+    type: seq
+    sequence:
+    - type: str
+  indicatorSamples:
+    type: seq
+    sequence:
+    - type: str
+  propagationLabels:
+    type: any
+  isDefault:
+    type: bool
+  sortValues:
+    type: any
+  id:
+    type: str
+    required: true
+  version:
+    type: number
+    required: true
+  fromVersion:
+    type: str
+  toVersion:
+    type: str
+  brandName:
+    type: str
+    required: true
+  modified:
+    type: str
+  defaultIncidentType:
+    type: str
+  mapping:
+    type: map
+    allowempty: true
+  unclassifiedCases:
+    type: map
+    allowempty: true
+  transformer:
+    type: map
+    allowempty: true
+  keyTypeMap:
+    type: map
+    allowempty: true
+  custom:
+    type: bool
+  id:xsoar:
+    type: str
+  id:marketplacev2:
+    type: str
+  id:xpanse:
+    type: str
+  id:xsoar_saas:
+    type: str
+  id:xsoar_on_prem:
+    type: str
