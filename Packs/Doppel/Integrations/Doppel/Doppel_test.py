@@ -28,7 +28,8 @@ def util_load_json(path):
 def test_command_success(mocker, requests_mock, command, args, api_path, api_response):
     """Tests the current command
     """
-    mocker.patch.object(demisto, 'params', return_value={"url": "https://api.doppel.com", "credentials": {"password": "SAMPLE-API-KEY"}})
+    mocker.patch.object(demisto, 'params', return_value={"url": "https://api.doppel.com",
+                                                         "credentials": {"password": "SAMPLE-API-KEY"}})
     mocker.patch.object(demisto, 'command', return_value=command)
     mocker.patch.object(demisto, 'args', return_value=args)
     results_checker = mocker.patch.object(demisto, 'results', return_value=None)
@@ -61,7 +62,8 @@ def test_command_success(mocker, requests_mock, command, args, api_path, api_res
 def test_command_failure(mocker, requests_mock, command, args, api_path, status_code, api_response):
     """Tests the current command
     """
-    mocker.patch.object(demisto, 'params', return_value={"url": "https://api.doppel.com", "credentials": {"password": "SAMPLE-API-KEY"}})
+    mocker.patch.object(demisto, 'params', return_value={"url": "https://api.doppel.com",
+                                                         "credentials": {"password": "SAMPLE-API-KEY"}})
     mocker.patch.object(demisto, 'command', return_value=command)
     mocker.patch.object(demisto, 'args', return_value=args)
     mocker.patch.object(demisto, 'results', return_value=None)
@@ -78,7 +80,7 @@ def test_command_failure(mocker, requests_mock, command, args, api_path, status_
     assert api_response == json.loads(requests.get(api_path).text)
     assert status_code == requests.get(api_path).status_code
          
-    
+e="Failed to execute get-alert command.\nError:\nBoth id and entity is specified. We need exactly single input for this command"
 @pytest.mark.parametrize("command, args, api_path, status_code, exception_message",
                          [
                              ("get-alert",
@@ -86,13 +88,14 @@ def test_command_failure(mocker, requests_mock, command, args, api_path, status_
                                "entity": "http://dummyrul.com"},
                               "https://api.doppel.com/v1/alert?id=TST-31&entity=http://dummyrul.com",
                               400,
-                              "Failed to execute get-alert command.\nError:\nBoth id and entity is specified. We need exactly single input for this command")
+                              e)
                          ]
                          )
 def test_command_exception(mocker, requests_mock, command, args, api_path, status_code, exception_message):
     """Tests the current command
     """
-    mocker.patch.object(demisto, 'params', return_value={"url": "https://api.doppel.com", "credentials": {"password": "SAMPLE-API-KEY"}})
+    mocker.patch.object(demisto, 'params', return_value={"url": "https://api.doppel.com",
+                                                         "credentials": {"password": "SAMPLE-API-KEY"}})
     mocker.patch.object(demisto, 'command', return_value=command)
     mocker.patch.object(demisto, 'args', return_value=args)
     results_checker = mocker.patch.object(demisto, 'results', return_value=None)
