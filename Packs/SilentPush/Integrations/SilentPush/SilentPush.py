@@ -13,7 +13,7 @@ from CommonServerUserPython import *  # noqa
 
 import requests
 import urllib3
-from typing import Any
+from typing import Any, Optional, Dict
 
 # Disable insecure warnings
 urllib3.disable_warnings()
@@ -134,6 +134,42 @@ class Client(BaseClient):
         url_suffix = f'explore/domain/certificates/{domain}'
         return self._http_request('GET', url_suffix)
 
+    def search_domains(self, 
+                      query: Optional[str] = None, 
+                      start_date: Optional[str] = None,
+                      end_date: Optional[str] = None,
+                      risk_score_min: Optional[int] = None,
+                      risk_score_max: Optional[int] = None,
+                      limit: int = 100) -> dict:
+        """
+        Search for domains with optional filters.
+        
+        Args:
+            query (str, optional): Search query string (e.g., domain pattern, keywords)
+            start_date (str, optional): Start date for domain registration (ISO8601 format)
+            end_date (str, optional): End date for domain registration (ISO8601 format)
+            risk_score_min (int, optional): Minimum risk score filter
+            risk_score_max (int, optional): Maximum risk score filter
+            limit (int, optional): Maximum number of results to return (default: 100)
+            
+        Returns:
+            dict: A dictionary containing the search results
+        """
+        demisto.debug(f'Searching domains with query: {query}')
+        url_suffix = 'explore/domain/search'
+        
+        # Build parameters dictionary with only non-None values
+        params = {k: v for k, v in {
+            'query': query,
+            'start_date': start_date,
+            'end_date': end_date,
+            'risk_score_min': risk_score_min,
+            'risk_score_max': risk_score_max,
+            'limit': limit
+        }.items() if v is not None}
+        
+        return self._http_request('GET', url_suffix, params=params)
+
 
 def test_module(client: Client) -> str:
     """
@@ -218,6 +254,38 @@ def get_domain_certificates_command(client: Client, args: dict) -> CommandResult
     )
 
 
+def search_domains_command(client: Client, args: dict) -> CommandResults:
+    
+    # Extract parameters from args with type conversion
+    query = args.get('query')
+    start_date = args.get('start_date')
+    end_date = args.get('end_date')
+    risk_score_min = arg_to_number(args.get('risk_score_min'))
+    risk_score_max = arg_to_number(args.get('risk_score_max'))
+    limit = arg_to_number(args.get('limit', 100))
+    
+    demisto.debug(f'Searching domains with query: {query}')
+
+    raw_response = client.search_domains(
+        query=query,
+        start_date=start_date,
+        end_date=end_date,
+        risk_score_min=risk_score_min,
+        risk_score_max=risk_score_max,
+        limit=limit
+    )
+    
+    readable_output = tableToMarkdown('Domain Search Results', raw_response.get('results', []))
+
+    return CommandResults(
+        outputs_prefix='SilentPush.SearchResults',
+        outputs_key_field='domain',
+        outputs=raw_response,
+        readable_output=readable_output,
+        raw_response=raw_response
+    )
+
+
 ''' MAIN FUNCTION '''
 
 
@@ -257,6 +325,7 @@ def main():
             'test-module': test_module,
             'silentpush-list-domain-information': list_domain_information_command,
             'silentpush-get-domain-certificates': get_domain_certificates_command,
+            'silentpush-search-domains': search_domains_command,
         }
 
         if command in command_handlers:
