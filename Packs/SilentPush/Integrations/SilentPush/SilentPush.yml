@@ -5,7 +5,7 @@ commonfields:
   type: python
   subType: python3
   description: |
-    This integration allows fetching domain information from the SilentPush API. It includes commands to get domain-related information such as WHOIS data, domain age, and risk scores.
+    This integration allows fetching domain information from the SilentPush API. It includes commands to get domain-related information such as WHOIS data, domain age, and risk scores, as well as SSL/TLS certificate data.
   tags: []
   enabled: true
   manufacturer: SilentPush
@@ -18,7 +18,7 @@ commonfields:
 scripts:
   - path: SilentPush.py
     comment: |
-      Integration for SilentPush that enables fetching domain information, including WHOIS data, domain age, and risk scores.
+      Integration for SilentPush that enables fetching domain information, including WHOIS data, domain age, risk scores, and certificates.
 
 commands:
   - name: test-module
@@ -49,6 +49,17 @@ commands:
     examples: |
       !silentpush-list-domain-information domain=example.com
 
+  - name: silentpush-get-domain-certificates
+    description: |
+      Fetches SSL/TLS certificate data for a given domain.
+    isArray: false
+    argContext:
+      - id: domain
+        type: string
+        description: The domain to fetch certificate information for.
+    examples: |
+      !silentpush-get-domain-certificates domain=example.com
+
 args:
   - id: domain
     isArray: false
@@ -71,6 +82,25 @@ outputs:
       - name: risk_score
         type: float
 
+  - id: SilentPush.Certificates
+    type: complex
+    description: |
+      The certificate information fetched from SilentPush API for the domain.
+    contents:
+      - name: domain
+        type: string
+      - name: certificates
+        type: list
+        items:
+          - name: certificate_issuer
+            type: string
+          - name: valid_from
+            type: string
+          - name: valid_to
+            type: string
+          - name: certificate_serial_number
+            type: string
+
 tests:
   - name: Test SilentPush Integration
     description: Test the integration with the SilentPush API.
@@ -81,7 +111,7 @@ tests:
           base_url: https://api.silentpush.com
           api_key: 'your_api_key'
 
-# Optional: Adding the configuration section for any configuration-related parameters
+
 configurations:
   - default: true
     isArray: false

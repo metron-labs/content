@@ -11,6 +11,7 @@ Linting: https://xsoar.pan.dev/docs/integrations/linting
 
 from CommonServerUserPython import *  # noqa
 
+import requests
 import urllib3
 from typing import Any
 
@@ -119,6 +120,20 @@ class Client(BaseClient):
         url_suffix = f'explore/domain/domaininfo/{domain}'
         return self._http_request('GET', url_suffix)
 
+    def get_domain_certificates(self, domain: str) -> dict:
+        """
+        Fetches SSL/TLS certificate data for a given domain.
+        
+        Args:
+            domain (str): The domain to fetch certificate information for.
+        
+        Returns:
+            dict: A dictionary containing certificate information fetched from the API.
+        """
+        demisto.debug(f'Fetching certificate information for domain: {domain}')
+        url_suffix = f'explore/domain/certificates/{domain}'
+        return self._http_request('GET', url_suffix)
+
 
 def test_module(client: Client) -> str:
     """
@@ -179,6 +194,30 @@ def list_domain_information_command(client: Client, args: dict) -> CommandResult
     )
 
 
+def get_domain_certificates_command(client: Client, args: dict) -> CommandResults:
+    """
+    Command handler for fetching domain certificate information.
+    """
+    domain = args.get('domain', 'silentpush.com')
+    demisto.debug(f'Processing certificates for domain: {domain}')
+
+    
+    demisto.debug('Entering get_domain_certificates_command function')
+
+    raw_response = client.get_domain_certificates(domain)
+    demisto.debug(f'Response from API: {raw_response}')
+
+    readable_output = tableToMarkdown('Domain Certificates', raw_response)
+
+    return CommandResults(
+        outputs_prefix='SilentPush.Certificates',
+        outputs_key_field='domain',
+        outputs=raw_response,
+        readable_output=readable_output,
+        raw_response=raw_response
+    )
+
+
 ''' MAIN FUNCTION '''
 
 
@@ -213,13 +252,19 @@ def main():
         command = demisto.command()
         demisto.debug(f'Command being called is {command}')
 
-        if command == 'test-module':
-            result = test_module(client)
-            return_results(result)
-        
-        elif command == 'silentpush-list-domain-information':
-            return_results(list_domain_information_command(client, demisto.args()))
-        
+        command_handlers = {
+                        
+            'test-module': test_module,
+            'silentpush-list-domain-information': list_domain_information_command,
+            'silentpush-get-domain-certificates': get_domain_certificates_command,
+        }
+
+        if command in command_handlers:
+            if command == 'test-module':
+                result = command_handlers[command](client)
+                return_results(result)
+            else:
+                return_results(command_handlers[command](client, demisto.args()))
         else:
             raise DemistoException(f'Unsupported command: {command}')
 
