@@ -22,8 +22,6 @@ urllib3.disable_warnings()
 def mock_debug(message):
     """Print debug messages to the XSOAR logs"""
     print(f"DEBUG: {message}")
-
-
 demisto.debug = mock_debug
 
 ''' CONSTANTS '''
@@ -105,42 +103,152 @@ class Client(BaseClient):
         except Exception as e:
             demisto.error(f'Error in API call: {str(e)}')
             raise
-
-    def list_domain_information(self, domain: str) -> dict:
+        
+    def list_domain_information(self, domains: Union[str, List[str]]) -> Dict:
         """
-        Fetches domain information such as WHOIS data, domain age, and risk scores.
+        Fetches domain information including WHOIS data and risk scores for multiple domains.
         
         Args:
-            domain (str): The domain to fetch information for.
-        
+            domains: Either a single domain string or a list of domain strings
+            
         Returns:
-            dict: A dictionary containing domain information fetched from the API.
+            Dict: A dictionary containing combined domain information and risk scores
         """
-        demisto.debug(f'Fetching domain information for domain: {domain}')
-        url_suffix = f'explore/domain/domaininfo/{domain}'
-        return self._http_request('GET', url_suffix)
+        demisto.debug(f'Fetching domain information for: {domains}')
+        domain_list = [domains] if isinstance(domains, str) else domains
+        
+        if len(domain_list) > 100:
+            raise DemistoException("Maximum of 100 domains can be submitted in a single request")
+        
+        if len(domain_list) == 1:
 
+            domain = domain_list[0]
+            try:
+
+                domain_info_response = self._http_request(
+                    method='GET',
+                    url_suffix=f'explore/domain/domaininfo/{domain}'
+                )
+                domain_info = domain_info_response.get('response', {}).get('domaininfo', {})
+                
+                risk_score_response = self._http_request(
+                    method='GET',
+                    url_suffix=f'explore/domain/riskscore/{domain}'
+                )
+                risk_info = risk_score_response.get('response', {})
+                
+                combined_info = {
+                    'domain': domain,
+                    **domain_info,
+                    'sp_risk_score': risk_info.get('sp_risk_score'),
+                    'sp_risk_score_explain': risk_info.get('sp_risk_score_explain')
+                }
+                
+                return {'domains': [combined_info]}
+                
+            except Exception as e:
+                raise DemistoException(f'Failed to fetch information for domain {domain}: {str(e)}')
+        
+        else:
+            
+            try:
+              
+                domains_data = {'domains': domain_list}
+                bulk_info_response = self._http_request(
+                    method='POST',
+                    url_suffix='explore/bulk/domaininfo',
+                    data=domains_data 
+                )
+                
+                bulk_risk_response = self._http_request(
+                    method='POST',
+                    url_suffix='explore/bulk/domain/riskscore',
+                    data=domains_data  
+                )
+                
+                domain_info_list = bulk_info_response.get('response', {}).get('domaininfo', [])
+                risk_score_list = bulk_risk_response.get('response', [])
+                domain_info_dict = {item['domain']: item for item in domain_info_list}
+                risk_score_dict = {item['domain']: item for item in risk_score_list}
+                
+                combined_results = []
+                for domain in domain_list:
+                    domain_data = domain_info_dict.get(domain, {})
+                    risk_data = risk_score_dict.get(domain, {})
+                    
+                    combined_results.append({
+                        'domain': domain,
+                        **domain_data,
+                        'sp_risk_score': risk_data.get('sp_risk_score'),
+                        'sp_risk_score_explain': risk_data.get('sp_risk_score_explain')
+                    })
+                
+                return {'domains': combined_results}
+                
+            except Exception as e:
+                raise DemistoException(f'Failed to fetch bulk domain information: {str(e)}')
+        
+    
     def get_domain_certificates(self, domain: str) -> dict:
         """
         Fetches SSL/TLS certificate data for a given domain.
-        
+        If the job is not completed, it polls the job status periodically.
+
         Args:
             domain (str): The domain to fetch certificate information for.
-        
+
         Returns:
             dict: A dictionary containing certificate information fetched from the API.
         """
         demisto.debug(f'Fetching certificate information for domain: {domain}')
+        
+      
         url_suffix = f'explore/domain/certificates/{domain}'
-        return self._http_request('GET', url_suffix)
+        response = self._http_request('GET', url_suffix, params={
+            'limit': 100,
+            'skip': 0,
+            'with_metadata': 0
+        })
+
+       
+        job_status_url = response.get('response', {}).get('job_status', {}).get('get')
+        if not job_status_url:
+            demisto.error('Job status URL not found in the response')
+            return response
+
+      
+        job_complete = False
+        while not job_complete:
+            demisto.debug(f'Checking job status at {job_status_url}')
+            
+          
+            job_response = self._http_request('GET', job_status_url)
+            job_status = job_response.get('response', {}).get('job_status', {}).get('status')
+
+            if job_status == 'COMPLETED':
+                job_complete = True
+                demisto.debug('Job completed, fetching certificates.')
+             
+                certificate_data = job_response.get('response', {}).get('domain_certificates', [])
+                return certificate_data
+            elif job_status == 'FAILED':
+                demisto.error('Job failed to complete.')
+                return {'error': 'Job failed'}
+            else:
+             
+                demisto.debug('Job is still in progress. Retrying...')
+                time.sleep(5)
+
+        return {}          
+        
 
     def search_domains(self, 
-                      query: Optional[str] = None, 
-                      start_date: Optional[str] = None,
-                      end_date: Optional[str] = None,
-                      risk_score_min: Optional[int] = None,
-                      risk_score_max: Optional[int] = None,
-                      limit: int = 100) -> dict:
+                    query: Optional[str] = None, 
+                    start_date: Optional[str] = None,
+                    end_date: Optional[str] = None,
+                    risk_score_min: Optional[int] = None,
+                    risk_score_max: Optional[int] = None,
+                    limit: int = 100) -> dict:
         """
         Search for domains with optional filters.
         
@@ -157,9 +265,9 @@ class Client(BaseClient):
         """
         demisto.debug(f'Searching domains with query: {query}')
         url_suffix = 'explore/domain/search'
-     
+        
         params = {k: v for k, v in {
-            'query': query,
+            'domain': query,
             'start_date': start_date,
             'end_date': end_date,
             'risk_score_min': risk_score_min,
@@ -167,8 +275,11 @@ class Client(BaseClient):
             'limit': limit
         }.items() if v is not None}
         
-        return self._http_request('GET', url_suffix, params=params)
-    
+        try:
+            return self._http_request('GET', url_suffix, params=params)
+        except Exception as e:
+                demisto.error(f"Error in search_domains API request: {str(e)}")
+
     def list_domain_infratags(self, domains: list, cluster: Optional[bool] = False, mode: Optional[str] = 'live', match: Optional[str] = 'self', as_of: Optional[str] = None) -> dict:
         """
         Get infratags for multiple domains with optional clustering and additional filtering options.
@@ -185,7 +296,7 @@ class Client(BaseClient):
         """
         demisto.debug(f'Fetching infratags for domains: {domains} with cluster={cluster}, mode={mode}, match={match}, as_of={as_of}')
         
-        # Loop through the domains to create individual requests
+       
         results = {}
         for domain in domains:
             url = f'https://api.silentpush.com/api/v1/merge-api/explore/domain/infratag/{domain}'
@@ -196,13 +307,16 @@ class Client(BaseClient):
                 'as_of': as_of
             }
             try:
-                response = self._http_request('GET', url, params=data)  # Assuming GET method for this endpoint
+             
+                response = self._http_request('GET', url, params=data) 
                 results[domain] = response
             except Exception as e:
                 demisto.error(f"Error fetching infratags for domain {domain}: {str(e)}")
                 results[domain] = {"error": str(e)}
 
         return results
+
+
 
 def test_module(client: Client) -> str:
     """
@@ -232,35 +346,55 @@ def test_module(client: Client) -> str:
 ''' COMMAND FUNCTIONS '''
 
 
-def list_domain_information_command(client: Client, args: dict) -> CommandResults:
+def list_domain_information_command(client: Client, args: Dict[str, Any]) -> CommandResults:
     """
     Command handler for fetching domain information.
     
-    This function processes the command for 'silentpush-list-domain-information', retrieves the
-    domain information using the client, and formats it for XSOAR output.
-    
     Args:
-        client (Client): The client instance to fetch the data.
-        args (dict): The arguments passed to the command, including the domain.
-    
+        client (Client): The client instance to fetch the data
+        args (dict): Command arguments
+        
     Returns:
-        CommandResults: The command results containing readable output and the raw response.
+        CommandResults: XSOAR command results
     """
-    domain = args.get('domain', 'silentpush.com')
-    demisto.debug(f'Processing domain: {domain}')
-    raw_response = client.list_domain_information(domain)
+ 
+    domains_arg = args.get('domains', args.get('domain'))
+    
+    if not domains_arg:
+        raise DemistoException('No domains provided. Please provide domains using either the "domain" or "domains" argument.')
+    
+   
+    if isinstance(domains_arg, str):
+        domains = [d.strip() for d in domains_arg.split(',')]
+    else:
+        domains = domains_arg
+    
+    demisto.debug(f'Processing domain(s): {domains}')
+    
+   
+    raw_response = client.list_domain_information(domains)
     demisto.debug(f'Response from API: {raw_response}')
-
-    readable_output = tableToMarkdown('Domain Information', raw_response)
-
+    
+ 
+    markdown = []
+    for domain_info in raw_response.get('domains', []):
+        markdown.append(f"### Domain: {domain_info.get('domain')}")
+        markdown.append("#### Domain Information:")
+        markdown.append(f"- Age: {domain_info.get('age', 'N/A')} days")
+        markdown.append(f"- Registrar: {domain_info.get('registrar', 'N/A')}")
+        markdown.append(f"- Created Date: {domain_info.get('whois_created_date', 'N/A')}")
+        markdown.append(f"- Risk Score: {domain_info.get('sp_risk_score', 'N/A')}")
+        markdown.append("\n")
+    
+    readable_output = '\n'.join(markdown)
+    
     return CommandResults(
         outputs_prefix='SilentPush.Domain',
         outputs_key_field='domain',
-        outputs=raw_response,
+        outputs=raw_response.get('domains', []),
         readable_output=readable_output,
         raw_response=raw_response
     )
-
 
 def get_domain_certificates_command(client: Client, args: dict) -> CommandResults:
     """
@@ -269,11 +403,17 @@ def get_domain_certificates_command(client: Client, args: dict) -> CommandResult
     domain = args.get('domain', 'silentpush.com')
     demisto.debug(f'Processing certificates for domain: {domain}')
 
-    
-    demisto.debug('Entering get_domain_certificates_command function')
-
     raw_response = client.get_domain_certificates(domain)
     demisto.debug(f'Response from API: {raw_response}')
+
+    if 'error' in raw_response:
+        return CommandResults(
+            outputs_prefix='SilentPush.Certificates',
+            outputs_key_field='domain',
+            outputs=raw_response,
+            readable_output=f"Error: {raw_response['error']}",
+            raw_response=raw_response
+        )
 
     readable_output = tableToMarkdown('Domain Certificates', raw_response)
 
@@ -284,10 +424,9 @@ def get_domain_certificates_command(client: Client, args: dict) -> CommandResult
         readable_output=readable_output,
         raw_response=raw_response
     )
-
+    
 
 def search_domains_command(client: Client, args: dict) -> CommandResults:
-    
     query = args.get('query')
     start_date = args.get('start_date')
     end_date = args.get('end_date')
@@ -297,16 +436,30 @@ def search_domains_command(client: Client, args: dict) -> CommandResults:
     
     demisto.debug(f'Searching domains with query: {query}')
 
-    raw_response = client.search_domains(
-        query=query,
-        start_date=start_date,
-        end_date=end_date,
-        risk_score_min=risk_score_min,
-        risk_score_max=risk_score_max,
-        limit=limit
-    )
+    try:
+        raw_response = client.search_domains(
+            query=query,
+            start_date=start_date,
+            end_date=end_date,
+            risk_score_min=risk_score_min,
+            risk_score_max=risk_score_max,
+            limit=limit
+        )
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error'
+        )
     
-    readable_output = tableToMarkdown('Domain Search Results', raw_response.get('results', []))
+   
+    if raw_response.get('response') and 'records' in raw_response['response']:
+        records = raw_response['response']['records']
+    else:
+        records = []
+
+    readable_output = tableToMarkdown('Domain Search Results', records)
 
     return CommandResults(
         outputs_prefix='SilentPush.SearchResults',
