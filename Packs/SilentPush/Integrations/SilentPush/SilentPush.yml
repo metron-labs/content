@@ -98,6 +98,33 @@ script:
           description: The domain name in the search results
           type: string
 
+    - name: silentpush-list-domain-infratags
+      description: Fetches infratag information for a given domain
+      arguments:
+        - name: domain
+          description: The domain to fetch infratags for
+          required: true
+          default: false
+        - name: mode
+          description: The mode for fetching infratags (live or padns)
+          required: false
+          default: "live"
+        - name: match
+          description: How to handle self-hosted infrastructure (self or full)
+          required: false
+          default: "self"
+        - name: as_of
+          description: The date or epoch time to use for fetching infratags from PADNS data
+          required: false
+          default: false
+      outputs:
+        - contextPath: SilentPush.Infratags
+          description: Infratag information for the domain
+          type: unknown
+        - contextPath: SilentPush.Infratags.domain
+          description: The domain name
+          type: string
+          
 dockerimage: demisto/python3:3.10
 fromversion: 6.0.0
 tests:

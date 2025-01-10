@@ -157,8 +157,7 @@ class Client(BaseClient):
         """
         demisto.debug(f'Searching domains with query: {query}')
         url_suffix = 'explore/domain/search'
-        
-        # Build parameters dictionary with only non-None values
+     
         params = {k: v for k, v in {
             'query': query,
             'start_date': start_date,
@@ -169,7 +168,41 @@ class Client(BaseClient):
         }.items() if v is not None}
         
         return self._http_request('GET', url_suffix, params=params)
+    
+    def list_domain_infratags(self, domains: list, cluster: Optional[bool] = False, mode: Optional[str] = 'live', match: Optional[str] = 'self', as_of: Optional[str] = None) -> dict:
+        """
+        Get infratags for multiple domains with optional clustering and additional filtering options.
 
+        Args:
+            domains (list): A list of domains to retrieve infratags for.
+            cluster (bool, optional): Whether to cluster the results. Defaults to False.
+            mode (str, optional): Mode for the lookup, either 'live' (default) or 'padns'.
+            match (str, optional): Handling of self-hosted infrastructure, either 'self' (default) or 'full'.
+            as_of (str, optional): Date or timestamp for filtering the data.
+
+        Returns:
+            dict: A dictionary containing infratags for the provided domains.
+        """
+        demisto.debug(f'Fetching infratags for domains: {domains} with cluster={cluster}, mode={mode}, match={match}, as_of={as_of}')
+        
+        # Loop through the domains to create individual requests
+        results = {}
+        for domain in domains:
+            url = f'https://api.silentpush.com/api/v1/merge-api/explore/domain/infratag/{domain}'
+            data = {
+                'cluster': cluster,
+                'mode': mode,
+                'match': match,
+                'as_of': as_of
+            }
+            try:
+                response = self._http_request('GET', url, params=data)  # Assuming GET method for this endpoint
+                results[domain] = response
+            except Exception as e:
+                demisto.error(f"Error fetching infratags for domain {domain}: {str(e)}")
+                results[domain] = {"error": str(e)}
+
+        return results
 
 def test_module(client: Client) -> str:
     """
@@ -215,7 +248,6 @@ def list_domain_information_command(client: Client, args: dict) -> CommandResult
     """
     domain = args.get('domain', 'silentpush.com')
     demisto.debug(f'Processing domain: {domain}')
-
     raw_response = client.list_domain_information(domain)
     demisto.debug(f'Response from API: {raw_response}')
 
@@ -256,7 +288,6 @@ def get_domain_certificates_command(client: Client, args: dict) -> CommandResult
 
 def search_domains_command(client: Client, args: dict) -> CommandResults:
     
-    # Extract parameters from args with type conversion
     query = args.get('query')
     start_date = args.get('start_date')
     end_date = args.get('end_date')
@@ -284,6 +315,47 @@ def search_domains_command(client: Client, args: dict) -> CommandResults:
         readable_output=readable_output,
         raw_response=raw_response
     )
+    
+def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
+    """
+    Command handler for fetching infratags for multiple domains.
+
+    Args:
+        client (Client): The client instance to fetch the data.
+        args (dict): The arguments passed to the command, including domains, clustering option, and optional filters.
+
+    Returns:
+        CommandResults: The command results containing readable output and the raw response.
+    """
+  
+    domains = argToList(args.get('domains', ''))
+    cluster = argToBoolean(args.get('cluster', False))
+    mode = args.get('mode', 'live')  # Default to 'live'
+    match = args.get('match', 'self')  # Default to 'self'
+    as_of = args.get('as_of', None)  # Default to None
+  
+    if not domains:
+        raise ValueError('"domains" argument is required and cannot be empty.')
+
+    demisto.debug(f'Processing infratags for domains: {domains} with cluster={cluster}, mode={mode}, match={match}, as_of={as_of}')
+
+    try:
+        raw_response = client.list_domain_infratags(domains, cluster, mode, match, as_of)
+        demisto.debug(f'Response from API: {raw_response}')
+    except Exception as e:
+        demisto.error(f'Error occurred while fetching infratags: {str(e)}')
+        raise
+
+    readable_output = tableToMarkdown('Domain Infratags', raw_response.get('results', []))
+
+    return CommandResults(
+        outputs_prefix='SilentPush.InfraTags',
+        outputs_key_field='domain',
+        outputs=raw_response,
+        readable_output=readable_output,
+        raw_response=raw_response
+    )
+
 
 
 ''' MAIN FUNCTION '''
@@ -326,6 +398,7 @@ def main():
             'silentpush-list-domain-information': list_domain_information_command,
             'silentpush-get-domain-certificates': get_domain_certificates_command,
             'silentpush-search-domains': search_domains_command,
+            'silentpush-list-domain-infratags': list_domain_infratags_command,
         }
 
         if command in command_handlers:
