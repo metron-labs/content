@@ -330,9 +330,9 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
   
     domains = argToList(args.get('domains', ''))
     cluster = argToBoolean(args.get('cluster', False))
-    mode = args.get('mode', 'live')  # Default to 'live'
-    match = args.get('match', 'self')  # Default to 'self'
-    as_of = args.get('as_of', None)  # Default to None
+    mode = args.get('mode', 'live')
+    match = args.get('match', 'self')
+    as_of = args.get('as_of', None)
   
     if not domains:
         raise ValueError('"domains" argument is required and cannot be empty.')
