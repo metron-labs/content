@@ -355,7 +355,66 @@ class Client(BaseClient):
             raise DemistoException(f'Failed to fetch enrichment data for {resource_type} {resource}: {str(e)}')
 
 
-
+    def list_ip_information(self, ips: Union[str, List[str]], explain: bool = False, scan_data: bool = False, sparse: Optional[str] = None) -> Dict:
+        """
+        Fetches information for both IPv4 and IPv6 addresses.
+        
+        Args:
+            ips: Either a single IP string or a list of IP strings
+            explain: Whether to show details of data used to calculate scores
+            scan_data: Whether to include scan data (IPv4 only)
+            sparse: Optional specific data to return ('asn', 'asname', or 'sp_risk_score')
+            
+        Returns:
+            Dict: Combined results for all IP addresses
+        """
+        if isinstance(ips, str):
+            ip_list = [ip.strip() for ip in ips.split(',')]
+        else:
+            ip_list = ips
+            
+        if len(ip_list) > 100:
+            raise DemistoException("Maximum of 100 IPs can be submitted in a single request")
+        
+        results = []
+        
+        for ip in ip_list:
+            try:
+                # Determine if IPv4 or IPv6 based on presence of colons
+                is_ipv6 = ':' in ip
+                
+                # Build parameters
+                params = {
+                    'explain': 1 if explain else 0
+                }
+                if sparse:
+                    params['sparse'] = sparse
+                if not is_ipv6 and scan_data:
+                    params['scan_data'] = 1
+                    
+                url_suffix = f"explore/{'ipv6' if is_ipv6 else 'ipv4'}/ipv{6 if is_ipv6 else 4}info/{ip}"
+                
+                response = self._http_request(
+                    method='GET',
+                    url_suffix=url_suffix,
+                    params=params
+                )
+                
+                ip_info = response.get('response', {}).get('ip2asn', [{}])[0]
+                
+                ip_info['ip_type'] = 'ipv6' if is_ipv6 else 'ipv4'
+                
+                results.append(ip_info)
+                
+            except Exception as e:
+                demisto.error(f"Error fetching information for IP {ip}: {str(e)}")
+                results.append({
+                    'ip': ip,
+                    'ip_type': 'ipv6' if ':' in ip else 'ipv4',
+                    'error': str(e)
+                })
+        
+        return {'ips': results}
 
 
 
@@ -652,6 +711,87 @@ def get_enrichment_data_command(client: Client, args: Dict[str, Any]) -> Command
     except Exception as e:
         demisto.error(f'Failed to get enrichment data: {str(e)}')
         raise
+    
+    
+def list_ip_information_command(client: Client, args: Dict[str, Any]) -> CommandResults:
+    """
+    Command handler for fetching IP information.
+    
+    Args:
+        client (Client): The client instance to fetch the data
+        args (dict): Command arguments including:
+            - ips (str): Comma-separated list of IP addresses
+            - explain (bool): Whether to show calculation details
+            - scan_data (bool): Whether to include scan data (IPv4 only)
+            - sparse (str): Optional specific data to return
+            
+    Returns:
+        CommandResults: XSOAR command results
+    """
+    
+    ips = args.get('ips')
+    if not ips:
+        raise DemistoException('No IPs provided. Please provide IPs using the "ips" argument.')
+    
+    explain = argToBoolean(args.get('explain', False))
+    scan_data = argToBoolean(args.get('scan_data', False))
+    sparse = args.get('sparse')
+    
+    if sparse and sparse not in ['asn', 'asname', 'sp_risk_score']:
+        raise DemistoException('Invalid sparse value. Must be one of: asn, asname, sp_risk_score')
+    
+    try:
+    
+        raw_response = client.list_ip_information(ips, explain, scan_data, sparse)
+        ip_data = raw_response.get('ips', [])
+        
+        markdown = ['### IP Information Results\n']
+        
+        for ip_info in ip_data:
+            if 'error' in ip_info:
+                markdown.append(f"#### IP: {ip_info.get('ip', 'N/A')} (Error)\n")
+                markdown.append(f"Error: {ip_info['error']}\n")
+                continue
+                
+            markdown.append(f"#### IP: {ip_info.get('ip', 'N/A')} ({ip_info.get('ip_type', 'unknown').upper()})")
+            
+            basic_info = {
+                'ASN': ip_info.get('asn', 'N/A'),
+                'AS Name': ip_info.get('asname', 'N/A'),
+                'Risk Score': ip_info.get('sp_risk_score', 'N/A'),
+                'Subnet': ip_info.get('subnet', 'N/A')
+            }
+            markdown.append(tableToMarkdown('Basic Information', [basic_info], headers=basic_info.keys()))
+            
+            if location_info := ip_info.get('ip_location', {}):
+                location_data = {
+                    'Country': location_info.get('country_name', 'N/A'),
+                    'Continent': location_info.get('continent_name', 'N/A'),
+                    'EU Member': 'Yes' if location_info.get('country_is_in_european_union') else 'No'
+                }
+                markdown.append(tableToMarkdown('Location Information', [location_data], headers=location_data.keys()))
+            
+            if ip_info.get('ip_type') == 'ipv4':
+                additional_info = {
+                    'PTR Record': ip_info.get('ip_ptr', 'N/A'),
+                    'Is TOR Exit Node': 'Yes' if ip_info.get('ip_is_tor_exit_node') else 'No',
+                    'Is DSL/Dynamic': 'Yes' if ip_info.get('ip_is_dsl_dynamic') else 'No'
+                }
+                markdown.append(tableToMarkdown('Additional Information', [additional_info], headers=additional_info.keys()))
+            
+            markdown.append('\n')
+        
+        return CommandResults(
+            outputs_prefix='SilentPush.IP',
+            outputs_key_field='ip',
+            outputs=ip_data,
+            readable_output='\n'.join(markdown),
+            raw_response=raw_response
+        )
+        
+    except Exception as e:
+        demisto.error(f"Error in list_ip_information_command: {str(e)}")
+        raise
 
 ''' MAIN FUNCTION '''
 
@@ -694,7 +834,8 @@ def main():
             'silentpush-get-domain-certificates': get_domain_certificates_command,
             'silentpush-search-domains': search_domains_command,
             'silentpush-list-domain-infratags': list_domain_infratags_command,
-            'silentpush-get-enrichment-data' : get_enrichment_data_command
+            'silentpush-get-enrichment-data' : get_enrichment_data_command,
+            'silentpush-list-ip-information' : list_ip_information_command
         }
 
         if command in command_handlers:

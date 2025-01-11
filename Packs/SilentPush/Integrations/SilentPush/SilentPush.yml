@@ -1,124 +1,160 @@
 commonfields:
   id: SilentPush
   version: -1
+name: SilentPush
+display: SilentPush
+category: Data Enrichment & Threat Intelligence
+description: Integration with SilentPush API for domain and IP intelligence
+configuration:
+  - display: API Key
+    name: credentials
+    type: 9
+    required: true
+  - display: Base URL
+    name: url
+    defaultvalue: https://api.silentpush.com
+    type: 0
+    required: true
+  - display: Trust any certificate (not secure)
+    name: insecure
+    type: 8
+    required: false
+  - display: Use system proxy settings
+    name: proxy
+    type: 8
+    required: false
+script:
   type: python
   subtype: python3
-  tags: []
-  name: SilentPush
-  description: Integration with SilentPush API to retrieve domain information and risk scores.
-  enabled: true
-  author: Your Name
-  comments: Integration for fetching domain information, certificates, and more from SilentPush.
-  
-scripts:
-  - id: list-domain-information
-    name: List Domain Information
-    description: Fetches information about domains, including WHOIS data and risk scores.
-    type: python
-    args:
-      - default: false
-        isArray: true
-        isRequired: false
-        name: domains
-        description: Comma-separated list of domains to fetch information for.
-    command: |
-      list_domain_information_command(client=client, args=args)
+  script: ''
+  commands:
+  - name: silentpush-list-domain-information
+    arguments:
+      - name: domains
+        description: Comma-separated list of domains to fetch information for
+        required: true
+      - name: domain
+        description: Single domain to fetch information for (alternative to domains)
+        required: false
+    outputs:
+      - contextPath: SilentPush.Domain
+        description: Domain information including WHOIS data and risk scores
+        type: unknown
+    description: Fetches domain information including WHOIS data and risk scores
+    execution: false
 
-  - id: get-domain-certificates
-    name: Get Domain Certificates
-    description: Fetches SSL/TLS certificates for the specified domain.
-    type: python
-    args:
-      - default: true
-        isArray: false
-        isRequired: true
-        name: domain
-        description: The domain to fetch certificate data for.
-    command: |
-      get_domain_certificates_command(client=client, args=args)
+  - name: silentpush-get-domain-certificates
+    arguments:
+      - name: domain
+        description: Domain to fetch certificate information for
+        required: true
+    outputs:
+      - contextPath: SilentPush.Certificates
+        description: Certificate information for the domain
+        type: unknown
+    description: Fetches SSL/TLS certificate data for a given domain
+    execution: false
 
-  - id: search-domains
-    name: Search Domains
-    description: Searches for domains with optional filters like risk score, registration date, etc.
-    type: python
-    args:
-      - default: false
-        isArray: false
-        isRequired: false
-        name: query
-        description: Optional search query for domains.
-      - default: false
-        isArray: false
-        isRequired: false
-        name: start_date
-        description: Optional start date for filtering.
-      - default: false
-        isArray: false
-        isRequired: false
-        name: end_date
-        description: Optional end date for filtering.
-      - default: false
-        isArray: false
-        isRequired: false
-        name: risk_score_min
-        description: Minimum risk score filter.
-      - default: false
-        isArray: false
-        isRequired: false
-        name: risk_score_max
-        description: Maximum risk score filter.
-      - default: false
-        isArray: false
-        isRequired: false
-        name: limit
-        description: Limit the number of results returned.
-    command: |
-      search_domains_command(client=client, args=args)
+  - name: silentpush-search-domains
+    arguments:
+      - name: query
+        description: Search query string (e.g., domain pattern, keywords)
+        required: false
+      - name: start_date
+        description: Start date for domain registration (ISO8601 format)
+        required: false
+      - name: end_date
+        description: End date for domain registration (ISO8601 format)
+        required: false
+      - name: risk_score_min
+        description: Minimum risk score filter
+        required: false
+      - name: risk_score_max
+        description: Maximum risk score filter
+        required: false
+      - name: limit
+        description: Maximum number of results to return (default 100)
+        required: false
+    outputs:
+      - contextPath: SilentPush.SearchResults
+        description: Domain search results
+        type: unknown
+    description: Search for domains with optional filters
+    execution: false
 
-test:
-  id: test-module
-  name: Test Module
-  description: Tests the connectivity to the SilentPush API and verifies the API key.
-  type: python
-  command: |
-    test_module(client=client)
+  - name: silentpush-list-domain-infratags
+    arguments:
+      - name: domains
+        description: List of domains to fetch infratags for
+        required: true
+      - name: cluster
+        description: Whether to cluster the results
+        required: false
+      - name: mode
+        description: Mode for lookup (live/padns)
+        required: false
+      - name: match
+        description: Handling of self-hosted infrastructure (self/full)
+        required: false
+      - name: as_of
+        description: Date or timestamp for filtering data
+        required: false
+    outputs:
+      - contextPath: SilentPush.InfraTags
+        description: Infratags for the provided domains
+        type: unknown
+    description: Get infratags for multiple domains
+    execution: false
 
-configurations:
-  - id: SilentPush_Config
-    name: SilentPush Configuration
-    description: Configuration for connecting to SilentPush API.
-    type: python
-    enabled: true
-    isArray: false
-    isRequired: true
-    fields:
-      - id: api_key
-        name: API Key
-        description: API Key for SilentPush.
-        isArray: false
-        isRequired: true
-      - id: base_url
-        name: Base URL
-        description: The base URL for the SilentPush API.
-        isArray: false
-        isRequired: true
-      - id: verify_ssl
-        name: Verify SSL
-        description: Whether to verify SSL certificates.
-        isArray: false
-        isRequired: false
-      - id: proxy
-        name: Use Proxy
-        description: Whether to use a proxy server.
-        isArray: false
-        isRequired: false
+  - name: silentpush-get-enrichment-data
+    arguments:
+      - name: resource
+        description: Resource to get enrichment data for (domain name, IPv4, or IPv6)
+        required: true
+      - name: resource_type
+        description: Type of resource (domain/ipv4/ipv6)
+        required: true
+      - name: explain
+        description: Whether to show calculation details
+        required: false
+      - name: scan_data
+        description: Whether to include scan data
+        required: false
+    outputs:
+      - contextPath: SilentPush.Enrichment
+        description: Enrichment data for the resource
+        type: unknown
+    description: Retrieve enrichment data for a resource
+    execution: false
 
-outputs:
-  - id: SilentPush.Domain
-    contextPath: SilentPush.Domain
-    type: array
-    description: Domain information and risk scores.
-  - id: SilentPush.Certificates
-    contextPath: SilentPush.Certificates
-    type: array
-    description: SSL/TLS certificate data.
+  - name: silentpush-list-ip-information
+    arguments:
+      - name: ips
+        description: Comma-separated list of IP addresses
+        required: true
+      - name: explain
+        description: Whether to show calculation details
+        required: false
+      - name: scan_data
+        description: Whether to include scan data (IPv4 only)
+        required: false
+      - name: sparse
+        description: Specific data to return (asn/asname/sp_risk_score)
+        required: false
+    outputs:
+      - contextPath: SilentPush.IP
+        description: IP information and analysis
+        type: unknown
+    description: Fetches information for IPv4 and IPv6 addresses
+    execution: false
+
+  - name: test-module
+    description: Validates the API connection and authentication
+    execution: false
+
+  dockerimage: demisto/python3:3.9
+  runonce: false
+  isfetch: false
+  longRunning: false
+  longRunningPort: false
+  feed: false
