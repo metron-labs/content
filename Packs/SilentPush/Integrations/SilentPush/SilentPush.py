@@ -312,9 +312,51 @@ class Client(BaseClient):
                 results[domain] = response
             except Exception as e:
                 demisto.error(f"Error fetching infratags for domain {domain}: {str(e)}")
-                results[domain] = {"error": str(e)}
+                
+                
+    def get_enrichment_data(self, resource: str, resource_type: str, explain: bool = False, scan_data: bool = False) -> Dict:
+        """
+        Retrieve comprehensive enrichment information for a given resource (domain, IPv4, or IPv6).
+        
+        Args:
+            resource (str): The resource identifier (domain name, IPv4 address, or IPv6 address)
+            resource_type (str): Type of resource ('domain', 'ipv4', 'ipv6')
+            explain (bool, optional): Whether to show details of data used to calculate scores (default: False)
+            scan_data (bool, optional): Whether to show details of data collected from scanning (default: False)
+        
+        Returns:
+            Dict: The enrichment data response from the API
+            
+        Raises:
+            ValueError: If resource_type is not one of 'domain', 'ipv4', 'ipv6'
+            DemistoException: If the API request fails
+        """
+        if resource_type not in {'domain', 'ipv4', 'ipv6'}:
+            raise ValueError("resource_type must be one of: 'domain', 'ipv4', 'ipv6'")
+            
+        demisto.debug(f'Fetching enrichment data for {resource_type}: {resource}')
+        url_suffix = f'explore/enrich/{resource_type}/{resource}'
+        
+        params = {
+            'explain': 1 if explain else 0,
+            'scan_data': 1 if scan_data else 0
+        }
+        
+        try:
+            response = self._http_request(
+                method='GET',
+                url_suffix=url_suffix,
+                params=params
+            )
+            demisto.debug(f'Enrichment response: {response}')
+            return response
+            
+        except Exception as e:
+            raise DemistoException(f'Failed to fetch enrichment data for {resource_type} {resource}: {str(e)}')
 
-        return results
+
+
+
 
 
 
@@ -510,6 +552,106 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
     )
 
 
+def get_enrichment_data_command(client: Client, args: Dict[str, Any]) -> CommandResults:
+    """
+    Command handler for fetching enrichment data for a resource (domain, IPv4, or IPv6).
+    
+    Args:
+        client (Client): The client instance to use for API calls
+        args (Dict[str, Any]): Command arguments
+            - resource (str): The resource to get enrichment data for (domain name, IPv4, or IPv6)
+            - resource_type (str): Type of resource ('domain', 'ipv4', 'ipv6') 
+            - explain (bool, optional): Whether to show calculation details
+            - scan_data (bool, optional): Whether to include scan data
+    
+    Returns:
+        CommandResults: The formatted results for XSOAR
+    """
+    resource = args.get('resource')
+    resource_type = args.get('resource_type')  
+    
+    if not resource or not resource_type:
+        raise ValueError('"resource" and "resource_type" arguments are required')
+        
+   
+    if resource_type not in {'domain', 'ipv4', 'ipv6'}:
+        raise ValueError("'resource_type' must be one of: 'domain', 'ipv4', 'ipv6'")
+        
+    explain = argToBoolean(args.get('explain', False))
+    scan_data = argToBoolean(args.get('scan_data', False))
+    
+    demisto.debug(f'Processing enrichment data for {resource_type}: {resource}')
+    
+    try:
+        raw_response = client.get_enrichment_data(
+            resource=resource,
+            resource_type=resource_type,
+            explain=explain,
+            scan_data=scan_data
+        )
+        
+        if not raw_response:
+            return CommandResults(
+                readable_output=f'No enrichment data found for {resource_type}: {resource}',
+                outputs_prefix='SilentPush.Enrichment',
+                outputs_key_field='resource',
+                outputs={
+                    'resource': resource,
+                    'type': resource_type,
+                    'found': False
+                }
+            )
+        
+        markdown = []
+        markdown.append(f'## Enrichment Data for {resource_type}: {resource}\n')
+        
+        enrichment_data = raw_response.get('response', {})
+        
+       
+        overview = {
+            'Resource': resource,
+            'Type': resource_type
+        }
+       
+        if 'risk_score' in enrichment_data:
+            overview['Risk Score'] = enrichment_data['risk_score']   
+        if 'first_seen' in enrichment_data:
+            overview['First Seen'] = enrichment_data['first_seen']
+        if 'last_seen' in enrichment_data:
+            overview['Last Seen'] = enrichment_data['last_seen']
+            
+        markdown.append(tableToMarkdown('Overview', [overview]))
+        
+        if scan_data and enrichment_data.get('scan_data'):
+            scan_info = enrichment_data['scan_data']
+            markdown.append('\n### Scan Data')
+            markdown.append(tableToMarkdown('', [scan_info]))
+               
+        if explain and enrichment_data.get('explanation'):
+            explain_info = enrichment_data['explanation']
+            markdown.append('\n### Score Explanation')
+            markdown.append(tableToMarkdown('', [explain_info]))
+            
+        readable_output = '\n'.join(markdown)
+        
+        outputs = {
+            'resource': resource,
+            'type': resource_type,
+            'found': True,
+            'data': enrichment_data
+        }
+        
+        return CommandResults(
+            outputs_prefix='SilentPush.Enrichment',
+            outputs_key_field='resource',
+            outputs=outputs,
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+        
+    except Exception as e:
+        demisto.error(f'Failed to get enrichment data: {str(e)}')
+        raise
 
 ''' MAIN FUNCTION '''
 
@@ -552,6 +694,7 @@ def main():
             'silentpush-get-domain-certificates': get_domain_certificates_command,
             'silentpush-search-domains': search_domains_command,
             'silentpush-list-domain-infratags': list_domain_infratags_command,
+            'silentpush-get-enrichment-data' : get_enrichment_data_command
         }
 
         if command in command_handlers:
