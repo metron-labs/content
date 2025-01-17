@@ -104,91 +104,75 @@ class Client(BaseClient):
             demisto.error(f'Error in API call: {str(e)}')
             raise
         
-    def list_domain_information(self, domains: Union[str, List[str]]) -> Dict:
+    def list_domain_information(self, domains: List[str]) -> Dict:
         """
-        Fetches domain information including WHOIS data and risk scores for multiple domains.
-        
+        Fetches domain information including WHOIS data, risk scores, and live WHOIS for multiple domains.
+
         Args:
-            domains: Either a single domain string or a list of domain strings
-            
+            domains: List of domain strings
+
         Returns:
-            Dict: A dictionary containing combined domain information and risk scores
+            Dict: A dictionary containing combined domain information, risk scores, and live WHOIS information
         """
-        demisto.debug(f'Fetching domain information for: {domains}')
-        domain_list = [domains] if isinstance(domains, str) else domains
-        
-        if len(domain_list) > 100:
+        if len(domains) > 100:
             raise DemistoException("Maximum of 100 domains can be submitted in a single request")
-        
-        if len(domain_list) == 1:
 
-            domain = domain_list[0]
-            try:
-
-                domain_info_response = self._http_request(
-                    method='GET',
-                    url_suffix=f'explore/domain/domaininfo/{domain}'
-                )
-                domain_info = domain_info_response.get('response', {}).get('domaininfo', {})
-                
-                risk_score_response = self._http_request(
-                    method='GET',
-                    url_suffix=f'explore/domain/riskscore/{domain}'
-                )
-                risk_info = risk_score_response.get('response', {})
-                
-                combined_info = {
-                    'domain': domain,
-                    **domain_info,
-                    'sp_risk_score': risk_info.get('sp_risk_score'),
-                    'sp_risk_score_explain': risk_info.get('sp_risk_score_explain')
-                }
-                
-                return {'domains': [combined_info]}
-                
-            except Exception as e:
-                raise DemistoException(f'Failed to fetch information for domain {domain}: {str(e)}')
-        
-        else:
+        try:
             
-            try:
-              
-                domains_data = {'domains': domain_list}
-                bulk_info_response = self._http_request(
-                    method='POST',
-                    url_suffix='explore/bulk/domaininfo',
-                    data=domains_data 
+            domains_data = {'domains': domains}
+
+           
+            bulk_info_response = self._http_request(
+                method='POST',
+                url_suffix='explore/bulk/domaininfo',
+                data=domains_data
+            )
+
+            
+            bulk_risk_response = self._http_request(
+                method='POST',
+                url_suffix='explore/bulk/domain/riskscore',
+                data=domains_data
+            )
+
+            
+            live_whois_info = {}
+            for domain in domains:
+                live_whois_response = self._http_request(
+                    method='GET',
+                    url_suffix=f'explore/domain/whoislive/{domain}'
                 )
+                live_whois_info[domain] = live_whois_response.get('response', {})
+
+            domain_info_list = bulk_info_response.get('response', {}).get('domaininfo', [])
+            risk_score_list = bulk_risk_response.get('response', [])
+
+           
+            domain_info_dict = {item['domain']: item for item in domain_info_list}
+            risk_score_dict = {item['domain']: item for item in risk_score_list}
+
+          
+            combined_results = []
+            for domain in domains:
+                domain_data = domain_info_dict.get(domain, {})
+                risk_data = risk_score_dict.get(domain, {})
+                whois_data = live_whois_info.get(domain, {})
+
                 
-                bulk_risk_response = self._http_request(
-                    method='POST',
-                    url_suffix='explore/bulk/domain/riskscore',
-                    data=domains_data  
-                )
-                
-                domain_info_list = bulk_info_response.get('response', {}).get('domaininfo', [])
-                risk_score_list = bulk_risk_response.get('response', [])
-                domain_info_dict = {item['domain']: item for item in domain_info_list}
-                risk_score_dict = {item['domain']: item for item in risk_score_list}
-                
-                combined_results = []
-                for domain in domain_list:
-                    domain_data = domain_info_dict.get(domain, {})
-                    risk_data = risk_score_dict.get(domain, {})
-                    
-                    combined_results.append({
-                        'domain': domain,
-                        **domain_data,
-                        'sp_risk_score': risk_data.get('sp_risk_score'),
-                        'sp_risk_score_explain': risk_data.get('sp_risk_score_explain')
-                    })
-                
-                return {'domains': combined_results}
-                
-            except Exception as e:
-                raise DemistoException(f'Failed to fetch bulk domain information: {str(e)}')
+                combined_results.append({
+                    'domain': domain,
+                    **domain_data,
+                    'sp_risk_score': risk_data.get('sp_risk_score'),
+                    'sp_risk_score_explain': risk_data.get('sp_risk_score_explain'),
+                    'whois_info': whois_data
+                })
+
+            return {'domains': combined_results}
+
+        except Exception as e:
+            raise DemistoException(f'Failed to fetch bulk domain information: {str(e)}')
+            
         
-    
     def get_domain_certificates(self, domain: str) -> dict:
         """
         Fetches SSL/TLS certificate data for a given domain.
@@ -279,8 +263,8 @@ class Client(BaseClient):
             return self._http_request('GET', url_suffix, params=params)
         except Exception as e:
                 demisto.error(f"Error in search_domains API request: {str(e)}")
-
-    def list_domain_infratags(self, domains: list, cluster: Optional[bool] = False, mode: Optional[str] = 'live', match: Optional[str] = 'self', as_of: Optional[str] = None) -> dict:
+                
+    def list_domain_infratags(self, domains: list, cluster: bool = False, mode: str = 'live', match: str = 'self', as_of: Optional[str] = None) -> dict:
         """
         Get infratags for multiple domains with optional clustering and additional filtering options.
 
@@ -296,23 +280,36 @@ class Client(BaseClient):
         """
         demisto.debug(f'Fetching infratags for domains: {domains} with cluster={cluster}, mode={mode}, match={match}, as_of={as_of}')
         
-       
-        results = {}
-        for domain in domains:
-            url = f'https://api.silentpush.com/api/v1/merge-api/explore/domain/infratag/{domain}'
-            data = {
-                'cluster': cluster,
-                'mode': mode,
-                'match': match,
-                'as_of': as_of
-            }
-            try:
-             
-                response = self._http_request('GET', url, params=data) 
-                results[domain] = response
-            except Exception as e:
-                demisto.error(f"Error fetching infratags for domain {domain}: {str(e)}")
-                
+        
+        url = 'explore/bulk/domain/infratags'  
+        
+      
+        payload = {
+            'domains': domains
+        }
+        params = {
+            'mode': mode,
+            'match': match,
+            'clusters': 1 if cluster else 0  
+        }
+        
+        if as_of:
+            params['as_of'] = as_of
+
+        try:
+            
+            response = self._http_request(
+                method='POST',
+                url_suffix=url,
+                params=params,
+                data=payload  
+            )
+            return response
+        except Exception as e:
+            # Log error if the request fails
+            demisto.error(f"Error fetching infratags: {str(e)}")
+            raise
+
                 
     def get_enrichment_data(self, resource: str, resource_type: str, explain: bool = False, scan_data: bool = False) -> Dict:
         """
@@ -326,14 +323,14 @@ class Client(BaseClient):
         
         Returns:
             Dict: The enrichment data response from the API
-            
+                
         Raises:
             ValueError: If resource_type is not one of 'domain', 'ipv4', 'ipv6'
             DemistoException: If the API request fails
         """
         if resource_type not in {'domain', 'ipv4', 'ipv6'}:
             raise ValueError("resource_type must be one of: 'domain', 'ipv4', 'ipv6'")
-            
+        
         demisto.debug(f'Fetching enrichment data for {resource_type}: {resource}')
         url_suffix = f'explore/enrich/{resource_type}/{resource}'
         
@@ -350,72 +347,45 @@ class Client(BaseClient):
             )
             demisto.debug(f'Enrichment response: {response}')
             return response
-            
+        
         except Exception as e:
             raise DemistoException(f'Failed to fetch enrichment data for {resource_type} {resource}: {str(e)}')
 
 
-    def list_ip_information(self, ips: Union[str, List[str]], explain: bool = False, scan_data: bool = False, sparse: Optional[str] = None) -> Dict:
+    def list_ip_information(self, resource: str, explain: bool = False, scan_data: bool = False, sparse: Optional[str] = None) -> Dict:
         """
-        Fetches information for both IPv4 and IPv6 addresses.
+        Fetches information for an IP address or domain.
         
         Args:
-            ips: Either a single IP string or a list of IP strings
+            resource: The IP or domain resource to query
             explain: Whether to show details of data used to calculate scores
             scan_data: Whether to include scan data (IPv4 only)
             sparse: Optional specific data to return ('asn', 'asname', or 'sp_risk_score')
             
         Returns:
-            Dict: Combined results for all IP addresses
+            Dict: Results for the requested IP or domain
         """
-        if isinstance(ips, str):
-            ip_list = [ip.strip() for ip in ips.split(',')]
-        else:
-            ip_list = ips
+        
+        params = {
+            'ips': [resource],
+            'explain': 1 if explain else 0,
+            'scan_data': 1 if scan_data else 0,
+            'sparse': sparse if sparse else ''
+        }
+        
+        url_suffix = f"explore/bulk/ip2asn/{resource}"
+        
+        try:
+            response = self._http_request(
+                method='POST',
+                url_suffix=url_suffix,
+                data=params  
+            )
             
-        if len(ip_list) > 100:
-            raise DemistoException("Maximum of 100 IPs can be submitted in a single request")
-        
-        results = []
-        
-        for ip in ip_list:
-            try:
-                # Determine if IPv4 or IPv6 based on presence of colons
-                is_ipv6 = ':' in ip
-                
-                # Build parameters
-                params = {
-                    'explain': 1 if explain else 0
-                }
-                if sparse:
-                    params['sparse'] = sparse
-                if not is_ipv6 and scan_data:
-                    params['scan_data'] = 1
-                    
-                url_suffix = f"explore/{'ipv6' if is_ipv6 else 'ipv4'}/ipv{6 if is_ipv6 else 4}info/{ip}"
-                
-                response = self._http_request(
-                    method='GET',
-                    url_suffix=url_suffix,
-                    params=params
-                )
-                
-                ip_info = response.get('response', {}).get('ip2asn', [{}])[0]
-                
-                ip_info['ip_type'] = 'ipv6' if is_ipv6 else 'ipv4'
-                
-                results.append(ip_info)
-                
-            except Exception as e:
-                demisto.error(f"Error fetching information for IP {ip}: {str(e)}")
-                results.append({
-                    'ip': ip,
-                    'ip_type': 'ipv6' if ':' in ip else 'ipv4',
-                    'error': str(e)
-                })
-        
-        return {'ips': results}
-
+            return response
+        except Exception as e:
+            demisto.error(f"Error fetching information for resource {resource}: {str(e)}")
+            return {'error': str(e)}
 
 
 
@@ -448,54 +418,58 @@ def test_module(client: Client) -> str:
 
 
 def list_domain_information_command(client: Client, args: Dict[str, Any]) -> CommandResults:
-    """
-    Command handler for fetching domain information.
-    
-    Args:
-        client (Client): The client instance to fetch the data
-        args (dict): Command arguments
-        
-    Returns:
-        CommandResults: XSOAR command results
-    """
- 
     domains_arg = args.get('domains', args.get('domain'))
-    
     if not domains_arg:
         raise DemistoException('No domains provided. Please provide domains using either the "domain" or "domains" argument.')
-    
-   
+
     if isinstance(domains_arg, str):
         domains = [d.strip() for d in domains_arg.split(',')]
     else:
         domains = domains_arg
-    
-    demisto.debug(f'Processing domain(s): {domains}')
-    
-   
+
+    if len(domains) > 100:
+        raise DemistoException("Maximum of 100 domains can be submitted in a single request")
+
+    demisto.debug(f'Processing domains in bulk: {domains}')
     raw_response = client.list_domain_information(domains)
     demisto.debug(f'Response from API: {raw_response}')
-    
- 
-    markdown = []
+
+    markdown = ['# Domain Information Results\n']
+
     for domain_info in raw_response.get('domains', []):
-        markdown.append(f"### Domain: {domain_info.get('domain')}")
-        markdown.append("#### Domain Information:")
-        markdown.append(f"- Age: {domain_info.get('age', 'N/A')} days")
-        markdown.append(f"- Registrar: {domain_info.get('registrar', 'N/A')}")
-        markdown.append(f"- Created Date: {domain_info.get('whois_created_date', 'N/A')}")
-        markdown.append(f"- Risk Score: {domain_info.get('sp_risk_score', 'N/A')}")
-        markdown.append("\n")
-    
-    readable_output = '\n'.join(markdown)
-    
+        markdown.append(f"## Domain: {domain_info.get('domain')}")
+
+      
+        basic_info = {
+            'Created Date': str(domain_info.get('whois_created_date', 'N/A')),
+            'Registrar': str(domain_info.get('registrar', 'N/A')),
+            'Age (days)': str(domain_info.get('age', 'N/A')),
+            'Risk Score': str(domain_info.get('sp_risk_score', 'N/A'))
+        }
+        markdown.append(tableToMarkdown('Domain Information', [basic_info]))
+
+        
+        risk_explain = str(domain_info.get('sp_risk_score_explain', 'N/A'))
+        if risk_explain != 'N/A':
+            markdown.append(f'### Risk Score Explanation\n{risk_explain}')
+
+     
+        whois_info = domain_info.get('whois_info', {})
+        if whois_info:
+            whois_info_list = [{'Key': k, 'Value': v} for k, v in whois_info.items()]
+            markdown.append(tableToMarkdown('WHOIS Information', whois_info_list))
+
+        markdown.append('\n---\n')  
+
     return CommandResults(
         outputs_prefix='SilentPush.Domain',
         outputs_key_field='domain',
         outputs=raw_response.get('domains', []),
-        readable_output=readable_output,
+        readable_output='\n'.join(markdown),
         raw_response=raw_response
     )
+
+
 
 def get_domain_certificates_command(client: Client, args: dict) -> CommandResults:
     """
@@ -569,7 +543,7 @@ def search_domains_command(client: Client, args: dict) -> CommandResults:
         readable_output=readable_output,
         raw_response=raw_response
     )
-    
+
 def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
     """
     Command handler for fetching infratags for multiple domains.
@@ -581,27 +555,34 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
     Returns:
         CommandResults: The command results containing readable output and the raw response.
     """
-  
+ 
     domains = argToList(args.get('domains', ''))
-    cluster = argToBoolean(args.get('cluster', False))
+    cluster = argToBoolean(args.get('cluster', False)) 
     mode = args.get('mode', 'live')
     match = args.get('match', 'self')
     as_of = args.get('as_of', None)
   
+    
     if not domains:
         raise ValueError('"domains" argument is required and cannot be empty.')
 
+    
     demisto.debug(f'Processing infratags for domains: {domains} with cluster={cluster}, mode={mode}, match={match}, as_of={as_of}')
 
     try:
+       
         raw_response = client.list_domain_infratags(domains, cluster, mode, match, as_of)
         demisto.debug(f'Response from API: {raw_response}')
     except Exception as e:
+       
         demisto.error(f'Error occurred while fetching infratags: {str(e)}')
         raise
 
-    readable_output = tableToMarkdown('Domain Infratags', raw_response.get('results', []))
+   
+    infratags = raw_response.get('response', {}).get('infratags', [])
+    readable_output = tableToMarkdown('Domain Infratags', infratags)
 
+    
     return CommandResults(
         outputs_prefix='SilentPush.InfraTags',
         outputs_key_field='domain',
@@ -610,109 +591,57 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
         raw_response=raw_response
     )
 
+    
 
 def get_enrichment_data_command(client: Client, args: Dict[str, Any]) -> CommandResults:
     """
-    Command handler for fetching enrichment data for a resource (domain, IPv4, or IPv6).
+    Command handler for fetching enrichment data for a specific resource.
     
     Args:
-        client (Client): The client instance to use for API calls
-        args (Dict[str, Any]): Command arguments
-            - resource (str): The resource to get enrichment data for (domain name, IPv4, or IPv6)
-            - resource_type (str): Type of resource ('domain', 'ipv4', 'ipv6') 
-            - explain (bool, optional): Whether to show calculation details
-            - scan_data (bool, optional): Whether to include scan data
-    
+        client (Client): The client instance to fetch the data
+        args (dict): Command arguments including:
+            - resource (str): The resource (e.g., domain, IP address, etc.)
+            - resource_type (str): The type of resource ('domain', 'ip', etc.)
+            - explain (bool): Whether to show calculation details
+            - scan_data (bool): Whether to include scan data (IPv4 only)
+            
     Returns:
-        CommandResults: The formatted results for XSOAR
+        CommandResults: XSOAR command results
     """
+    
     resource = args.get('resource')
-    resource_type = args.get('resource_type')  
+    resource_type = args.get('resource_type')
     
     if not resource or not resource_type:
-        raise ValueError('"resource" and "resource_type" arguments are required')
-        
-   
-    if resource_type not in {'domain', 'ipv4', 'ipv6'}:
-        raise ValueError("'resource_type' must be one of: 'domain', 'ipv4', 'ipv6'")
-        
+        raise DemistoException('Resource and resource_type are required arguments.')
+    
     explain = argToBoolean(args.get('explain', False))
     scan_data = argToBoolean(args.get('scan_data', False))
     
-    demisto.debug(f'Processing enrichment data for {resource_type}: {resource}')
-    
     try:
-        raw_response = client.get_enrichment_data(
-            resource=resource,
-            resource_type=resource_type,
-            explain=explain,
-            scan_data=scan_data
-        )
+        raw_response = client.get_enrichment_data(resource, resource_type, explain, scan_data)
+        enrichment_data = raw_response.get('data', [])
         
-        if not raw_response:
-            return CommandResults(
-                readable_output=f'No enrichment data found for {resource_type}: {resource}',
-                outputs_prefix='SilentPush.Enrichment',
-                outputs_key_field='resource',
-                outputs={
-                    'resource': resource,
-                    'type': resource_type,
-                    'found': False
-                }
-            )
+        markdown = [f"### Enrichment Data for {resource} ({resource_type})\n"]
         
-        markdown = []
-        markdown.append(f'## Enrichment Data for {resource_type}: {resource}\n')
-        
-        enrichment_data = raw_response.get('response', {})
-        
-       
-        overview = {
-            'Resource': resource,
-            'Type': resource_type
-        }
-       
-        if 'risk_score' in enrichment_data:
-            overview['Risk Score'] = enrichment_data['risk_score']   
-        if 'first_seen' in enrichment_data:
-            overview['First Seen'] = enrichment_data['first_seen']
-        if 'last_seen' in enrichment_data:
-            overview['Last Seen'] = enrichment_data['last_seen']
-            
-        markdown.append(tableToMarkdown('Overview', [overview]))
-        
-        if scan_data and enrichment_data.get('scan_data'):
-            scan_info = enrichment_data['scan_data']
-            markdown.append('\n### Scan Data')
-            markdown.append(tableToMarkdown('', [scan_info]))
-               
-        if explain and enrichment_data.get('explanation'):
-            explain_info = enrichment_data['explanation']
-            markdown.append('\n### Score Explanation')
-            markdown.append(tableToMarkdown('', [explain_info]))
-            
-        readable_output = '\n'.join(markdown)
-        
-        outputs = {
-            'resource': resource,
-            'type': resource_type,
-            'found': True,
-            'data': enrichment_data
-        }
+        for data in enrichment_data:
+            markdown.append(f"#### Enrichment Data:\n")
+            markdown.append(f"Data: {data}\n")
         
         return CommandResults(
             outputs_prefix='SilentPush.Enrichment',
             outputs_key_field='resource',
-            outputs=outputs,
-            readable_output=readable_output,
+            outputs=enrichment_data,
+            readable_output='\n'.join(markdown),
             raw_response=raw_response
         )
         
     except Exception as e:
-        demisto.error(f'Failed to get enrichment data: {str(e)}')
+        demisto.error(f"Error in get_enrichment_data_command: {str(e)}")
         raise
-    
-    
+
+
+ 
 def list_ip_information_command(client: Client, args: Dict[str, Any]) -> CommandResults:
     """
     Command handler for fetching IP information.
@@ -741,45 +670,53 @@ def list_ip_information_command(client: Client, args: Dict[str, Any]) -> Command
         raise DemistoException('Invalid sparse value. Must be one of: asn, asname, sp_risk_score')
     
     try:
-    
-        raw_response = client.list_ip_information(ips, explain, scan_data, sparse)
-        ip_data = raw_response.get('ips', [])
         
+        ip_list = [ip.strip() for ip in ips.split(',')]
+        
+        results = []
         markdown = ['### IP Information Results\n']
         
-        for ip_info in ip_data:
-            if 'error' in ip_info:
-                markdown.append(f"#### IP: {ip_info.get('ip', 'N/A')} (Error)\n")
-                markdown.append(f"Error: {ip_info['error']}\n")
-                continue
+       
+        for ip in ip_list:
+            resource = ip 
+
+           
+            raw_response = client.list_ip_information(resource, explain, scan_data, sparse)
+            ip_data = raw_response.get('ips', [])
+            
+            for ip_info in ip_data:
+                if 'error' in ip_info:
+                    markdown.append(f"#### IP: {ip_info.get('ip', 'N/A')} (Error)\n")
+                    markdown.append(f"Error: {ip_info['error']}\n")
+                    continue
                 
-            markdown.append(f"#### IP: {ip_info.get('ip', 'N/A')} ({ip_info.get('ip_type', 'unknown').upper()})")
-            
-            basic_info = {
-                'ASN': ip_info.get('asn', 'N/A'),
-                'AS Name': ip_info.get('asname', 'N/A'),
-                'Risk Score': ip_info.get('sp_risk_score', 'N/A'),
-                'Subnet': ip_info.get('subnet', 'N/A')
-            }
-            markdown.append(tableToMarkdown('Basic Information', [basic_info], headers=basic_info.keys()))
-            
-            if location_info := ip_info.get('ip_location', {}):
-                location_data = {
-                    'Country': location_info.get('country_name', 'N/A'),
-                    'Continent': location_info.get('continent_name', 'N/A'),
-                    'EU Member': 'Yes' if location_info.get('country_is_in_european_union') else 'No'
+                markdown.append(f"#### IP: {ip_info.get('ip', 'N/A')} ({ip_info.get('ip_type', 'unknown').upper()})")
+                
+                basic_info = {
+                    'ASN': ip_info.get('asn', 'N/A'),
+                    'AS Name': ip_info.get('asname', 'N/A'),
+                    'Risk Score': ip_info.get('sp_risk_score', 'N/A'),
+                    'Subnet': ip_info.get('subnet', 'N/A')
                 }
-                markdown.append(tableToMarkdown('Location Information', [location_data], headers=location_data.keys()))
-            
-            if ip_info.get('ip_type') == 'ipv4':
-                additional_info = {
-                    'PTR Record': ip_info.get('ip_ptr', 'N/A'),
-                    'Is TOR Exit Node': 'Yes' if ip_info.get('ip_is_tor_exit_node') else 'No',
-                    'Is DSL/Dynamic': 'Yes' if ip_info.get('ip_is_dsl_dynamic') else 'No'
-                }
-                markdown.append(tableToMarkdown('Additional Information', [additional_info], headers=additional_info.keys()))
-            
-            markdown.append('\n')
+                markdown.append(tableToMarkdown('Basic Information', [basic_info], headers=basic_info.keys()))
+                
+                if location_info := ip_info.get('ip_location', {}):
+                    location_data = {
+                        'Country': location_info.get('country_name', 'N/A'),
+                        'Continent': location_info.get('continent_name', 'N/A'),
+                        'EU Member': 'Yes' if location_info.get('country_is_in_european_union') else 'No'
+                    }
+                    markdown.append(tableToMarkdown('Location Information', [location_data], headers=location_data.keys()))
+                
+                if ip_info.get('ip_type') == 'ipv4':
+                    additional_info = {
+                        'PTR Record': ip_info.get('ip_ptr', 'N/A'),
+                        'Is TOR Exit Node': 'Yes' if ip_info.get('ip_is_tor_exit_node') else 'No',
+                        'Is DSL/Dynamic': 'Yes' if ip_info.get('ip_is_dsl_dynamic') else 'No'
+                    }
+                    markdown.append(tableToMarkdown('Additional Information', [additional_info], headers=additional_info.keys()))
+                
+                markdown.append('\n')
         
         return CommandResults(
             outputs_prefix='SilentPush.IP',
@@ -792,6 +729,7 @@ def list_ip_information_command(client: Client, args: Dict[str, Any]) -> Command
     except Exception as e:
         demisto.error(f"Error in list_ip_information_command: {str(e)}")
         raise
+
 
 ''' MAIN FUNCTION '''
 
