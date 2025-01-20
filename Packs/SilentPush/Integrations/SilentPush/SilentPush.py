@@ -213,7 +213,7 @@ class Client(BaseClient):
             'max_wait': max_wait
         }
         
-        # Remove keys with None values
+        
         params = {k: v for k, v in params.items() if v is not None}
 
         response = self._http_request('GET', url_suffix, params=params)
@@ -283,7 +283,7 @@ class Client(BaseClient):
         try:
             response = self._http_request('GET', url_suffix, params=params)
             
-            # Log job status if available
+        
             job_status = response.get('response', {}).get('job_status', {})
             if job_status:
                 demisto.debug(f"Job Status: {job_status.get('status', 'Unknown')}")
@@ -318,7 +318,7 @@ class Client(BaseClient):
         params = {
             'mode': mode,
             'match': match,
-            'clusters': cluster  # Use boolean value directly
+            'clusters': cluster 
         }
         
         if as_of:
@@ -333,7 +333,7 @@ class Client(BaseClient):
             )
             return response
         except Exception as e:
-            # Log error if the request fails
+            
             demisto.error(f"Error fetching infratags: {str(e)}")
             raise
 
@@ -432,7 +432,7 @@ class Client(BaseClient):
         if not asn:
             raise ValueError("ASN cannot be empty")
             
-        # Strip 'AS' prefix if present and validate ASN format
+        
         asn_number = asn.upper().replace('AS', '')
         if not asn_number.isdigit():
             raise ValueError("Invalid ASN format. Must be a number or start with 'AS' followed by a number")
@@ -468,7 +468,7 @@ class Client(BaseClient):
         if not asn:
             raise ValueError("ASN cannot be empty")
             
-        # Strip 'AS' prefix if present and validate ASN format
+        
         asn_number = asn.upper().replace('AS', '')
         if not asn_number.isdigit():
             raise ValueError("Invalid ASN format. Must be a number or start with 'AS' followed by a number")
@@ -529,7 +529,7 @@ def list_domain_information_command(client: Client, args: Dict[str, Any]) -> Com
     Returns:
         CommandResults: Formatted results for XSOAR.
     """
-    # Extract and validate domains
+ 
     domains_arg = args.get('domains') or args.get('domain')
     if not domains_arg:
         raise DemistoException('No domains provided. Use the "domain" or "domains" argument.')
@@ -538,24 +538,24 @@ def list_domain_information_command(client: Client, args: Dict[str, Any]) -> Com
     if len(domains) > 100:
         raise DemistoException("A maximum of 100 domains can be submitted in a single request.")
 
-    # Extract optional parameters
+ 
     fetch_risk_score = argToBoolean(args.get('fetch_risk_score', False))
     fetch_whois_info = argToBoolean(args.get('fetch_whois_info', False))
 
-    # Log input for debugging
+ 
     demisto.debug(f"Fetching domain information for: {domains} "
                   f"with fetch_risk_score={fetch_risk_score}, fetch_whois_info={fetch_whois_info}")
 
-    # Call the client method to fetch domain information
+   
     raw_response = client.list_domain_information(domains, fetch_risk_score, fetch_whois_info)
     demisto.debug(f"API response: {raw_response}")
 
-    # Prepare readable output
+
     markdown = ['# Domain Information Results\n']
     for domain_info in raw_response.get('domains', []):
         markdown.append(f"## Domain: {domain_info.get('domain', 'N/A')}")
 
-        # Add basic domain information
+      
         basic_info = {
             'Created Date': domain_info.get('whois_created_date', 'N/A'),
             'Registrar': domain_info.get('registrar', 'N/A'),
@@ -564,11 +564,11 @@ def list_domain_information_command(client: Client, args: Dict[str, Any]) -> Com
         }
         markdown.append(tableToMarkdown('Domain Information', [basic_info]))
 
-        # Add risk score explanation if available
+       
         if risk_explain := domain_info.get('sp_risk_score_explain'):
             markdown.append(f'### Risk Score Explanation\n{risk_explain}')
 
-        # Add WHOIS data if available
+     
         whois_info = domain_info.get('whois_info', {})
         if isinstance(whois_info, dict):
             whois_table = [{'Key': k, 'Value': v} for k, v in whois_info.items()]
@@ -578,7 +578,7 @@ def list_domain_information_command(client: Client, args: Dict[str, Any]) -> Com
 
     readable_output = '\n'.join(markdown)
 
-    # Return command results
+
     return CommandResults(
         outputs_prefix='SilentPush.Domain',
         outputs_key_field='domain',
@@ -603,17 +603,17 @@ def get_domain_certificates_command(client: Client, args: Dict[str, Any]) -> Com
     if not domain:
         raise DemistoException('Domain argument is required.')
 
-    # Call the client function to get the domain certificates.
+   
     demisto.debug(f'Fetching certificates for domain: {domain}')
     certificate_data = client.get_domain_certificates(domain)
 
     if not certificate_data:
         raise DemistoException(f'No certificate data found for domain: {domain}')
 
-    # Prepare the markdown output
+   
     markdown = [f'# SSL/TLS Certificate Information for Domain: {domain}\n']
 
-    # Add certificate details to markdown
+   
     if isinstance(certificate_data, list) and certificate_data:
         for cert in certificate_data:
             markdown.append(f"## Certificate for {domain}")
@@ -626,14 +626,14 @@ def get_domain_certificates_command(client: Client, args: Dict[str, Any]) -> Com
             }
             markdown.append(tableToMarkdown('Certificate Information', [cert_info]))
 
-            # Add metadata if available
+           
             metadata = cert.get('metadata', {})
             if metadata:
                 markdown.append(f"### Metadata: {metadata}")
     else:
         markdown.append(f'No certificate data available for domain: {domain}')
 
-    # Add metadata and job status to the response
+ 
     metadata = {
         'job_id': certificate_data.get('response', {}).get('metadata', {}).get('job_id'),
         'query_name': certificate_data.get('response', {}).get('metadata', {}).get('query_name'),
@@ -645,7 +645,7 @@ def get_domain_certificates_command(client: Client, args: Dict[str, Any]) -> Com
     job_status_url = job_status.get('get')
     job_status_status = job_status.get('status', 'N/A')
 
-    # Prepare the raw response
+
     raw_response = {
         'certificate_data': certificate_data,
         'metadata': metadata,
@@ -691,7 +691,7 @@ def search_domains_command(client: Client, args: dict) -> CommandResults:
             outputs_key_field='error'
         )
     
-    # Check for response errors
+    
     if raw_response.get('error'):
         return CommandResults(
             readable_output=f"Error: {raw_response['error']}",
@@ -700,7 +700,7 @@ def search_domains_command(client: Client, args: dict) -> CommandResults:
             outputs_key_field='error'
         )
     
-    # Extract records from the response
+  
     records = raw_response.get('response', {}).get('records', [])
     
     if not records:
@@ -712,7 +712,7 @@ def search_domains_command(client: Client, args: dict) -> CommandResults:
             outputs=raw_response
         )
     
-    # Format records into a readable markdown table
+   
     readable_output = tableToMarkdown('Domain Search Results', records)
     
     return CommandResults(
@@ -921,10 +921,10 @@ def get_asn_reputation_command(client: Client, args: Dict[str, Any]) -> CommandR
         raw_response = client.get_asn_reputation(asn)
         reputation_data = raw_response.get('response', {})
         
-        # Create a readable output
+     
         markdown = [f"### ASN Reputation Information for {asn}\n"]
         
-        # Basic reputation information
+        
         if basic_info := reputation_data.get('reputation', {}):
             reputation_table = {
                 'Risk Score': basic_info.get('risk_score', 'N/A'),
@@ -934,7 +934,7 @@ def get_asn_reputation_command(client: Client, args: Dict[str, Any]) -> CommandR
             }
             markdown.append(tableToMarkdown('Reputation Overview', [reputation_table]))
             
-        # Historical data if available
+     
         if history := reputation_data.get('history', []):
             history_table = []
             for entry in history:
@@ -947,7 +947,7 @@ def get_asn_reputation_command(client: Client, args: Dict[str, Any]) -> CommandR
                 markdown.append('\n### Historical Reputation Data')
                 markdown.append(tableToMarkdown('', history_table))
                 
-        # Additional metadata if available
+     
         if metadata := reputation_data.get('metadata', {}):
             metadata_table = {k: str(v) for k, v in metadata.items()}
             if metadata_table:
