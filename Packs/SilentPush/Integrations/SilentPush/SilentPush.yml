@@ -1,160 +1,175 @@
 commonfields:
   id: SilentPush
   version: -1
+
 name: SilentPush
 display: SilentPush
 category: Data Enrichment & Threat Intelligence
-description: Integration with SilentPush API for domain and IP intelligence
+description: SilentPush integration for domain and IP intelligence
+
 configuration:
   - display: API Key
     name: credentials
     type: 9
     required: true
+    
   - display: Base URL
     name: url
     defaultvalue: https://api.silentpush.com
     type: 0
     required: true
+    
   - display: Trust any certificate (not secure)
     name: insecure
     type: 8
     required: false
+    
   - display: Use system proxy settings
     name: proxy
     type: 8
     required: false
+
 script:
-  type: python
-  subtype: python3
   script: ''
+  type: python
   commands:
-  - name: silentpush-list-domain-information
-    arguments:
-      - name: domains
-        description: Comma-separated list of domains to fetch information for
-        required: true
-      - name: domain
-        description: Single domain to fetch information for (alternative to domains)
-        required: false
-    outputs:
-      - contextPath: SilentPush.Domain
-        description: Domain information including WHOIS data and risk scores
-        type: unknown
-    description: Fetches domain information including WHOIS data and risk scores
-    execution: false
+    - name: test-module
+      description: Validates the API credentials.
+      
+    - name: silentpush-list-domain-information
+      description: Retrieves information about specified domains.
+      arguments:
+        - name: domains
+          description: Comma-separated list of domains to query.
+          required: true
+        - name: fetch_risk_score
+          description: Whether to fetch risk scores for the domains.
+          required: false
+          auto: true
+          default: false
+        - name: fetch_whois_info
+          description: Whether to fetch WHOIS information for the domains.
+          required: false
+          auto: true
+          default: false
+          
+    - name: silentpush-get-domain-certificates
+      description: Retrieves SSL/TLS certificate information for a domain.
+      arguments:
+        - name: domain
+          description: The domain to query certificates for.
+          required: true
+        - name: domain_regex
+          description: Regular expression to match domains.
+          required: false
+        - name: certificate_issuer
+          description: Filter by certificate issuer.
+          required: false
+        - name: date_min
+          description: Filter certificates issued on or after this date.
+          required: false
+        - name: date_max
+          description: Filter certificates issued on or before this date.
+          required: false
+          
+    - name: silentpush-search-domains
+      description: Search for domains with optional filters.
+      arguments:
+        - name: query
+          description: Search query string.
+          required: false
+        - name: start_date
+          description: Filter domains registered after this date.
+          required: false
+        - name: end_date
+          description: Filter domains registered before this date.
+          required: false
+        - name: risk_score_min
+          description: Minimum risk score filter.
+          required: false
+        - name: risk_score_max
+          description: Maximum risk score filter.
+          required: false
+        - name: limit
+          description: Maximum number of results to return.
+          required: false
+          defaultValue: "100"
+          
+    - name: silentpush-list-domain-infratags
+      description: Get infrastructure tags for multiple domains.
+      arguments:
+        - name: domains
+          description: Comma-separated list of domains.
+          required: true
+        - name: cluster
+          description: Whether to cluster the results.
+          required: false
+          auto: true
+          default: false
+        - name: mode
+          description: Mode for lookup (live/padns).
+          required: false
+          defaultValue: live
+        - name: match
+          description: Handling of self-hosted infrastructure.
+          required: false
+          defaultValue: self
+          
+    - name: silentpush-get-enrichment-data
+      description: Get enrichment data for a resource.
+      arguments:
+        - name: resource
+          description: The resource to query (domain/IP).
+          required: true
+        - name: resource_type
+          description: Type of resource (domain/ipv4/ipv6).
+          required: true
+        - name: explain
+          description: Include explanation of data calculations.
+          required: false
+          auto: true
+        - name: scan_data
+          description: Include scan data (IPv4 only).
+          required: false
+          auto: true
+          
+    - name: silentpush-list-ip-information
+      description: Get information about IP addresses.
+      arguments:
+        - name: ips
+          description: Comma-separated list of IP addresses.
+          required: true
+        - name: explain
+          description: Include explanation of calculations.
+          required: false
+          auto: true
+        - name: scan_data
+          description: Include scan data (IPv4 only).
+          required: false
+          auto: true
+        - name: sparse
+          description: Specific data to return (asn/asname/sp_risk_score).
+          required: false
+          
+    - name: silentpush-get-asn-reputation
+      description: Get reputation information for an ASN.
+      arguments:
+        - name: asn
+          description: The ASN to lookup.
+          required: true
+          
+    - name: silentpush-get-asn-takedown-reputation
+      description: Get takedown reputation for an ASN.
+      arguments:
+        - name: asn
+          description: The ASN to lookup.
+          required: true
 
-  - name: silentpush-get-domain-certificates
-    arguments:
-      - name: domain
-        description: Domain to fetch certificate information for
-        required: true
-    outputs:
-      - contextPath: SilentPush.Certificates
-        description: Certificate information for the domain
-        type: unknown
-    description: Fetches SSL/TLS certificate data for a given domain
-    execution: false
-
-  - name: silentpush-search-domains
-    arguments:
-      - name: query
-        description: Search query string (e.g., domain pattern, keywords)
-        required: false
-      - name: start_date
-        description: Start date for domain registration (ISO8601 format)
-        required: false
-      - name: end_date
-        description: End date for domain registration (ISO8601 format)
-        required: false
-      - name: risk_score_min
-        description: Minimum risk score filter
-        required: false
-      - name: risk_score_max
-        description: Maximum risk score filter
-        required: false
-      - name: limit
-        description: Maximum number of results to return (default 100)
-        required: false
-    outputs:
-      - contextPath: SilentPush.SearchResults
-        description: Domain search results
-        type: unknown
-    description: Search for domains with optional filters
-    execution: false
-
-  - name: silentpush-list-domain-infratags
-    arguments:
-      - name: domains
-        description: List of domains to fetch infratags for
-        required: true
-      - name: cluster
-        description: Whether to cluster the results
-        required: false
-      - name: mode
-        description: Mode for lookup (live/padns)
-        required: false
-      - name: match
-        description: Handling of self-hosted infrastructure (self/full)
-        required: false
-      - name: as_of
-        description: Date or timestamp for filtering data
-        required: false
-    outputs:
-      - contextPath: SilentPush.InfraTags
-        description: Infratags for the provided domains
-        type: unknown
-    description: Get infratags for multiple domains
-    execution: false
-
-  - name: silentpush-get-enrichment-data
-    arguments:
-      - name: resource
-        description: Resource to get enrichment data for (domain name, IPv4, or IPv6)
-        required: true
-      - name: resource_type
-        description: Type of resource (domain/ipv4/ipv6)
-        required: true
-      - name: explain
-        description: Whether to show calculation details
-        required: false
-      - name: scan_data
-        description: Whether to include scan data
-        required: false
-    outputs:
-      - contextPath: SilentPush.Enrichment
-        description: Enrichment data for the resource
-        type: unknown
-    description: Retrieve enrichment data for a resource
-    execution: false
-
-  - name: silentpush-list-ip-information
-    arguments:
-      - name: ips
-        description: Comma-separated list of IP addresses
-        required: true
-      - name: explain
-        description: Whether to show calculation details
-        required: false
-      - name: scan_data
-        description: Whether to include scan data (IPv4 only)
-        required: false
-      - name: sparse
-        description: Specific data to return (asn/asname/sp_risk_score)
-        required: false
-    outputs:
-      - contextPath: SilentPush.IP
-        description: IP information and analysis
-        type: unknown
-    description: Fetches information for IPv4 and IPv6 addresses
-    execution: false
-
-  - name: test-module
-    description: Validates the API connection and authentication
-    execution: false
-
-  dockerimage: demisto/python3:3.9
+  dockerimage: demisto/python3:3.10
   runonce: false
-  isfetch: false
-  longRunning: false
-  longRunningPort: false
-  feed: false
+  subtype: python3
+
+tests:
+  - No tests (auto formatted)
+
+fromversion: 6.0.0

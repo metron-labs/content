@@ -18,12 +18,6 @@ from typing import Any, Optional, Dict
 # Disable insecure warnings
 urllib3.disable_warnings()
 
-
-def mock_debug(message):
-    """Print debug messages to the XSOAR logs"""
-    print(f"DEBUG: {message}")
-demisto.debug = mock_debug
-
 ''' CONSTANTS '''
 
 DATE_FORMAT = '%Y-%m-%dT%H:%M:%SZ'  # ISO8601 format with UTC, default in XSOAR
@@ -58,7 +52,7 @@ class Client(BaseClient):
             'X-API-Key': api_key,
             'Content-Type': 'application/json'
         }
-        demisto.debug(f'Initialized client with base URL: {self.base_url}')
+        
 
     def _http_request(self, method: str, url_suffix: str, params: dict = None, data: dict = None) -> Any:
         """
@@ -81,9 +75,7 @@ class Client(BaseClient):
         """
         full_url = f'{self.base_url}{url_suffix}'
         masked_headers = {k: v if k != 'X-API-Key' else '****' for k, v in self._headers.items()}
-        demisto.debug(f'Headers: {masked_headers}')
-        demisto.debug(f'Params: {params}')
-        demisto.debug(f'Data: {data}')
+      
 
         try:
             response = requests.request(
@@ -94,8 +86,7 @@ class Client(BaseClient):
                 params=params,
                 json=data
             )
-            demisto.debug(f'Response status code: {response.status_code}')
-            demisto.debug(f'Response body: {response.text}')
+            
 
             if response.status_code not in {200, 201}:
                 raise DemistoException(f'Error in API call [{response.status_code}] - {response.text}')
@@ -198,7 +189,7 @@ class Client(BaseClient):
         Returns:
             dict: A dictionary containing certificate information fetched from the API.
         """
-        demisto.debug(f'Fetching certificate information for domain: {domain}')
+       
         
         url_suffix = f'explore/domain/certificates/{domain}'
         params = {
@@ -225,14 +216,14 @@ class Client(BaseClient):
 
         job_complete = False
         while not job_complete:
-            demisto.debug(f'Checking job status at {job_status_url}')
+           
             
             job_response = self._http_request('GET', job_status_url)
             job_status = job_response.get('response', {}).get('job_status', {}).get('status')
 
             if job_status == 'COMPLETED':
                 job_complete = True
-                demisto.debug('Job completed, fetching certificates.')
+             
             
                 certificate_data = job_response.get('response', {}).get('domain_certificates', [])
                 return certificate_data
@@ -240,7 +231,7 @@ class Client(BaseClient):
                 demisto.error('Job failed to complete.')
                 return {'error': 'Job failed'}
             else:
-                demisto.debug('Job is still in progress. Retrying...')
+            
                 time.sleep(5)
 
         return {}
@@ -248,50 +239,81 @@ class Client(BaseClient):
         
 
     def search_domains(self, 
-                        query: Optional[str] = None, 
-                        start_date: Optional[str] = None,
-                        end_date: Optional[str] = None,
-                        risk_score_min: Optional[int] = None,
-                        risk_score_max: Optional[int] = None,
-                        limit: int = 100) -> dict:
-        """
-        Search for domains with optional filters.
-        
-        Args:
-            query (str, optional): Search query string (e.g., domain pattern, keywords)
-            start_date (str, optional): Start date for domain registration (ISO8601 format)
-            end_date (str, optional): End date for domain registration (ISO8601 format)
-            risk_score_min (int, optional): Minimum risk score filter
-            risk_score_max (int, optional): Maximum risk score filter
-            limit (int, optional): Maximum number of results to return (default: 100)
+                            query: Optional[str] = None, 
+                            start_date: Optional[str] = None,
+                            end_date: Optional[str] = None,
+                            risk_score_min: Optional[int] = None,
+                            risk_score_max: Optional[int] = None,
+                            limit: int = 100,
+                            domain_regex: Optional[str] = None,
+                            name_server: Optional[str] = None,
+                            asnum: Optional[int] = None,
+                            asname: Optional[str] = None,
+                            min_ip_diversity: Optional[int] = None,
+                            registrar: Optional[str] = None,
+                            min_asn_diversity: Optional[int] = None,
+                            certificate_issuer: Optional[str] = None,
+                            whois_date_after: Optional[str] = None,
+                            skip: Optional[int] = None) -> dict:
+            """
+                Searches for domains with optional filters and returns relevant information.
+                If filters are not specified, it performs a broad search. The function 
+                supports additional optional parameters to narrow down the search results.
+
+                Args:
+                    query (Optional[str]): Search query string to match domains (e.g., domain pattern or keywords).
+                    start_date (Optional[str]): Filter for domain registration dates on or after this date (ISO8601 format).
+                    end_date (Optional[str]): Filter for domain registration dates on or before this date (ISO8601 format).
+                    risk_score_min (Optional[int]): Minimum risk score for filtering domains.
+                    risk_score_max (Optional[int]): Maximum risk score for filtering domains.
+                    domain_regex (Optional[str]): A valid RE2 regular expression to match domain patterns.
+                    name_server (Optional[str]): Name or wildcard pattern of name servers used by domains.
+                    asnum (Optional[int]): Autonomous System (AS) number to filter domains.
+                    asname (Optional[str]): Filter domains where the AS name begins with this string.
+                    min_ip_diversity (Optional[int]): Filter domains with a minimum IP diversity limit.
+                    registrar (Optional[str]): Name or partial name of the registrar for filtering domains.
+                    min_asn_diversity (Optional[int]): Filter domains with a minimum ASN diversity limit.
+                    certificate_issuer (Optional[str]): SSL certificate issuer name to filter domains.
+                    whois_date_after (Optional[str]): Filter domains with a Whois created date after this date (ISO8601 format).
+                    skip (Optional[int]): Number of results to skip for pagination.
+                    limit (int): Maximum number of results to return (default: 100).
+                    
+                Returns:
+                    dict: A dictionary containing the search results, including the matched domains and related metadata.
+
+                Raises:
+                    Exception: If the API request fails or an error occurs during the process.
+                """
+
+          
+            url_suffix = 'explore/domain/search'
             
-        Returns:
-            dict: A dictionary containing the search results
-        """
-        demisto.debug(f'Searching domains with query: {query}')
-        url_suffix = 'explore/domain/search'
-        
-        params = {k: v for k, v in {
-            'domain': query,
-            'start_date': start_date,
-            'end_date': end_date,
-            'risk_score_min': risk_score_min,
-            'risk_score_max': risk_score_max,
-            'limit': limit
-        }.items() if v is not None}
-        
-        try:
-            response = self._http_request('GET', url_suffix, params=params)
+            params = {k: v for k, v in {
+                'domain': query,
+                'start_date': start_date,
+                'end_date': end_date,
+                'risk_score_min': risk_score_min,
+                'risk_score_max': risk_score_max,
+                'limit': limit,
+                'domain_regex': domain_regex,
+                'name_server': name_server,
+                'asnum': asnum,
+                'asname': asname,
+                'min_ip_diversity': min_ip_diversity,
+                'registrar': registrar,
+                'min_asn_diversity': min_asn_diversity,
+                'certificate_issuer': certificate_issuer,
+                'whois_date_after': whois_date_after,
+                'skip': skip,
+            }.items() if v is not None}
             
-        
-            job_status = response.get('response', {}).get('job_status', {})
-            if job_status:
-                demisto.debug(f"Job Status: {job_status.get('status', 'Unknown')}")
-            
-            return response
-        except Exception as e:
-            demisto.error(f"Error in search_domains API request: {str(e)}")
-            return {'error': str(e)}
+            try:
+                response = self._http_request('GET', url_suffix, params=params)
+                return response
+            except Exception as e:
+                demisto.error(f"Error in search_domains API request: {str(e)}")
+                return {'error': str(e)}
+
 
                 
     def list_domain_infratags(self, domains: list, cluster: bool = False, mode: str = 'live', match: str = 'self', as_of: Optional[str] = None) -> dict:
@@ -308,7 +330,7 @@ class Client(BaseClient):
         Returns:
             dict: A dictionary containing infratags for the provided domains.
         """
-        demisto.debug(f'Fetching infratags for domains: {domains} with cluster={cluster}, mode={mode}, match={match}, as_of={as_of}')
+        
         
         url = 'explore/bulk/domain/infratags'  
         
@@ -359,7 +381,7 @@ class Client(BaseClient):
         if resource_type not in {'domain', 'ipv4', 'ipv6'}:
             raise ValueError("resource_type must be one of: 'domain', 'ipv4', 'ipv6'")
         
-        demisto.debug(f'Fetching enrichment data for {resource_type}: {resource}')
+      
         url_suffix = f'explore/enrich/{resource_type}/{resource}'
         
         params = {
@@ -373,7 +395,7 @@ class Client(BaseClient):
                 url_suffix=url_suffix,
                 params=params
             )
-            demisto.debug(f'Enrichment response: {response}')
+          
             return response
         
         except Exception as e:
@@ -437,7 +459,7 @@ class Client(BaseClient):
         if not asn_number.isdigit():
             raise ValueError("Invalid ASN format. Must be a number or start with 'AS' followed by a number")
             
-        demisto.debug(f'Fetching reputation for ASN: {asn_number}')
+      
         
         try:
             url_suffix = f'explore/ipreputation/history/asn/{asn_number}'
@@ -473,7 +495,7 @@ class Client(BaseClient):
         if not asn_number.isdigit():
             raise ValueError("Invalid ASN format. Must be a number or start with 'AS' followed by a number")
             
-        demisto.debug(f'Fetching takedown reputation for ASN: {asn_number}')
+      
         
         try:
             url_suffix = f'explore/ipreputation/takedown/asn/{asn_number}'
@@ -503,13 +525,13 @@ def test_module(client: Client) -> str:
     Returns:
         str: 'ok' if the connection is successful, otherwise returns an error message.
     """
-    demisto.debug('Running test module...')
+  
     try:
         client.list_domain_information('silentpush.com')
-        demisto.debug('Test module completed successfully')
+  
         return 'ok'
     except DemistoException as e:
-        demisto.debug(f'Test module failed: {str(e)}')
+     
         if 'Forbidden' in str(e) or 'Authorization' in str(e):
             return 'Authorization Error: make sure API Key is correctly set'
         raise e
@@ -542,13 +564,9 @@ def list_domain_information_command(client: Client, args: Dict[str, Any]) -> Com
     fetch_risk_score = argToBoolean(args.get('fetch_risk_score', False))
     fetch_whois_info = argToBoolean(args.get('fetch_whois_info', False))
 
- 
-    demisto.debug(f"Fetching domain information for: {domains} "
-                  f"with fetch_risk_score={fetch_risk_score}, fetch_whois_info={fetch_whois_info}")
-
    
     raw_response = client.list_domain_information(domains, fetch_risk_score, fetch_whois_info)
-    demisto.debug(f"API response: {raw_response}")
+    
 
 
     markdown = ['# Domain Information Results\n']
@@ -604,7 +622,6 @@ def get_domain_certificates_command(client: Client, args: Dict[str, Any]) -> Com
         raise DemistoException('Domain argument is required.')
 
    
-    demisto.debug(f'Fetching certificates for domain: {domain}')
     certificate_data = client.get_domain_certificates(domain)
 
     if not certificate_data:
@@ -671,8 +688,16 @@ def search_domains_command(client: Client, args: dict) -> CommandResults:
     risk_score_min = arg_to_number(args.get('risk_score_min'))
     risk_score_max = arg_to_number(args.get('risk_score_max'))
     limit = arg_to_number(args.get('limit', 100))
-    
-    demisto.debug(f'Searching domains with query: {query}')
+    domain_regex = args.get('domain_regex')
+    name_server = args.get('name_server')
+    asnum = arg_to_number(args.get('asnum'))
+    asname = args.get('asname')
+    min_ip_diversity = arg_to_number(args.get('min_ip_diversity'))
+    registrar = args.get('registrar')
+    min_asn_diversity = arg_to_number(args.get('min_asn_diversity'))
+    certificate_issuer = args.get('certificate_issuer')
+    whois_date_after = args.get('whois_date_after')
+    skip = arg_to_number(args.get('skip'))
 
     try:
         raw_response = client.search_domains(
@@ -681,7 +706,17 @@ def search_domains_command(client: Client, args: dict) -> CommandResults:
             end_date=end_date,
             risk_score_min=risk_score_min,
             risk_score_max=risk_score_max,
-            limit=limit
+            limit=limit,
+            domain_regex=domain_regex,
+            name_server=name_server,
+            asnum=asnum,
+            asname=asname,
+            min_ip_diversity=min_ip_diversity,
+            registrar=registrar,
+            min_asn_diversity=min_asn_diversity,
+            certificate_issuer=certificate_issuer,
+            whois_date_after=whois_date_after,
+            skip=skip
         )
     except Exception as e:
         return CommandResults(
@@ -691,7 +726,6 @@ def search_domains_command(client: Client, args: dict) -> CommandResults:
             outputs_key_field='error'
         )
     
-    
     if raw_response.get('error'):
         return CommandResults(
             readable_output=f"Error: {raw_response['error']}",
@@ -700,7 +734,6 @@ def search_domains_command(client: Client, args: dict) -> CommandResults:
             outputs_key_field='error'
         )
     
-  
     records = raw_response.get('response', {}).get('records', [])
     
     if not records:
@@ -712,7 +745,6 @@ def search_domains_command(client: Client, args: dict) -> CommandResults:
             outputs=raw_response
         )
     
-   
     readable_output = tableToMarkdown('Domain Search Results', records)
     
     return CommandResults(
@@ -722,6 +754,7 @@ def search_domains_command(client: Client, args: dict) -> CommandResults:
         readable_output=readable_output,
         raw_response=raw_response
     )
+
 
 def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
     """
@@ -743,11 +776,8 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
     if not domains:
         raise ValueError('"domains" argument is required and cannot be empty.')
 
-    demisto.debug(f'Processing infratags for domains: {domains} with cluster={cluster}, mode={mode}, match={match}, as_of={as_of}')
-
     try:
         raw_response = client.list_domain_infratags(domains, cluster, mode, match, as_of)
-        demisto.debug(f'Response from API: {raw_response}')
     except Exception as e:
         demisto.error(f'Error occurred while fetching infratags: {str(e)}')
         raise
@@ -1060,9 +1090,6 @@ def main():
         verify_ssl = not params.get('insecure', False)
         proxy = params.get('proxy', False)
 
-        demisto.debug(f'Base URL: {base_url}')
-        demisto.debug('Initializing client...')
-
         client = Client(
             base_url=base_url,
             api_key=api_key,
@@ -1071,7 +1098,6 @@ def main():
         )
 
         command = demisto.command()
-        demisto.debug(f'Command being called is {command}')
 
         command_handlers = {
                         
