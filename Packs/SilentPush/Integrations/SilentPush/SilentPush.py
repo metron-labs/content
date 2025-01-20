@@ -104,135 +104,156 @@ class Client(BaseClient):
             demisto.error(f'Error in API call: {str(e)}')
             raise
         
-    def list_domain_information(self, domains: List[str]) -> Dict:
+    def list_domain_information(self, domains: List[str], fetch_risk_score: Optional[bool] = False, fetch_whois_info: Optional[bool] = False) -> Dict:
         """
-        Fetches domain information including WHOIS data, risk scores, and live WHOIS for multiple domains.
+        Fetches domain information, including WHOIS data, risk scores, and live WHOIS for multiple domains.
 
         Args:
-            domains: List of domain strings
+            domains: List of domain strings.
+            fetch_risk_score: Whether to fetch risk scores (default: False).
+            fetch_whois_info: Whether to fetch live WHOIS information (default: False).
 
         Returns:
-            Dict: A dictionary containing combined domain information, risk scores, and live WHOIS information
+            Dict: A dictionary containing combined domain information, risk scores, and live WHOIS information.
         """
         if len(domains) > 100:
-            raise DemistoException("Maximum of 100 domains can be submitted in a single request")
+            raise DemistoException("Maximum of 100 domains can be submitted in a single request.")
 
         try:
             
             domains_data = {'domains': domains}
 
-           
+            
             bulk_info_response = self._http_request(
                 method='POST',
                 url_suffix='explore/bulk/domaininfo',
                 data=domains_data
             )
 
-            
-            bulk_risk_response = self._http_request(
-                method='POST',
-                url_suffix='explore/bulk/domain/riskscore',
-                data=domains_data
-            )
-
-            
-            live_whois_info = {}
-            for domain in domains:
-                live_whois_response = self._http_request(
-                    method='GET',
-                    url_suffix=f'explore/domain/whoislive/{domain}'
-                )
-                live_whois_info[domain] = live_whois_response.get('response', {})
-
+           
             domain_info_list = bulk_info_response.get('response', {}).get('domaininfo', [])
-            risk_score_list = bulk_risk_response.get('response', [])
+            domain_info_dict = {item['domain']: item for item in domain_info_list}
+            combined_results = []
+
+            
+            risk_score_dict = {}
+            if fetch_risk_score:
+                bulk_risk_response = self._http_request(
+                    method='POST',
+                    url_suffix='explore/bulk/domain/riskscore',
+                    data=domains_data
+                )
+                risk_score_list = bulk_risk_response.get('response', [])
+                risk_score_dict = {item['domain']: item for item in risk_score_list}
 
            
-            domain_info_dict = {item['domain']: item for item in domain_info_list}
-            risk_score_dict = {item['domain']: item for item in risk_score_list}
+            live_whois_info = {}
+            if fetch_whois_info:
+                for domain in domains:
+                    try:
+                        live_whois_response = self._http_request(
+                            method='GET',
+                            url_suffix=f'explore/domain/whoislive/{domain}'
+                        )
+                        live_whois_info[domain] = live_whois_response.get('response', {})
+                    except Exception as e:
+                        live_whois_info[domain] = {'error': f"Failed to fetch WHOIS data: {str(e)}"}
 
           
-            combined_results = []
             for domain in domains:
-                domain_data = domain_info_dict.get(domain, {})
-                risk_data = risk_score_dict.get(domain, {})
-                whois_data = live_whois_info.get(domain, {})
-
-                
                 combined_results.append({
                     'domain': domain,
-                    **domain_data,
-                    'sp_risk_score': risk_data.get('sp_risk_score'),
-                    'sp_risk_score_explain': risk_data.get('sp_risk_score_explain'),
-                    'whois_info': whois_data
+                    **domain_info_dict.get(domain, {}),
+                    'sp_risk_score': risk_score_dict.get(domain, {}).get('sp_risk_score', 'N/A'),
+                    'sp_risk_score_explain': risk_score_dict.get(domain, {}).get('sp_risk_score_explain', 'N/A'),
+                    'whois_info': live_whois_info.get(domain, 'N/A')
                 })
 
             return {'domains': combined_results}
 
         except Exception as e:
-            raise DemistoException(f'Failed to fetch bulk domain information: {str(e)}')
+            raise DemistoException(f"Failed to fetch bulk domain information: {str(e)}")
             
         
-    def get_domain_certificates(self, domain: str) -> dict:
+    def get_domain_certificates(self, domain: str, domain_regex: Optional[str] = None, certificate_issuer: Optional[str] = None,
+                                date_min: Optional[str] = None, date_max: Optional[str] = None, prefer: Optional[str] = None,
+                                max_wait: Optional[int] = None, with_metadata: Optional[bool] = False, skip: Optional[int] = 0,
+                                limit: Optional[int] = 100) -> dict:
         """
         Fetches SSL/TLS certificate data for a given domain.
         If the job is not completed, it polls the job status periodically.
 
         Args:
             domain (str): The domain to fetch certificate information for.
+            domain_regex (Optional[str]): Regular expression to match domains.
+            certificate_issuer (Optional[str]): The name of the certificate issuer.
+            date_min (Optional[str]): Filter certificates issued on or after this date.
+            date_max (Optional[str]): Filter certificates issued on or before this date.
+            prefer (Optional[str]): Prefer to wait for longer queries.
+            max_wait (Optional[int]): Maximum wait time in seconds.
+            with_metadata (Optional[bool]): Whether to include metadata.
+            skip (Optional[int]): Number of results to skip.
+            limit (Optional[int]): Maximum number of results.
 
         Returns:
             dict: A dictionary containing certificate information fetched from the API.
         """
         demisto.debug(f'Fetching certificate information for domain: {domain}')
         
-      
         url_suffix = f'explore/domain/certificates/{domain}'
-        response = self._http_request('GET', url_suffix, params={
-            'limit': 100,
-            'skip': 0,
-            'with_metadata': 0
-        })
+        params = {
+            'limit': limit,
+            'skip': skip,
+            'with_metadata': with_metadata,
+            'domain_regex': domain_regex,
+            'certificate_issuer': certificate_issuer,
+            'date_min': date_min,
+            'date_max': date_max,
+            'prefer': prefer,
+            'max_wait': max_wait
+        }
+        
+        # Remove keys with None values
+        params = {k: v for k, v in params.items() if v is not None}
 
-       
+        response = self._http_request('GET', url_suffix, params=params)
+
         job_status_url = response.get('response', {}).get('job_status', {}).get('get')
         if not job_status_url:
             demisto.error('Job status URL not found in the response')
             return response
 
-      
         job_complete = False
         while not job_complete:
             demisto.debug(f'Checking job status at {job_status_url}')
             
-          
             job_response = self._http_request('GET', job_status_url)
             job_status = job_response.get('response', {}).get('job_status', {}).get('status')
 
             if job_status == 'COMPLETED':
                 job_complete = True
                 demisto.debug('Job completed, fetching certificates.')
-             
+            
                 certificate_data = job_response.get('response', {}).get('domain_certificates', [])
                 return certificate_data
             elif job_status == 'FAILED':
                 demisto.error('Job failed to complete.')
                 return {'error': 'Job failed'}
             else:
-             
                 demisto.debug('Job is still in progress. Retrying...')
                 time.sleep(5)
 
-        return {}          
+        return {}
+
         
 
     def search_domains(self, 
-                    query: Optional[str] = None, 
-                    start_date: Optional[str] = None,
-                    end_date: Optional[str] = None,
-                    risk_score_min: Optional[int] = None,
-                    risk_score_max: Optional[int] = None,
-                    limit: int = 100) -> dict:
+                        query: Optional[str] = None, 
+                        start_date: Optional[str] = None,
+                        end_date: Optional[str] = None,
+                        risk_score_min: Optional[int] = None,
+                        risk_score_max: Optional[int] = None,
+                        limit: int = 100) -> dict:
         """
         Search for domains with optional filters.
         
@@ -260,9 +281,18 @@ class Client(BaseClient):
         }.items() if v is not None}
         
         try:
-            return self._http_request('GET', url_suffix, params=params)
+            response = self._http_request('GET', url_suffix, params=params)
+            
+            # Log job status if available
+            job_status = response.get('response', {}).get('job_status', {})
+            if job_status:
+                demisto.debug(f"Job Status: {job_status.get('status', 'Unknown')}")
+            
+            return response
         except Exception as e:
-                demisto.error(f"Error in search_domains API request: {str(e)}")
+            demisto.error(f"Error in search_domains API request: {str(e)}")
+            return {'error': str(e)}
+
                 
     def list_domain_infratags(self, domains: list, cluster: bool = False, mode: str = 'live', match: str = 'self', as_of: Optional[str] = None) -> dict:
         """
@@ -280,24 +310,21 @@ class Client(BaseClient):
         """
         demisto.debug(f'Fetching infratags for domains: {domains} with cluster={cluster}, mode={mode}, match={match}, as_of={as_of}')
         
-        
         url = 'explore/bulk/domain/infratags'  
         
-      
         payload = {
             'domains': domains
         }
         params = {
             'mode': mode,
             'match': match,
-            'clusters': 1 if cluster else 0  
+            'clusters': cluster  # Use boolean value directly
         }
         
         if as_of:
             params['as_of'] = as_of
 
         try:
-            
             response = self._http_request(
                 method='POST',
                 url_suffix=url,
@@ -309,6 +336,7 @@ class Client(BaseClient):
             # Log error if the request fails
             demisto.error(f"Error fetching infratags: {str(e)}")
             raise
+
 
                 
     def get_enrichment_data(self, resource: str, resource_type: str, explain: bool = False, scan_data: bool = False) -> Dict:
@@ -373,7 +401,7 @@ class Client(BaseClient):
             'sparse': sparse if sparse else ''
         }
         
-        url_suffix = f"explore/bulk/ip2asn/{resource}"
+        url_suffix = "explore/bulk/ip2asn"
         
         try:
             response = self._http_request(
@@ -386,6 +414,79 @@ class Client(BaseClient):
         except Exception as e:
             demisto.error(f"Error fetching information for resource {resource}: {str(e)}")
             return {'error': str(e)}
+
+    def get_asn_reputation(self, asn: str) -> Dict:
+        """
+        Retrieve reputation information for an Autonomous System Number (ASN).
+        
+        Args:
+            asn (str): The ASN to lookup (can be with or without 'AS' prefix)
+            
+        Returns:
+            Dict: The reputation information response from the API
+            
+        Raises:
+            ValueError: If ASN is invalid
+            DemistoException: If the API request fails
+        """
+        if not asn:
+            raise ValueError("ASN cannot be empty")
+            
+        # Strip 'AS' prefix if present and validate ASN format
+        asn_number = asn.upper().replace('AS', '')
+        if not asn_number.isdigit():
+            raise ValueError("Invalid ASN format. Must be a number or start with 'AS' followed by a number")
+            
+        demisto.debug(f'Fetching reputation for ASN: {asn_number}')
+        
+        try:
+            url_suffix = f'explore/ipreputation/history/asn/{asn_number}'
+            response = self._http_request(
+                method='GET',
+                url_suffix=url_suffix
+            )
+            
+            return response
+            
+        except Exception as e:
+            raise DemistoException(f'Failed to fetch ASN reputation for {asn}: {str(e)}')
+        
+    def get_asn_takedown_reputation(self, asn: str) -> Dict:
+        """
+        Retrieve takedown reputation information for an Autonomous System Number (ASN).
+        
+        Args:
+            asn (str): The ASN to lookup (can be with or without 'AS' prefix)
+            
+        Returns:
+            Dict: The takedown reputation information response from the API
+            
+        Raises:
+            ValueError: If ASN is invalid
+            DemistoException: If the API request fails
+        """
+        if not asn:
+            raise ValueError("ASN cannot be empty")
+            
+        # Strip 'AS' prefix if present and validate ASN format
+        asn_number = asn.upper().replace('AS', '')
+        if not asn_number.isdigit():
+            raise ValueError("Invalid ASN format. Must be a number or start with 'AS' followed by a number")
+            
+        demisto.debug(f'Fetching takedown reputation for ASN: {asn_number}')
+        
+        try:
+            url_suffix = f'explore/ipreputation/takedown/asn/{asn_number}'
+            response = self._http_request(
+                method='GET',
+                url_suffix=url_suffix
+            )
+            
+            return response
+            
+        except Exception as e:
+            raise DemistoException(f'Failed to fetch ASN takedown reputation for {asn}: {str(e)}')
+
 
 
 
@@ -418,85 +519,147 @@ def test_module(client: Client) -> str:
 
 
 def list_domain_information_command(client: Client, args: Dict[str, Any]) -> CommandResults:
-    domains_arg = args.get('domains', args.get('domain'))
+    """
+    Command handler for the 'silentpush-list-domain-information' command.
+
+    Args:
+        client (Client): The client instance for API requests.
+        args (Dict[str, Any]): Command arguments passed from XSOAR.
+
+    Returns:
+        CommandResults: Formatted results for XSOAR.
+    """
+    # Extract and validate domains
+    domains_arg = args.get('domains') or args.get('domain')
     if not domains_arg:
-        raise DemistoException('No domains provided. Please provide domains using either the "domain" or "domains" argument.')
+        raise DemistoException('No domains provided. Use the "domain" or "domains" argument.')
 
-    if isinstance(domains_arg, str):
-        domains = [d.strip() for d in domains_arg.split(',')]
-    else:
-        domains = domains_arg
-
+    domains = [domain.strip() for domain in domains_arg.split(',') if domain.strip()]
     if len(domains) > 100:
-        raise DemistoException("Maximum of 100 domains can be submitted in a single request")
+        raise DemistoException("A maximum of 100 domains can be submitted in a single request.")
 
-    demisto.debug(f'Processing domains in bulk: {domains}')
-    raw_response = client.list_domain_information(domains)
-    demisto.debug(f'Response from API: {raw_response}')
+    # Extract optional parameters
+    fetch_risk_score = argToBoolean(args.get('fetch_risk_score', False))
+    fetch_whois_info = argToBoolean(args.get('fetch_whois_info', False))
 
+    # Log input for debugging
+    demisto.debug(f"Fetching domain information for: {domains} "
+                  f"with fetch_risk_score={fetch_risk_score}, fetch_whois_info={fetch_whois_info}")
+
+    # Call the client method to fetch domain information
+    raw_response = client.list_domain_information(domains, fetch_risk_score, fetch_whois_info)
+    demisto.debug(f"API response: {raw_response}")
+
+    # Prepare readable output
     markdown = ['# Domain Information Results\n']
-
     for domain_info in raw_response.get('domains', []):
-        markdown.append(f"## Domain: {domain_info.get('domain')}")
+        markdown.append(f"## Domain: {domain_info.get('domain', 'N/A')}")
 
-      
+        # Add basic domain information
         basic_info = {
-            'Created Date': str(domain_info.get('whois_created_date', 'N/A')),
-            'Registrar': str(domain_info.get('registrar', 'N/A')),
-            'Age (days)': str(domain_info.get('age', 'N/A')),
-            'Risk Score': str(domain_info.get('sp_risk_score', 'N/A'))
+            'Created Date': domain_info.get('whois_created_date', 'N/A'),
+            'Registrar': domain_info.get('registrar', 'N/A'),
+            'Age (days)': domain_info.get('age', 'N/A'),
+            'Risk Score': domain_info.get('sp_risk_score', 'N/A'),
         }
         markdown.append(tableToMarkdown('Domain Information', [basic_info]))
 
-        
-        risk_explain = str(domain_info.get('sp_risk_score_explain', 'N/A'))
-        if risk_explain != 'N/A':
+        # Add risk score explanation if available
+        if risk_explain := domain_info.get('sp_risk_score_explain'):
             markdown.append(f'### Risk Score Explanation\n{risk_explain}')
 
-     
+        # Add WHOIS data if available
         whois_info = domain_info.get('whois_info', {})
-        if whois_info:
-            whois_info_list = [{'Key': k, 'Value': v} for k, v in whois_info.items()]
-            markdown.append(tableToMarkdown('WHOIS Information', whois_info_list))
+        if isinstance(whois_info, dict):
+            whois_table = [{'Key': k, 'Value': v} for k, v in whois_info.items()]
+            markdown.append(tableToMarkdown('WHOIS Information', whois_table))
 
-        markdown.append('\n---\n')  
+        markdown.append('\n---\n')
 
+    readable_output = '\n'.join(markdown)
+
+    # Return command results
     return CommandResults(
         outputs_prefix='SilentPush.Domain',
         outputs_key_field='domain',
         outputs=raw_response.get('domains', []),
-        readable_output='\n'.join(markdown),
+        readable_output=readable_output,
         raw_response=raw_response
     )
 
 
-
-def get_domain_certificates_command(client: Client, args: dict) -> CommandResults:
+def get_domain_certificates_command(client: Client, args: Dict[str, Any]) -> CommandResults:
     """
-    Command handler for fetching domain certificate information.
+    Command handler for fetching SSL/TLS certificate data for a given domain.
+
+    Args:
+        client (Client): The client instance.
+        args (Dict[str, Any]): The arguments passed to the command (including the domain).
+
+    Returns:
+        CommandResults: The formatted result for XSOAR.
     """
-    domain = args.get('domain', 'silentpush.com')
-    demisto.debug(f'Processing certificates for domain: {domain}')
+    domain = args.get('domain')
+    if not domain:
+        raise DemistoException('Domain argument is required.')
 
-    raw_response = client.get_domain_certificates(domain)
-    demisto.debug(f'Response from API: {raw_response}')
+    # Call the client function to get the domain certificates.
+    demisto.debug(f'Fetching certificates for domain: {domain}')
+    certificate_data = client.get_domain_certificates(domain)
 
-    if 'error' in raw_response:
-        return CommandResults(
-            outputs_prefix='SilentPush.Certificates',
-            outputs_key_field='domain',
-            outputs=raw_response,
-            readable_output=f"Error: {raw_response['error']}",
-            raw_response=raw_response
-        )
+    if not certificate_data:
+        raise DemistoException(f'No certificate data found for domain: {domain}')
 
-    readable_output = tableToMarkdown('Domain Certificates', raw_response)
+    # Prepare the markdown output
+    markdown = [f'# SSL/TLS Certificate Information for Domain: {domain}\n']
+
+    # Add certificate details to markdown
+    if isinstance(certificate_data, list) and certificate_data:
+        for cert in certificate_data:
+            markdown.append(f"## Certificate for {domain}")
+            cert_info = {
+                'Issuer': cert.get('issuer', 'N/A'),
+                'Issued On': str(cert.get('issued_on', 'N/A')),
+                'Expires On': str(cert.get('expires_on', 'N/A')),
+                'Common Name': cert.get('common_name', 'N/A'),
+                'Subject Alternative Names': ', '.join(cert.get('subject_alt_names', [])),
+            }
+            markdown.append(tableToMarkdown('Certificate Information', [cert_info]))
+
+            # Add metadata if available
+            metadata = cert.get('metadata', {})
+            if metadata:
+                markdown.append(f"### Metadata: {metadata}")
+    else:
+        markdown.append(f'No certificate data available for domain: {domain}')
+
+    # Add metadata and job status to the response
+    metadata = {
+        'job_id': certificate_data.get('response', {}).get('metadata', {}).get('job_id'),
+        'query_name': certificate_data.get('response', {}).get('metadata', {}).get('query_name'),
+        'results_returned': certificate_data.get('response', {}).get('metadata', {}).get('results_returned'),
+        'results_total_at_least': certificate_data.get('response', {}).get('metadata', {}).get('results_total_at_least')
+    }
+    
+    job_status = certificate_data.get('response', {}).get('job_status', {})
+    job_status_url = job_status.get('get')
+    job_status_status = job_status.get('status', 'N/A')
+
+    # Prepare the raw response
+    raw_response = {
+        'certificate_data': certificate_data,
+        'metadata': metadata,
+        'job_status': {
+            'url': job_status_url,
+            'status': job_status_status
+        }
+    }
 
     return CommandResults(
-        outputs_prefix='SilentPush.Certificates',
+        outputs_prefix='SilentPush.Certificate',
         outputs_key_field='domain',
-        outputs=raw_response,
-        readable_output=readable_output,
+        outputs={'domain': domain, 'certificates': certificate_data, 'metadata': metadata},
+        readable_output='\n'.join(markdown),
         raw_response=raw_response
     )
     
@@ -528,14 +691,30 @@ def search_domains_command(client: Client, args: dict) -> CommandResults:
             outputs_key_field='error'
         )
     
-   
-    if raw_response.get('response') and 'records' in raw_response['response']:
-        records = raw_response['response']['records']
-    else:
-        records = []
-
+    # Check for response errors
+    if raw_response.get('error'):
+        return CommandResults(
+            readable_output=f"Error: {raw_response['error']}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error'
+        )
+    
+    # Extract records from the response
+    records = raw_response.get('response', {}).get('records', [])
+    
+    if not records:
+        return CommandResults(
+            readable_output="No domains found.",
+            raw_response=raw_response,
+            outputs_prefix='SilentPush.SearchResults',
+            outputs_key_field='domain',
+            outputs=raw_response
+        )
+    
+    # Format records into a readable markdown table
     readable_output = tableToMarkdown('Domain Search Results', records)
-
+    
     return CommandResults(
         outputs_prefix='SilentPush.SearchResults',
         outputs_key_field='domain',
@@ -555,34 +734,31 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
     Returns:
         CommandResults: The command results containing readable output and the raw response.
     """
- 
     domains = argToList(args.get('domains', ''))
     cluster = argToBoolean(args.get('cluster', False)) 
     mode = args.get('mode', 'live')
     match = args.get('match', 'self')
     as_of = args.get('as_of', None)
   
-    
     if not domains:
         raise ValueError('"domains" argument is required and cannot be empty.')
 
-    
     demisto.debug(f'Processing infratags for domains: {domains} with cluster={cluster}, mode={mode}, match={match}, as_of={as_of}')
 
     try:
-       
         raw_response = client.list_domain_infratags(domains, cluster, mode, match, as_of)
         demisto.debug(f'Response from API: {raw_response}')
     except Exception as e:
-       
         demisto.error(f'Error occurred while fetching infratags: {str(e)}')
         raise
 
-   
     infratags = raw_response.get('response', {}).get('infratags', [])
-    readable_output = tableToMarkdown('Domain Infratags', infratags)
-
+    tag_clusters = raw_response.get('response', {}).get('tag_clusters', [])
     
+    readable_output = tableToMarkdown('Domain Infratags', infratags)
+    if tag_clusters:
+        readable_output += tableToMarkdown('Domain Tag Clusters', tag_clusters)
+
     return CommandResults(
         outputs_prefix='SilentPush.InfraTags',
         outputs_key_field='domain',
@@ -641,7 +817,6 @@ def get_enrichment_data_command(client: Client, args: Dict[str, Any]) -> Command
         raise
 
 
- 
 def list_ip_information_command(client: Client, args: Dict[str, Any]) -> CommandResults:
     """
     Command handler for fetching IP information.
@@ -670,17 +845,13 @@ def list_ip_information_command(client: Client, args: Dict[str, Any]) -> Command
         raise DemistoException('Invalid sparse value. Must be one of: asn, asname, sp_risk_score')
     
     try:
-        
         ip_list = [ip.strip() for ip in ips.split(',')]
         
         results = []
         markdown = ['### IP Information Results\n']
         
-       
         for ip in ip_list:
             resource = ip 
-
-           
             raw_response = client.list_ip_information(resource, explain, scan_data, sparse)
             ip_data = raw_response.get('ips', [])
             
@@ -729,6 +900,143 @@ def list_ip_information_command(client: Client, args: Dict[str, Any]) -> Command
     except Exception as e:
         demisto.error(f"Error in list_ip_information_command: {str(e)}")
         raise
+    
+def get_asn_reputation_command(client: Client, args: Dict[str, Any]) -> CommandResults:
+    """
+    Command handler for fetching ASN reputation information.
+    
+    Args:
+        client (Client): The client instance to fetch the data
+        args (dict): Command arguments including:
+            - asn (str): The ASN to lookup
+            
+    Returns:
+        CommandResults: XSOAR command results
+    """
+    asn = args.get('asn')
+    if not asn:
+        raise DemistoException('ASN is a required argument')
+    
+    try:
+        raw_response = client.get_asn_reputation(asn)
+        reputation_data = raw_response.get('response', {})
+        
+        # Create a readable output
+        markdown = [f"### ASN Reputation Information for {asn}\n"]
+        
+        # Basic reputation information
+        if basic_info := reputation_data.get('reputation', {}):
+            reputation_table = {
+                'Risk Score': basic_info.get('risk_score', 'N/A'),
+                'First Seen': basic_info.get('first_seen', 'N/A'),
+                'Last Seen': basic_info.get('last_seen', 'N/A'),
+                'Total Reports': basic_info.get('total_reports', 'N/A')
+            }
+            markdown.append(tableToMarkdown('Reputation Overview', [reputation_table]))
+            
+        # Historical data if available
+        if history := reputation_data.get('history', []):
+            history_table = []
+            for entry in history:
+                history_table.append({
+                    'Date': entry.get('date', 'N/A'),
+                    'Risk Score': entry.get('risk_score', 'N/A'),
+                    'Reports': entry.get('reports', 'N/A')
+                })
+            if history_table:
+                markdown.append('\n### Historical Reputation Data')
+                markdown.append(tableToMarkdown('', history_table))
+                
+        # Additional metadata if available
+        if metadata := reputation_data.get('metadata', {}):
+            metadata_table = {k: str(v) for k, v in metadata.items()}
+            if metadata_table:
+                markdown.append('\n### Additional Information')
+                markdown.append(tableToMarkdown('', [metadata_table]))
+        
+        return CommandResults(
+            outputs_prefix='SilentPush.ASNReputation',
+            outputs_key_field='asn',
+            outputs={
+                'asn': asn,
+                'reputation': reputation_data
+            },
+            readable_output='\n'.join(markdown),
+            raw_response=raw_response
+        )
+        
+    except Exception as e:
+        demisto.error(f"Error in get_asn_reputation_command: {str(e)}")
+        raise
+    
+def get_asn_takedown_reputation_command(client: Client, args: Dict[str, Any]) -> CommandResults:
+    """
+    Command handler for fetching ASN takedown reputation information.
+    
+    Args:
+        client (Client): The client instance to fetch the data
+        args (dict): Command arguments including:
+            - asn (str): The ASN to lookup
+            
+    Returns:
+        CommandResults: XSOAR command results
+    """
+    asn = args.get('asn')
+    if not asn:
+        raise DemistoException('ASN is a required argument')
+    
+    try:
+        raw_response = client.get_asn_takedown_reputation(asn)
+        takedown_data = raw_response.get('response', {})
+        
+      
+        markdown = [f"### ASN Takedown Reputation Information for {asn}\n"]
+        
+        
+        if basic_info := takedown_data.get('takedown', {}):
+            takedown_table = {
+                'Risk Score': basic_info.get('risk_score', 'N/A'),
+                'First Seen': basic_info.get('first_seen', 'N/A'),
+                'Last Seen': basic_info.get('last_seen', 'N/A'),
+                'Total Reports': basic_info.get('total_reports', 'N/A')
+            }
+            markdown.append(tableToMarkdown('Takedown Reputation Overview', [takedown_table]))
+            
+        
+        if history := takedown_data.get('history', []):
+            history_table = []
+            for entry in history:
+                history_table.append({
+                    'Date': entry.get('date', 'N/A'),
+                    'Risk Score': entry.get('risk_score', 'N/A'),
+                    'Reports': entry.get('reports', 'N/A')
+                })
+            if history_table:
+                markdown.append('\n### Historical Takedown Reputation Data')
+                markdown.append(tableToMarkdown('', history_table))
+                
+       
+        if metadata := takedown_data.get('metadata', {}):
+            metadata_table = {k: str(v) for k, v in metadata.items()}
+            if metadata_table:
+                markdown.append('\n### Additional Information')
+                markdown.append(tableToMarkdown('', [metadata_table]))
+        
+        return CommandResults(
+            outputs_prefix='SilentPush.ASNTakedownReputation',
+            outputs_key_field='asn',
+            outputs={
+                'asn': asn,
+                'takedown_reputation': takedown_data
+            },
+            readable_output='\n'.join(markdown),
+            raw_response=raw_response
+        )
+        
+    except Exception as e:
+        demisto.error(f"Error in get_asn_takedown_reputation_command: {str(e)}")
+        raise
+
 
 
 ''' MAIN FUNCTION '''
@@ -773,7 +1081,9 @@ def main():
             'silentpush-search-domains': search_domains_command,
             'silentpush-list-domain-infratags': list_domain_infratags_command,
             'silentpush-get-enrichment-data' : get_enrichment_data_command,
-            'silentpush-list-ip-information' : list_ip_information_command
+            'silentpush-list-ip-information' : list_ip_information_command,
+            'silentpush-get-asn-reputation' : get_asn_reputation_command,
+            'silentpush-get-asn-takedown-reputation' : get_asn_takedown_reputation_command
         }
 
         if command in command_handlers:
