@@ -59,14 +59,25 @@ class Client(BaseClient):
                 params=params,
                 json=data
             )
-            if response.status_code not in {200, 201}:
-                raise DemistoException(f'Error in API call [{response.status_code}] - {response.text}')
-            try:
-                return response.json() 
-            except ValueError:  
-                raise DemistoException(f"API response is not JSON: {response.text}")
+            if response.headers.get('Content-Type', '').startswith('application/json'):
+                return response.json()
+            else:
+                return response.text
         except Exception as e:
             raise DemistoException(f'Error in API call: {str(e)}')
+        
+    def parse_subject(self,subject: Any) -> Dict[str, Any]:
+        if isinstance(subject, dict):
+            return subject
+        elif isinstance(subject, str):
+            try:
+                return json.loads(subject.replace("'", '"'))
+            except (json.JSONDecodeError, TypeError):
+                demisto.debug(f"Failed to parse subject: {subject}")
+                return {'CN': subject}
+        else:
+            return {'CN': 'N/A'}
+
 
 
 
@@ -105,12 +116,18 @@ class Client(BaseClient):
 
         return {'domains': combined_results}
 
-    def get_domain_certificates(self, domain: str, **kwargs) -> dict:
+    def get_domain_certificates(self, domain: str, **kwargs) -> Dict[str, Any]:
         url_suffix = f"explore/domain/certificates/{domain}"
         params = {k: v for k, v in kwargs.items() if v is not None}
-        response = self._http_request('GET', url_suffix, params=params)
-        demisto.debug(f"Raw response for get_domain_certificates: {response}")
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+        demisto.debug(f"Raw response from API: {response}")
         return response
+
+
 
 
     def search_domains(self, query: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, risk_score_min: Optional[int] = None, risk_score_max: Optional[int] = None, limit: int = 100, domain_regex: Optional[str] = None, name_server: Optional[str] = None, asnum: Optional[int] = None, asname: Optional[str] = None, min_ip_diversity: Optional[int] = None, registrar: Optional[str] = None, min_asn_diversity: Optional[int] = None, certificate_issuer: Optional[str] = None, whois_date_after: Optional[str] = None, skip: Optional[int] = None) -> dict:
@@ -161,13 +178,13 @@ class Client(BaseClient):
 
     def get_enrichment_data(self, resource: str, value: str, explain: Optional[bool] = False, scan_data: Optional[bool] = False) -> dict:
         endpoint = f"explore/enrich/{resource}/{value}"
-        
+
         query_params = {}
         if explain:
             query_params["explain"] = int(explain)
         if scan_data:
             query_params["scan_data"] = int(scan_data)
-        
+
         response = self._http_request(
             method="GET",
             url_suffix=endpoint,
@@ -176,10 +193,10 @@ class Client(BaseClient):
 
         if resource in ["ip", "ipv4", "ipv6"]:
             ip2asn_data = response.get("response", {}).get("ip2asn", [])
-            if isinstance(ip2asn_data, list) and ip2asn_data: 
-                return ip2asn_data[0]  
+            if isinstance(ip2asn_data, list) and ip2asn_data:
+                return ip2asn_data[0]
             else:
-                return {}  
+                return {}
         else:
             return response.get("response", {}).get("domaininfo", {})
 
@@ -239,7 +256,7 @@ class Client(BaseClient):
         )
 
         outputs = response.get('response', {}).get('takedown_reputation', {})
-        
+
         readable_output = tableToMarkdown(
             f'Takedown Reputation for ASN {asn}',
             [outputs],
@@ -255,7 +272,7 @@ class Client(BaseClient):
         )
 
     def get_ipv4_reputation(self, ipv4, explain=False, limit=None):
-        url_suffix = f"explore/ipreputation/history/ipv4/{ipv4}"  
+        url_suffix = f"explore/ipreputation/history/ipv4/{ipv4}"
         params = {}
         if explain:
             params['explain'] = 'true'
@@ -269,16 +286,16 @@ class Client(BaseClient):
         )
 
         return response
-    
+
     def get_job_status(self, job_id: str, max_wait: Optional[int] = None, result_type: Optional[str] = None) -> Dict[str, Any]:
         url_suffix = f"explore/job/{job_id}"
-        
+
         params = {}
         if max_wait is not None:
             if not isinstance(max_wait, int) or max_wait < 0 or max_wait > 25:
                 raise ValueError("max_wait must be an integer between 0 and 25")
             params['max_wait'] = max_wait
-        
+
         if result_type:
             valid_result_types = ['Status', 'Include Metadata', 'Exclude Metadata']
             if result_type not in valid_result_types:
@@ -292,7 +309,7 @@ class Client(BaseClient):
         )
 
         return response
-    
+
     def get_nameserver_reputation(self, nameserver: str, explain: Optional[bool] = None, limit: Optional[int] = None) -> Dict[str, Any]:
         url_suffix = f"explore/nsreputation/history/nameserver/{nameserver}"
         params = {}
@@ -308,11 +325,11 @@ class Client(BaseClient):
         )
         return response
 
- 
-    
+
+
     def get_subnet_reputation(self, subnet: str, explain: Optional[bool] = False, limit: Optional[int] = None) -> Dict[str, Any]:
         url_suffix = f"explore/ipreputation/history/subnet/{subnet}"
-        
+
         params = {}
         if explain:
             params['explain'] = str(explain).lower()
@@ -326,7 +343,7 @@ class Client(BaseClient):
         )
 
         return response
-    
+
     def get_asns_for_domain(self, domain: str) -> Dict[str, Any]:
         url_suffix = f"explore/padns/lookup/domain/asns/{domain}"
 
@@ -405,8 +422,7 @@ def list_domain_information_command(client: Client, args: Dict[str, Any]) -> Com
 def get_domain_certificates_command(client: Client, args: Dict[str, Any]) -> CommandResults:
     domain = args.get('domain')
     if not domain:
-        raise DemistoException('Domain argument is required.')
-
+        raise DemistoException("The 'domain' parameter is required.")
     params = {
         'domain_regex': args.get('domain_regex'),
         'certificate_issuer': args.get('certificate_issuer'),
@@ -414,50 +430,52 @@ def get_domain_certificates_command(client: Client, args: Dict[str, Any]) -> Com
         'date_max': args.get('date_max'),
         'prefer': args.get('prefer'),
         'max_wait': arg_to_number(args.get('max_wait')) if args.get('max_wait') else None,
-        'with_metadata': argToBoolean(args.get('with_metadata')) if args.get('with_metadata') else None,
+        'with_metadata': argToBoolean(args.get('with_metadata')) if 'with_metadata' in args else None,
         'skip': arg_to_number(args.get('skip')) if args.get('skip') else None,
         'limit': arg_to_number(args.get('limit')) if args.get('limit') else None
     }
     params = {k: v for k, v in params.items() if v is not None}
 
-    raw_response = client.get_domain_certificates(domain, **params)
+    try:
+        raw_response = client.get_domain_certificates(domain, **params)
 
-    demisto.debug(f"Raw response for get_domain_certificates: {raw_response}")
-    if not isinstance(raw_response, dict):
-        raise DemistoException(f"Unexpected response format: {raw_response}")
+        certificates = raw_response.get('response', {}).get('domain_certificates', [])
+        metadata = raw_response.get('response', {}).get('metadata', {})
 
-    certificates = raw_response.get('response', {}).get('domain_certificates', [])
-    metadata = raw_response.get('response', {}).get('metadata', {})
+        if not certificates:
+            return CommandResults(
+                readable_output=f"No certificates found for domain: {domain}",
+                outputs_prefix='SilentPush.Certificate',
+                outputs_key_field='domain',
+                outputs={'domain': domain, 'certificates': [], 'metadata': metadata},
+                raw_response=raw_response
+            )
 
-    if not certificates:
+        markdown = [f"# SSL/TLS Certificate Information for Domain: {domain}\n"]
+        for cert in certificates:
+            subject = client.parse_subject(cert.get('subject', {}))
+            cert_info = {
+                'Issuer': cert.get('issuer', 'N/A'),
+                'Issued On': cert.get('not_before', 'N/A'),
+                'Expires On': cert.get('not_after', 'N/A'),
+                'Common Name': subject.get('CN', 'N/A'),
+                'Subject Alternative Names': ', '.join(cert.get('domains', [])),
+                'Serial Number': cert.get('serial_number', 'N/A'),
+                'Fingerprint SHA256': cert.get('fingerprint_sha256', 'N/A'),
+            }
+            markdown.append(tableToMarkdown('Certificate Information', [cert_info]))
+
         return CommandResults(
-            readable_output=f"No certificates found for domain: {domain}",
             outputs_prefix='SilentPush.Certificate',
             outputs_key_field='domain',
-            outputs={'domain': domain, 'certificates': [], 'metadata': metadata},
+            outputs={'domain': domain, 'certificates': certificates, 'metadata': metadata},
+            readable_output='\n'.join(markdown),
             raw_response=raw_response
         )
 
-    markdown = [f"# SSL/TLS Certificate Information for Domain: {domain}\n"]
-    for cert in certificates:
-        cert_info = {
-            'Issuer': cert.get('issuer', 'N/A'),
-            'Issued On': cert.get('not_before', 'N/A'),
-            'Expires On': cert.get('not_after', 'N/A'),
-            'Common Name': cert.get('subject', {}).get('CN', 'N/A'),
-            'Subject Alternative Names': ', '.join(cert.get('domains', [])),
-            'Serial Number': cert.get('serial_number', 'N/A'),
-            'Fingerprint SHA256': cert.get('fingerprint_sha256', 'N/A'),
-        }
-        markdown.append(tableToMarkdown('Certificate Information', [cert_info]))
+    except Exception as e:
+        raise DemistoException(f"Error retrieving certificates for domain '{domain}': {str(e)}")
 
-    return CommandResults(
-        outputs_prefix='SilentPush.Certificate',
-        outputs_key_field='domain',
-        outputs={'domain': domain, 'certificates': certificates, 'metadata': metadata},
-        readable_output='\n'.join(markdown),
-        raw_response=raw_response
-    )
 
 
 
@@ -562,8 +580,8 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
         readable_output=readable_output,
         raw_response=raw_response
     )
-    
-    
+
+
 def get_enrichment_data_command(client: Client, args: dict) -> CommandResults:
     resource = args.get("resource")
     value = args.get("value")
@@ -598,12 +616,12 @@ def get_enrichment_data_command(client: Client, args: dict) -> CommandResults:
         raw_response=enrichment_data
     )
 
-        
+
 def list_ip_information_command(client: Client, args: Dict[str, Any]) -> CommandResults:
     ips = argToList(args.get("ips", ""))
     if not ips:
         raise ValueError("The 'ips' parameter is required.")
-    
+
     response = client.list_ip_information(ips=ips)
     outputs = response.get("response", {}).get("ip2asn", [])
 
@@ -616,7 +634,7 @@ def list_ip_information_command(client: Client, args: Dict[str, Any]) -> Command
             raw_response=response
         )
 
-    detailed_outputs = outputs  
+    detailed_outputs = outputs
 
     readable_output = tableToMarkdown(
         "Comprehensive IP Information",
@@ -694,7 +712,7 @@ def get_ipv4_reputation_command(client: Client, args: dict) -> CommandResults:
         readable_output=readable_output,
         raw_response=raw_response
     )
-    
+
 def get_job_status_command(client: Client, args: dict) -> CommandResults:
     job_id = args.get('job_id')
     max_wait = arg_to_number(args.get('max_wait'))
@@ -705,16 +723,16 @@ def get_job_status_command(client: Client, args: dict) -> CommandResults:
 
     try:
         raw_response = client.get_job_status(job_id, max_wait, result_type)
-        
+
         job_status = raw_response.get('response', {})
-        
+
         headers = list(job_status.keys())
         rows = [job_status]
-        
+
         readable_output = tableToMarkdown(
-            f"Job Status for Job ID: {job_id}", 
-            rows, 
-            headers=headers, 
+            f"Job Status for Job ID: {job_id}",
+            rows,
+            headers=headers,
             removeNull=True
         )
 
@@ -734,7 +752,7 @@ def get_job_status_command(client: Client, args: dict) -> CommandResults:
             outputs_key_field='error',
             outputs={'error': str(e)}
         )
-        
+
 def get_nameserver_reputation_command(client: Client, args: Dict[str, Any]) -> CommandResults:
     nameserver = args.get('nameserver')
     if not nameserver:
@@ -785,15 +803,15 @@ def get_subnet_reputation_command(client: Client, args: dict) -> CommandResults:
 
     try:
         raw_response = client.get_subnet_reputation(subnet, explain, limit)
-        
+
         subnet_reputation = raw_response.get('response', {}).get('subnet_reputation_history', [])
-        
+
         if not subnet_reputation:
             readable_output = f"No reputation history found for subnet: {subnet}"
         else:
             readable_output = tableToMarkdown(
-                f"Subnet Reputation for {subnet}", 
-                subnet_reputation, 
+                f"Subnet Reputation for {subnet}",
+                subnet_reputation,
                 removeNull=True
             )
 
@@ -813,7 +831,7 @@ def get_subnet_reputation_command(client: Client, args: dict) -> CommandResults:
             outputs_key_field='error',
             outputs={'error': str(e)}
         )
-        
+
 def get_asns_for_domain_command(client: Client, args: dict) -> CommandResults:
     domain = args.get('domain')
 
@@ -822,21 +840,21 @@ def get_asns_for_domain_command(client: Client, args: dict) -> CommandResults:
 
     try:
         raw_response = client.get_asns_for_domain(domain)
-        
+
         records = raw_response.get('response', {}).get('records', [])
-        
+
         if not records or 'domain_asns' not in records[0]:
             readable_output = f"No ASNs found for domain: {domain}"
             asns = []
         else:
             domain_asns = records[0]['domain_asns']
-            
-            asns = [{'ASN': asn, 'Description': description} 
+
+            asns = [{'ASN': asn, 'Description': description}
                     for asn, description in domain_asns.items()]
-            
+
             readable_output = tableToMarkdown(
-                f"ASNs for Domain: {domain}", 
-                asns, 
+                f"ASNs for Domain: {domain}",
+                asns,
                 headers=['ASN', 'Description']
             )
 
@@ -844,7 +862,7 @@ def get_asns_for_domain_command(client: Client, args: dict) -> CommandResults:
             outputs_prefix='SilentPush.DomainASNs',
             outputs_key_field='domain',
             outputs={
-                'domain': domain, 
+                'domain': domain,
                 'asns': asns
             },
             readable_output=readable_output,
