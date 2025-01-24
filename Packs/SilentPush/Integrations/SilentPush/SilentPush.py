@@ -10,7 +10,7 @@ Linting: https://xsoar.pan.dev/docs/integrations/linting
 
 import requests
 import urllib3
-from typing import Any, Optional, Dict
+from typing import Any, Optional, Dict, List
 
 urllib3.disable_warnings()
 
@@ -183,6 +183,23 @@ class Client(BaseClient):
         else:
             return response.get("response", {}).get("domaininfo", {})
 
+    def list_ip_information(self, ips: List[str]) -> Dict:
+        """
+        Retrieve information for multiple IP addresses.
+
+        Args:
+            ips (List[str]): List of IPv4 or IPv6 addresses to fetch information for.
+
+        Returns:
+            Dict: API response containing IP information.
+        """
+        if len(ips) > 100:
+            raise DemistoException("Maximum of 100 IPs can be submitted in a single request.")
+
+        ip_data = {'ips': ips}
+        bulk_ip_response = self._http_request('POST', 'explore/bulk/ip2asn/ipv4', data=ip_data)
+
+        return bulk_ip_response
 
 
     def get_asn_reputation(self, asn: int, explain: bool = False, limit: int = None) -> Dict[str, Any]:
@@ -238,7 +255,7 @@ class Client(BaseClient):
         )
 
     def get_ipv4_reputation(self, ipv4, explain=False, limit=None):
-        url_suffix = f"explore/ipreputation/ipv4/{ipv4}"  
+        url_suffix = f"explore/ipreputation/history/ipv4/{ipv4}"  
         params = {}
         if explain:
             params['explain'] = 'true'
@@ -276,11 +293,10 @@ class Client(BaseClient):
 
         return response
     
-    def get_nameserver_reputation(self, nameserver: str, explain: Optional[bool] = False, limit: Optional[int] = None) -> Dict[str, Any]:
+    def get_nameserver_reputation(self, nameserver: str, explain: Optional[bool] = None, limit: Optional[int] = None) -> Dict[str, Any]:
         url_suffix = f"explore/nsreputation/history/nameserver/{nameserver}"
-        
         params = {}
-        if explain:
+        if explain is not None:
             params['explain'] = str(explain).lower()
         if limit is not None:
             params['limit'] = limit
@@ -290,8 +306,9 @@ class Client(BaseClient):
             url_suffix=url_suffix,
             params=params
         )
-
         return response
+
+ 
     
     def get_subnet_reputation(self, subnet: str, explain: Optional[bool] = False, limit: Optional[int] = None) -> Dict[str, Any]:
         url_suffix = f"explore/ipreputation/history/subnet/{subnet}"
@@ -581,22 +598,29 @@ def get_enrichment_data_command(client: Client, args: dict) -> CommandResults:
         raw_response=enrichment_data
     )
 
-
-
-
         
 def list_ip_information_command(client: Client, args: Dict[str, Any]) -> CommandResults:
-    ips = args.get("ips")
+    ips = argToList(args.get("ips", ""))
     if not ips:
         raise ValueError("The 'ips' parameter is required.")
     
     response = client.list_ip_information(ips=ips)
     outputs = response.get("response", {}).get("ip2asn", [])
 
+    if not outputs:
+        return CommandResults(
+            readable_output=f"No information found for IPs: {', '.join(ips)}",
+            outputs_prefix="SilentPush.IPInformation",
+            outputs_key_field="ip",
+            outputs=[],
+            raw_response=response
+        )
+
+    detailed_outputs = outputs  
+
     readable_output = tableToMarkdown(
-        "IP Information",
-        outputs,
-        headers=["ip", "asn", "organization", "country", "risk_score"],
+        "Comprehensive IP Information",
+        detailed_outputs,
         removeNull=True
     )
 
@@ -653,7 +677,7 @@ def get_ipv4_reputation_command(client: Client, args: dict) -> CommandResults:
             outputs_key_field='error'
         )
 
-    ip_reputation = raw_response.get('response', {}).get('ip_reputation', [])
+    ip_reputation = raw_response.get('response', {}).get('ip_reputation_history', [])
 
     if not ip_reputation:
         readable_output = f"No reputation information found for IPv4: {ipv4}"
@@ -711,28 +735,31 @@ def get_job_status_command(client: Client, args: dict) -> CommandResults:
             outputs={'error': str(e)}
         )
         
-def get_nameserver_reputation_command(client: Client, args: dict) -> CommandResults:
+def get_nameserver_reputation_command(client: Client, args: Dict[str, Any]) -> CommandResults:
     nameserver = args.get('nameserver')
+    if not nameserver:
+        raise DemistoException("The 'nameserver' parameter is required.")
+
     explain = argToBoolean(args.get('explain', False))
     limit = arg_to_number(args.get('limit'))
 
-    if not nameserver:
-        raise DemistoException("nameserver is a required parameter")
-
     try:
         raw_response = client.get_nameserver_reputation(nameserver, explain, limit)
-        
-        ns_reputation = raw_response.get('response', {})
-        readable_output = tableToMarkdown(
-            f"Nameserver Reputation for {nameserver}", 
-            ns_reputation, 
-            removeNull=True
-        )
+        reputation_history = raw_response.get('response', {}).get('ns_server_reputation_history', [])
+
+        if not reputation_history:
+            readable_output = f"No reputation history found for nameserver: {nameserver}"
+        else:
+            readable_output = tableToMarkdown(
+                f"Nameserver Reputation for {nameserver}",
+                reputation_history,
+                removeNull=True
+            )
 
         return CommandResults(
             outputs_prefix='SilentPush.NameserverReputation',
             outputs_key_field='nameserver',
-            outputs={'nameserver': nameserver, **ns_reputation},
+            outputs={'nameserver': nameserver, 'reputation_history': reputation_history},
             readable_output=readable_output,
             raw_response=raw_response
         )
@@ -745,7 +772,9 @@ def get_nameserver_reputation_command(client: Client, args: dict) -> CommandResu
             outputs_key_field='error',
             outputs={'error': str(e)}
         )
-        
+
+
+
 def get_subnet_reputation_command(client: Client, args: dict) -> CommandResults:
     subnet = args.get('subnet')
     explain = argToBoolean(args.get('explain', False))
@@ -757,18 +786,21 @@ def get_subnet_reputation_command(client: Client, args: dict) -> CommandResults:
     try:
         raw_response = client.get_subnet_reputation(subnet, explain, limit)
         
-        subnet_reputation = raw_response.get('response', {})
+        subnet_reputation = raw_response.get('response', {}).get('subnet_reputation_history', [])
         
-        readable_output = tableToMarkdown(
-            f"Subnet Reputation for {subnet}", 
-            subnet_reputation, 
-            removeNull=True
-        )
+        if not subnet_reputation:
+            readable_output = f"No reputation history found for subnet: {subnet}"
+        else:
+            readable_output = tableToMarkdown(
+                f"Subnet Reputation for {subnet}", 
+                subnet_reputation, 
+                removeNull=True
+            )
 
         return CommandResults(
             outputs_prefix='SilentPush.SubnetReputation',
             outputs_key_field='subnet',
-            outputs={'subnet': subnet, **subnet_reputation},
+            outputs={'subnet': subnet, 'reputation_history': subnet_reputation},
             readable_output=readable_output,
             raw_response=raw_response
         )
@@ -791,18 +823,30 @@ def get_asns_for_domain_command(client: Client, args: dict) -> CommandResults:
     try:
         raw_response = client.get_asns_for_domain(domain)
         
-        asns = raw_response.get('response', {}).get('asns', [])
+        records = raw_response.get('response', {}).get('records', [])
         
-        readable_output = tableToMarkdown(
-            f"ASNs for Domain: {domain}", 
-            [{'ASN': asn} for asn in asns], 
-            headers=['ASN']
-        )
+        if not records or 'domain_asns' not in records[0]:
+            readable_output = f"No ASNs found for domain: {domain}"
+            asns = []
+        else:
+            domain_asns = records[0]['domain_asns']
+            
+            asns = [{'ASN': asn, 'Description': description} 
+                    for asn, description in domain_asns.items()]
+            
+            readable_output = tableToMarkdown(
+                f"ASNs for Domain: {domain}", 
+                asns, 
+                headers=['ASN', 'Description']
+            )
 
         return CommandResults(
             outputs_prefix='SilentPush.DomainASNs',
             outputs_key_field='domain',
-            outputs={'domain': domain, 'asns': asns},
+            outputs={
+                'domain': domain, 
+                'asns': asns
+            },
             readable_output=readable_output,
             raw_response=raw_response
         )
