@@ -61,9 +61,13 @@ class Client(BaseClient):
             )
             if response.status_code not in {200, 201}:
                 raise DemistoException(f'Error in API call [{response.status_code}] - {response.text}')
-            return response.json() 
+            try:
+                return response.json() 
+            except ValueError:  
+                raise DemistoException(f"API response is not JSON: {response.text}")
         except Exception as e:
             raise DemistoException(f'Error in API call: {str(e)}')
+
 
 
     def list_domain_information(self, domains: List[str], fetch_risk_score: Optional[bool] = False, fetch_whois_info: Optional[bool] = False) -> Dict:
@@ -203,7 +207,7 @@ class Client(BaseClient):
         if not asn:
             raise ValueError('The "asn" argument is required.')
 
-        endpoint = f'explore/takedownreputation/history/asn/{asn}'
+        endpoint = f'explore/takedownreputation/asn/{asn}'
 
         params = {}
         if explain:
@@ -217,11 +221,12 @@ class Client(BaseClient):
             params=params
         )
 
-        outputs = response.get('response', {})
+        outputs = response.get('response', {}).get('takedown_reputation', {})
+        
         readable_output = tableToMarkdown(
             f'Takedown Reputation for ASN {asn}',
-            outputs,
-            headers=['asn', 'score', 'details', 'timestamp']
+            [outputs],
+            headers=['asn', 'asname', 'asn_allocation_date', 'asn_allocation_date', 'asn_takedown_reputation']
         )
 
         return CommandResults(
@@ -233,7 +238,7 @@ class Client(BaseClient):
         )
 
     def get_ipv4_reputation(self, ipv4, explain=False, limit=None):
-        url_suffix = f"explore/ipreputation/history/ipv4/{ipv4}"
+        url_suffix = f"explore/ipreputation/ipv4/{ipv4}"  
         params = {}
         if explain:
             params['explain'] = 'true'
@@ -391,20 +396,21 @@ def get_domain_certificates_command(client: Client, args: Dict[str, Any]) -> Com
         'date_min': args.get('date_min'),
         'date_max': args.get('date_max'),
         'prefer': args.get('prefer'),
-        'max_wait': arg_to_number(args.get('max_wait')),
-        'with_metadata': argToBoolean(args.get('with_metadata')),
-        'skip': arg_to_number(args.get('skip')),
-        'limit': arg_to_number(args.get('limit'))
+        'max_wait': arg_to_number(args.get('max_wait')) if args.get('max_wait') else None,
+        'with_metadata': argToBoolean(args.get('with_metadata')) if args.get('with_metadata') else None,
+        'skip': arg_to_number(args.get('skip')) if args.get('skip') else None,
+        'limit': arg_to_number(args.get('limit')) if args.get('limit') else None
     }
+    params = {k: v for k, v in params.items() if v is not None}
 
     raw_response = client.get_domain_certificates(domain, **params)
 
-    if isinstance(raw_response, list):
-        certificates = raw_response
-        metadata = {}
-    else:
-        certificates = raw_response.get('response', {}).get('domain_certificates', [])
-        metadata = raw_response.get('response', {}).get('metadata', {})
+    demisto.debug(f"Raw response for get_domain_certificates: {raw_response}")
+    if not isinstance(raw_response, dict):
+        raise DemistoException(f"Unexpected response format: {raw_response}")
+
+    certificates = raw_response.get('response', {}).get('domain_certificates', [])
+    metadata = raw_response.get('response', {}).get('metadata', {})
 
     if not certificates:
         return CommandResults(
@@ -419,10 +425,12 @@ def get_domain_certificates_command(client: Client, args: Dict[str, Any]) -> Com
     for cert in certificates:
         cert_info = {
             'Issuer': cert.get('issuer', 'N/A'),
-            'Issued On': cert.get('issued_on', 'N/A'),
-            'Expires On': cert.get('expires_on', 'N/A'),
-            'Common Name': cert.get('common_name', 'N/A'),
-            'Subject Alternative Names': ', '.join(cert.get('subject_alt_names', [])),
+            'Issued On': cert.get('not_before', 'N/A'),
+            'Expires On': cert.get('not_after', 'N/A'),
+            'Common Name': cert.get('subject', {}).get('CN', 'N/A'),
+            'Subject Alternative Names': ', '.join(cert.get('domains', [])),
+            'Serial Number': cert.get('serial_number', 'N/A'),
+            'Fingerprint SHA256': cert.get('fingerprint_sha256', 'N/A'),
         }
         markdown.append(tableToMarkdown('Certificate Information', [cert_info]))
 
@@ -433,6 +441,8 @@ def get_domain_certificates_command(client: Client, args: Dict[str, Any]) -> Com
         readable_output='\n'.join(markdown),
         raw_response=raw_response
     )
+
+
 
 
 def search_domains_command(client: Client, args: dict) -> CommandResults:
@@ -643,14 +653,19 @@ def get_ipv4_reputation_command(client: Client, args: dict) -> CommandResults:
             outputs_key_field='error'
         )
 
-    readable_output = tableToMarkdown(f"IPv4 Reputation for {ipv4}", raw_response.get('response', {}))
+    ip_reputation = raw_response.get('response', {}).get('ip_reputation', [])
+
+    if not ip_reputation:
+        readable_output = f"No reputation information found for IPv4: {ipv4}"
+    else:
+        readable_output = tableToMarkdown(f"IPv4 Reputation for {ipv4}", ip_reputation)
 
     return CommandResults(
         outputs_prefix='SilentPush.IPv4Reputation',
-        outputs_key_field='ipv4',
+        outputs_key_field='ip',
         outputs={
-            'ipv4': ipv4,
-            'details': raw_response.get('response', {})
+            'ip': ipv4,
+            'reputation_history': ip_reputation
         },
         readable_output=readable_output,
         raw_response=raw_response
