@@ -156,24 +156,29 @@ class Client(BaseClient):
         return response
 
     def get_enrichment_data(self, resource: str, value: str, explain: Optional[bool] = False, scan_data: Optional[bool] = False) -> dict:
-        parameters = ["resource", "value"]
-        endpoint = "/api/v1/merge-api/explore/enrich/{{resource}}/{{value}}"
+        endpoint = f"explore/enrich/{resource}/{value}"
         
-        for param in parameters:
-            endpoint = endpoint.replace(f"{{{param}}}", str(locals().get(param)))
-
         query_params = {}
         if explain:
             query_params["explain"] = int(explain)
         if scan_data:
             query_params["scan_data"] = int(scan_data)
-
+        
         response = self._http_request(
             method="GET",
             url_suffix=endpoint,
             params=query_params
         )
-        return response
+
+        if resource in ["ip", "ipv4", "ipv6"]:
+            ip2asn_data = response.get("response", {}).get("ip2asn", [])
+            if isinstance(ip2asn_data, list) and ip2asn_data: 
+                return ip2asn_data[0]  
+            else:
+                return {}  
+        else:
+            return response.get("response", {}).get("domaininfo", {})
+
 
 
     def get_asn_reputation(self, asn: int, explain: bool = False, limit: int = None) -> Dict[str, Any]:
@@ -244,17 +249,6 @@ class Client(BaseClient):
         return response
     
     def get_job_status(self, job_id: str, max_wait: Optional[int] = None, result_type: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Retrieve status or results of a specified job.
-
-        Args:
-            job_id (str): ID of the job to retrieve status for.
-            max_wait (Optional[int]): Number of seconds to wait for results (0-25 seconds).
-            result_type (Optional[str]): Type of result to include (Status, Include Metadata, Exclude Metadata).
-
-        Returns:
-            Dict[str, Any]: Job status or result information.
-        """
         url_suffix = f"explore/job/{job_id}"
         
         params = {}
@@ -278,17 +272,6 @@ class Client(BaseClient):
         return response
     
     def get_nameserver_reputation(self, nameserver: str, explain: Optional[bool] = False, limit: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Retrieve reputation information for a nameserver.
-
-        Args:
-            nameserver (str): Name of the nameserver to check.
-            explain (Optional[bool]): Whether to include calculation details.
-            limit (Optional[int]): Maximum number of reputation history entries to retrieve.
-
-        Returns:
-            Dict[str, Any]: Nameserver reputation data.
-        """
         url_suffix = f"explore/nsreputation/history/nameserver/{nameserver}"
         
         params = {}
@@ -306,17 +289,6 @@ class Client(BaseClient):
         return response
     
     def get_subnet_reputation(self, subnet: str, explain: Optional[bool] = False, limit: Optional[int] = None) -> Dict[str, Any]:
-        """
-        Retrieve reputation information for a subnet.
-
-        Args:
-            subnet (str): IPv4 subnet to check (e.g., 192.1.0.0/24).
-            explain (Optional[bool]): Whether to include calculation details.
-            limit (Optional[int]): Maximum number of reputation history entries to retrieve.
-
-        Returns:
-            Dict[str, Any]: Subnet reputation data.
-        """
         url_suffix = f"explore/ipreputation/history/subnet/{subnet}"
         
         params = {}
@@ -334,15 +306,6 @@ class Client(BaseClient):
         return response
     
     def get_asns_for_domain(self, domain: str) -> Dict[str, Any]:
-        """
-        Retrieve ASNs associated with a domain's A records.
-
-        Args:
-            domain (str): Domain name to search for ASNs.
-
-        Returns:
-            Dict[str, Any]: ASNs seen for the domain.
-        """
         url_suffix = f"explore/padns/lookup/domain/asns/{domain}"
 
         response = self._http_request(
@@ -583,10 +546,7 @@ def get_enrichment_data_command(client: Client, args: dict) -> CommandResults:
     if not resource or not value:
         raise ValueError("Both 'resource' and 'value' arguments are required.")
 
-    response = client.get_enrichment_data(resource=resource, value=value, explain=explain, scan_data=scan_data)
-
-    error_path = "response.ip2asn" if resource == "ip" else "response.domaininfo"
-    enrichment_data = response.get(error_path, {})
+    enrichment_data = client.get_enrichment_data(resource, value, explain, scan_data)
 
     if not enrichment_data:
         return CommandResults(
@@ -594,15 +554,12 @@ def get_enrichment_data_command(client: Client, args: dict) -> CommandResults:
             outputs_prefix="SilentPush.Enrichment",
             outputs_key_field="value",
             outputs={"value": value, "data": {}},
-            raw_response=response
+            raw_response=enrichment_data
         )
 
-    headers = list(enrichment_data.keys())
-    rows = [{header: enrichment_data.get(header, "N/A")} for header in headers]
     readable_output = tableToMarkdown(
         f"Enrichment Data for {value}",
-        rows,
-        headers=headers,
+        enrichment_data,
         removeNull=True
     )
 
@@ -611,8 +568,9 @@ def get_enrichment_data_command(client: Client, args: dict) -> CommandResults:
         outputs_key_field="value",
         outputs={"value": value, **enrichment_data},
         readable_output=readable_output,
-        raw_response=response
+        raw_response=enrichment_data
     )
+
 
 
 
