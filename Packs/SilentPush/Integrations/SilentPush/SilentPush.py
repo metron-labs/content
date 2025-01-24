@@ -8,7 +8,6 @@ Code Conventions: https://xsoar.pan.dev/docs/integrations/code-conventions
 Linting: https://xsoar.pan.dev/docs/integrations/linting
 """
 
-
 import requests
 import urllib3
 from typing import Any, Optional, Dict
@@ -50,27 +49,7 @@ class Client(BaseClient):
         }
 
     def _http_request(self, method: str, url_suffix: str, params: dict = None, data: dict = None) -> Any:
-        """
-        Handles the HTTP requests to the SilentPush API.
-
-        This function builds the request URL, adds the necessary headers, and sends a request
-        to the API. It returns the response in JSON format.
-
-        Args:
-            method (str): The HTTP method (GET, POST, etc.).
-            url_suffix (str): The specific endpoint to be appended to the base URL.
-            params (dict, optional): The URL parameters to be sent with the request.
-            data (dict, optional): The data to be sent with the request.
-
-        Returns:
-            Any: The JSON response from the API.
-
-        Raises:
-            DemistoException: If there is an error in the API response.
-        """
         full_url = f'{self.base_url}{url_suffix}'
-        masked_headers = {k: v if k != 'X-API-Key' else '****' for k, v in self._headers.items()}
-
         try:
             response = requests.request(
                 method,
@@ -80,13 +59,12 @@ class Client(BaseClient):
                 params=params,
                 json=data
             )
-
             if response.status_code not in {200, 201}:
                 raise DemistoException(f'Error in API call [{response.status_code}] - {response.text}')
-            return response.json()
+            return response.json() 
         except Exception as e:
-            demisto.error(f'Error in API call: {str(e)}')
-            raise
+            raise DemistoException(f'Error in API call: {str(e)}')
+
 
     def list_domain_information(self, domains: List[str], fetch_risk_score: Optional[bool] = False, fetch_whois_info: Optional[bool] = False) -> Dict:
         if len(domains) > 100:
@@ -123,22 +101,13 @@ class Client(BaseClient):
 
         return {'domains': combined_results}
 
-    def get_domain_certificates(self, domain: str, domain_regex: Optional[str] = None, certificate_issuer: Optional[str] = None, date_min: Optional[str] = None, date_max: Optional[str] = None, prefer: Optional[str] = None, max_wait: Optional[int] = None, with_metadata: Optional[bool] = False, skip: Optional[int] = None, limit: Optional[int] = None) -> Dict:
-        endpoint = f"/api/v1/merge-api/explore/domain/certificates/{domain}"
-        params = {
-            'domain_regex': domain_regex,
-            'certificate_issuer': certificate_issuer,
-            'date_min': date_min,
-            'date_max': date_max,
-            'prefer': prefer,
-            'max_wait': max_wait,
-            'with_metadata': with_metadata,
-            'skip': skip,
-            'limit': limit,
-        }
-        filtered_params = {k: v for k, v in params.items() if v is not None}
-        response = self._http_request('GET', endpoint, params=filtered_params)
+    def get_domain_certificates(self, domain: str, **kwargs) -> dict:
+        url_suffix = f"explore/domain/certificates/{domain}"
+        params = {k: v for k, v in kwargs.items() if v is not None}
+        response = self._http_request('GET', url_suffix, params=params)
+        demisto.debug(f"Raw response for get_domain_certificates: {response}")
         return response
+
 
     def search_domains(self, query: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, risk_score_min: Optional[int] = None, risk_score_max: Optional[int] = None, limit: int = 100, domain_regex: Optional[str] = None, name_server: Optional[str] = None, asnum: Optional[int] = None, asname: Optional[str] = None, min_ip_diversity: Optional[int] = None, registrar: Optional[str] = None, min_asn_diversity: Optional[int] = None, certificate_issuer: Optional[str] = None, whois_date_after: Optional[str] = None, skip: Optional[int] = None) -> dict:
         url_suffix = 'explore/domain/search'
@@ -187,31 +156,25 @@ class Client(BaseClient):
         return response
 
     def get_enrichment_data(self, resource: str, value: str, explain: Optional[bool] = False, scan_data: Optional[bool] = False) -> dict:
-        url_suffix = f'explore/enrich/{resource}/{value}'
-        params = {
-            'explain': explain,
-            'scan_data': scan_data
-        }
-        params = {k: v for k, v in params.items() if v is not None}
-        try:
-            response = self._http_request('GET', url_suffix, params=params)
-            return response
-        except Exception as e:
-            demisto.error(f'Error in get_enrichment_data API request: {str(e)}')
-            raise
+        parameters = ["resource", "value"]
+        endpoint = "/api/v1/merge-api/explore/enrich/{{resource}}/{{value}}"
+        
+        for param in parameters:
+            endpoint = endpoint.replace(f"{{{param}}}", str(locals().get(param)))
 
-    def list_ip_information(self, ips: str) -> Dict[str, Any]:
-        if not ips:
-            raise ValueError("The 'ips' parameter is required and cannot be empty.")
-        url_suffix = "explore/bulk/ip2asn/resource"
-        headers = self._headers
-        payload = {"ips": ips}
+        query_params = {}
+        if explain:
+            query_params["explain"] = int(explain)
+        if scan_data:
+            query_params["scan_data"] = int(scan_data)
+
         response = self._http_request(
-            method="POST",
-            url_suffix=url_suffix,
-            data=payload
+            method="GET",
+            url_suffix=endpoint,
+            params=query_params
         )
         return response
+
 
     def get_asn_reputation(self, asn: int, explain: bool = False, limit: int = None) -> Dict[str, Any]:
         url_suffix = f"explore/ipreputation/history/asn/{asn}"
@@ -227,7 +190,7 @@ class Client(BaseClient):
         )
         return response
 
-    def get_asn_takedown_reputation(client, args):
+    def get_asn_takedown_reputation(self, args):
         asn = args.get('asn')
         explain = argToBoolean(args.get('explain', 'false'))
         limit = args.get('limit')
@@ -235,7 +198,7 @@ class Client(BaseClient):
         if not asn:
             raise ValueError('The "asn" argument is required.')
 
-        endpoint = f'/api/v1/merge-api/explore/takedownreputation/history/asn/{asn}'
+        endpoint = f'explore/takedownreputation/history/asn/{asn}'
 
         params = {}
         if explain:
@@ -243,7 +206,7 @@ class Client(BaseClient):
         if limit:
             params['limit'] = limit
 
-        response = client._http_request(
+        response = self._http_request(
             method='GET',
             url_suffix=endpoint,
             params=params
@@ -263,6 +226,133 @@ class Client(BaseClient):
             readable_output=readable_output,
             raw_response=response
         )
+
+    def get_ipv4_reputation(self, ipv4, explain=False, limit=None):
+        url_suffix = f"explore/ipreputation/history/ipv4/{ipv4}"
+        params = {}
+        if explain:
+            params['explain'] = 'true'
+        if limit is not None:
+            params['limit'] = limit
+
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+        return response
+    
+    def get_job_status(self, job_id: str, max_wait: Optional[int] = None, result_type: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Retrieve status or results of a specified job.
+
+        Args:
+            job_id (str): ID of the job to retrieve status for.
+            max_wait (Optional[int]): Number of seconds to wait for results (0-25 seconds).
+            result_type (Optional[str]): Type of result to include (Status, Include Metadata, Exclude Metadata).
+
+        Returns:
+            Dict[str, Any]: Job status or result information.
+        """
+        url_suffix = f"explore/job/{job_id}"
+        
+        params = {}
+        if max_wait is not None:
+            if not isinstance(max_wait, int) or max_wait < 0 or max_wait > 25:
+                raise ValueError("max_wait must be an integer between 0 and 25")
+            params['max_wait'] = max_wait
+        
+        if result_type:
+            valid_result_types = ['Status', 'Include Metadata', 'Exclude Metadata']
+            if result_type not in valid_result_types:
+                raise ValueError(f"result_type must be one of {valid_result_types}")
+            params['result_type'] = result_type
+
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+        return response
+    
+    def get_nameserver_reputation(self, nameserver: str, explain: Optional[bool] = False, limit: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Retrieve reputation information for a nameserver.
+
+        Args:
+            nameserver (str): Name of the nameserver to check.
+            explain (Optional[bool]): Whether to include calculation details.
+            limit (Optional[int]): Maximum number of reputation history entries to retrieve.
+
+        Returns:
+            Dict[str, Any]: Nameserver reputation data.
+        """
+        url_suffix = f"explore/nsreputation/history/nameserver/{nameserver}"
+        
+        params = {}
+        if explain:
+            params['explain'] = str(explain).lower()
+        if limit is not None:
+            params['limit'] = limit
+
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+        return response
+    
+    def get_subnet_reputation(self, subnet: str, explain: Optional[bool] = False, limit: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Retrieve reputation information for a subnet.
+
+        Args:
+            subnet (str): IPv4 subnet to check (e.g., 192.1.0.0/24).
+            explain (Optional[bool]): Whether to include calculation details.
+            limit (Optional[int]): Maximum number of reputation history entries to retrieve.
+
+        Returns:
+            Dict[str, Any]: Subnet reputation data.
+        """
+        url_suffix = f"explore/ipreputation/history/subnet/{subnet}"
+        
+        params = {}
+        if explain:
+            params['explain'] = str(explain).lower()
+        if limit is not None:
+            params['limit'] = limit
+
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+        return response
+    
+    def get_asns_for_domain(self, domain: str) -> Dict[str, Any]:
+        """
+        Retrieve ASNs associated with a domain's A records.
+
+        Args:
+            domain (str): Domain name to search for ASNs.
+
+        Returns:
+            Dict[str, Any]: ASNs seen for the domain.
+        """
+        url_suffix = f"explore/padns/lookup/domain/asns/{domain}"
+
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix
+        )
+
+        return response
+
+
 
 def test_module(client: Client) -> str:
     try:
@@ -332,58 +422,55 @@ def get_domain_certificates_command(client: Client, args: Dict[str, Any]) -> Com
     if not domain:
         raise DemistoException('Domain argument is required.')
 
-    certificate_data = client.get_domain_certificates(domain)
+    params = {
+        'domain_regex': args.get('domain_regex'),
+        'certificate_issuer': args.get('certificate_issuer'),
+        'date_min': args.get('date_min'),
+        'date_max': args.get('date_max'),
+        'prefer': args.get('prefer'),
+        'max_wait': arg_to_number(args.get('max_wait')),
+        'with_metadata': argToBoolean(args.get('with_metadata')),
+        'skip': arg_to_number(args.get('skip')),
+        'limit': arg_to_number(args.get('limit'))
+    }
 
-    if not certificate_data:
-        raise DemistoException(f'No certificate data found for domain: {domain}')
+    raw_response = client.get_domain_certificates(domain, **params)
 
-    markdown = [f'# SSL/TLS Certificate Information for Domain: {domain}\n']
-
-    if isinstance(certificate_data, list) and certificate_data:
-        for cert in certificate_data:
-            markdown.append(f"## Certificate for {domain}")
-            cert_info = {
-                'Issuer': cert.get('issuer', 'N/A'),
-                'Issued On': str(cert.get('issued_on', 'N/A')),
-                'Expires On': str(cert.get('expires_on', 'N/A')),
-                'Common Name': cert.get('common_name', 'N/A'),
-                'Subject Alternative Names': ', '.join(cert.get('subject_alt_names', [])),
-            }
-            markdown.append(tableToMarkdown('Certificate Information', [cert_info]))
-
-            metadata = cert.get('metadata', {})
-            if metadata:
-                markdown.append(f"### Metadata: {metadata}")
+    if isinstance(raw_response, list):
+        certificates = raw_response
+        metadata = {}
     else:
-        markdown.append(f'No certificate data available for domain: {domain}')
+        certificates = raw_response.get('response', {}).get('domain_certificates', [])
+        metadata = raw_response.get('response', {}).get('metadata', {})
 
-    metadata = {
-        'job_id': certificate_data.get('response', {}).get('metadata', {}).get('job_id'),
-        'query_name': certificate_data.get('response', {}).get('metadata', {}).get('query_name'),
-        'results_returned': certificate_data.get('response', {}).get('metadata', {}).get('results_returned'),
-        'results_total_at_least': certificate_data.get('response', {}).get('metadata', {}).get('results_total_at_least')
-    }
+    if not certificates:
+        return CommandResults(
+            readable_output=f"No certificates found for domain: {domain}",
+            outputs_prefix='SilentPush.Certificate',
+            outputs_key_field='domain',
+            outputs={'domain': domain, 'certificates': [], 'metadata': metadata},
+            raw_response=raw_response
+        )
 
-    job_status = certificate_data.get('response', {}).get('job_status', {})
-    job_status_url = job_status.get('get')
-    job_status_status = job_status.get('status', 'N/A')
-
-    raw_response = {
-        'certificate_data': certificate_data,
-        'metadata': metadata,
-        'job_status': {
-            'url': job_status_url,
-            'status': job_status_status
+    markdown = [f"# SSL/TLS Certificate Information for Domain: {domain}\n"]
+    for cert in certificates:
+        cert_info = {
+            'Issuer': cert.get('issuer', 'N/A'),
+            'Issued On': cert.get('issued_on', 'N/A'),
+            'Expires On': cert.get('expires_on', 'N/A'),
+            'Common Name': cert.get('common_name', 'N/A'),
+            'Subject Alternative Names': ', '.join(cert.get('subject_alt_names', [])),
         }
-    }
+        markdown.append(tableToMarkdown('Certificate Information', [cert_info]))
 
     return CommandResults(
         outputs_prefix='SilentPush.Certificate',
         outputs_key_field='domain',
-        outputs={'domain': domain, 'certificates': certificate_data, 'metadata': metadata},
+        outputs={'domain': domain, 'certificates': certificates, 'metadata': metadata},
         readable_output='\n'.join(markdown),
         raw_response=raw_response
     )
+
 
 def search_domains_command(client: Client, args: dict) -> CommandResults:
     query = args.get('query')
@@ -485,68 +572,59 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
         readable_output=readable_output,
         raw_response=raw_response
     )
-
+    
+    
 def get_enrichment_data_command(client: Client, args: dict) -> CommandResults:
-    resource = args.get('resource')
-    value = args.get('value')
-    explain = args.get('explain', 'false').lower() == 'true'
-    scan_data = args.get('scan_data', 'false').lower() == 'true'
+    resource = args.get("resource")
+    value = args.get("value")
+    explain = argToBoolean(args.get("explain", False))
+    scan_data = argToBoolean(args.get("scan_data", False))
 
     if not resource or not value:
-        raise ValueError("The 'resource' and 'value' arguments are required.")
+        raise ValueError("Both 'resource' and 'value' arguments are required.")
 
-    try:
-        raw_response = client.get_enrichment_data(
-            resource=resource,
-            value=value,
-            explain=explain,
-            scan_data=scan_data
-        )
-    except Exception as e:
-        return CommandResults(
-            readable_output=f"Error: {str(e)}",
-            raw_response={},
-            outputs_prefix='SilentPush.Error',
-            outputs_key_field='error'
-        )
+    response = client.get_enrichment_data(resource=resource, value=value, explain=explain, scan_data=scan_data)
 
-    if raw_response.get('error'):
-        return CommandResults(
-            readable_output=f"Error: {raw_response['error']}",
-            raw_response=raw_response,
-            outputs_prefix='SilentPush.Error',
-            outputs_key_field='error'
-        )
-
-    enrichment_data = raw_response.get('response', {})
+    error_path = "response.ip2asn" if resource == "ip" else "response.domaininfo"
+    enrichment_data = response.get(error_path, {})
 
     if not enrichment_data:
         return CommandResults(
-            readable_output="No enrichment data found.",
-            raw_response=raw_response,
-            outputs_prefix='SilentPush.EnrichmentData',
-            outputs_key_field='resource',
-            outputs=raw_response
+            readable_output=f"No enrichment data found for resource: {value}",
+            outputs_prefix="SilentPush.Enrichment",
+            outputs_key_field="value",
+            outputs={"value": value, "data": {}},
+            raw_response=response
         )
 
-    readable_output = tableToMarkdown('Enrichment Data', enrichment_data)
-
-    return CommandResults(
-        outputs_prefix='SilentPush.EnrichmentData',
-        outputs_key_field='resource',
-        outputs=enrichment_data,
-        readable_output=readable_output,
-        raw_response=raw_response
+    headers = list(enrichment_data.keys())
+    rows = [{header: enrichment_data.get(header, "N/A")} for header in headers]
+    readable_output = tableToMarkdown(
+        f"Enrichment Data for {value}",
+        rows,
+        headers=headers,
+        removeNull=True
     )
 
-def list_ip_information_command(client: Any, args: Dict[str, Any]) -> CommandResults:
+    return CommandResults(
+        outputs_prefix="SilentPush.Enrichment",
+        outputs_key_field="value",
+        outputs={"value": value, **enrichment_data},
+        readable_output=readable_output,
+        raw_response=response
+    )
+
+
+
+        
+def list_ip_information_command(client: Client, args: Dict[str, Any]) -> CommandResults:
     ips = args.get("ips")
     if not ips:
         raise ValueError("The 'ips' parameter is required.")
-
+    
     response = client.list_ip_information(ips=ips)
+    outputs = response.get("response", {}).get("ip2asn", [])
 
-    outputs = response.get("response", {})
     readable_output = tableToMarkdown(
         "IP Information",
         outputs,
@@ -561,6 +639,7 @@ def list_ip_information_command(client: Any, args: Dict[str, Any]) -> CommandRes
         readable_output=readable_output,
         raw_response=response
     )
+
 
 def get_asn_reputation_command(self, args: dict) -> CommandResults:
     asn = args.get("asn")
@@ -585,11 +664,189 @@ def get_asn_reputation_command(self, args: dict) -> CommandResults:
     except Exception as e:
         raise DemistoException(f"Error retrieving ASN reputation data: {str(e)}")
 
-def get_asn_takedown_reputation_command(client, args):
-    return get_asn_takedown_reputation(client, args)
+def get_asn_takedown_reputation_command(client: Client, args):
+    return client.get_asn_takedown_reputation(args)
+
+def get_ipv4_reputation_command(client: Client, args: dict) -> CommandResults:
+    ipv4 = args.get('ipv4')
+    if not ipv4:
+        raise ValueError("The 'ipv4' parameter is required.")
+
+    explain = argToBoolean(args.get('explain', False))
+    limit = arg_to_number(args.get('limit', None))
+
+    try:
+        raw_response = client.get_ipv4_reputation(ipv4, explain, limit)
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error'
+        )
+
+    readable_output = tableToMarkdown(f"IPv4 Reputation for {ipv4}", raw_response.get('response', {}))
+
+    return CommandResults(
+        outputs_prefix='SilentPush.IPv4Reputation',
+        outputs_key_field='ipv4',
+        outputs={
+            'ipv4': ipv4,
+            'details': raw_response.get('response', {})
+        },
+        readable_output=readable_output,
+        raw_response=raw_response
+    )
+    
+def get_job_status_command(client: Client, args: dict) -> CommandResults:
+    job_id = args.get('job_id')
+    max_wait = arg_to_number(args.get('max_wait'))
+    result_type = args.get('result_type')
+
+    if not job_id:
+        raise DemistoException("job_id is a required parameter")
+
+    try:
+        raw_response = client.get_job_status(job_id, max_wait, result_type)
+        
+        job_status = raw_response.get('response', {})
+        
+        headers = list(job_status.keys())
+        rows = [job_status]
+        
+        readable_output = tableToMarkdown(
+            f"Job Status for Job ID: {job_id}", 
+            rows, 
+            headers=headers, 
+            removeNull=True
+        )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.JobStatus',
+            outputs_key_field='job_id',
+            outputs={'job_id': job_id, **job_status},
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error retrieving job status: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
+        
+def get_nameserver_reputation_command(client: Client, args: dict) -> CommandResults:
+    nameserver = args.get('nameserver')
+    explain = argToBoolean(args.get('explain', False))
+    limit = arg_to_number(args.get('limit'))
+
+    if not nameserver:
+        raise DemistoException("nameserver is a required parameter")
+
+    try:
+        raw_response = client.get_nameserver_reputation(nameserver, explain, limit)
+        
+        ns_reputation = raw_response.get('response', {})
+        readable_output = tableToMarkdown(
+            f"Nameserver Reputation for {nameserver}", 
+            ns_reputation, 
+            removeNull=True
+        )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.NameserverReputation',
+            outputs_key_field='nameserver',
+            outputs={'nameserver': nameserver, **ns_reputation},
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error retrieving nameserver reputation: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
+        
+def get_subnet_reputation_command(client: Client, args: dict) -> CommandResults:
+    subnet = args.get('subnet')
+    explain = argToBoolean(args.get('explain', False))
+    limit = arg_to_number(args.get('limit'))
+
+    if not subnet:
+        raise DemistoException("subnet is a required parameter")
+
+    try:
+        raw_response = client.get_subnet_reputation(subnet, explain, limit)
+        
+        subnet_reputation = raw_response.get('response', {})
+        
+        readable_output = tableToMarkdown(
+            f"Subnet Reputation for {subnet}", 
+            subnet_reputation, 
+            removeNull=True
+        )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.SubnetReputation',
+            outputs_key_field='subnet',
+            outputs={'subnet': subnet, **subnet_reputation},
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error retrieving subnet reputation: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
+        
+def get_asns_for_domain_command(client: Client, args: dict) -> CommandResults:
+    domain = args.get('domain')
+
+    if not domain:
+        raise DemistoException("domain is a required parameter")
+
+    try:
+        raw_response = client.get_asns_for_domain(domain)
+        
+        asns = raw_response.get('response', {}).get('asns', [])
+        
+        readable_output = tableToMarkdown(
+            f"ASNs for Domain: {domain}", 
+            [{'ASN': asn} for asn in asns], 
+            headers=['ASN']
+        )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.DomainASNs',
+            outputs_key_field='domain',
+            outputs={'domain': domain, 'asns': asns},
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error retrieving domain ASNs: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
+
+
 
 def main():
-    
+
     try:
         params = demisto.params()
         api_key = params.get('credentials', {}).get('password')
@@ -615,7 +872,12 @@ def main():
             'silentpush-get-enrichment-data' : get_enrichment_data_command,
             'silentpush-list-ip-information' : list_ip_information_command,
             'silentpush-get-asn-reputation' : get_asn_reputation_command,
-            'silentpush-get-asn-takedown-reputation': get_asn_takedown_reputation_command
+            'silentpush-get-asn-takedown-reputation': get_asn_takedown_reputation_command,
+            'silentpush-get-ipv4-reputation': get_ipv4_reputation_command,
+            'silentpush-get-job-status': get_job_status_command,
+            'silentpush-get-nameserver-reputation': get_nameserver_reputation_command,
+            'silentpush-get-subnet-reputation': get_subnet_reputation_command,
+            'silentpush-get-asns-for-domain': get_asns_for_domain_command
         }
 
         if command in command_handlers:
@@ -630,8 +892,8 @@ def main():
     except Exception as e:
         demisto.error(f'Failed to execute {demisto.command()} command. Error: {str(e)}')
         return_error(f'Failed to execute {demisto.command()} command. Error: {str(e)}')
-        
-    
+
+
 ''' ENTRY POINT '''
 
 if __name__ in ('__main__', '__builtin__', 'builtins'):
