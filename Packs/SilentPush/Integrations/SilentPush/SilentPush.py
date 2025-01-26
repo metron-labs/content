@@ -550,7 +550,78 @@ class Client(BaseClient):
         )
 
         return response
+    
+    def forward_padns_lookup(self, qtype: str, qname: str, **kwargs) -> Dict[str, Any]:
+        """
+        Perform a forward PADNS lookup using various filtering parameters.
 
+        Args:
+            qtype (str): Type of DNS record.
+            qname (str): The DNS record name to lookup.
+            **kwargs: Optional parameters for filtering and pagination.
+
+        Returns:
+            Dict[str, Any]: PADNS lookup results.
+        """
+        url_suffix = f"explore/padns/lookup/query/{qtype}/{qname}"
+        
+        params = {k: v for k, v in kwargs.items() if v is not None}
+        
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+        return response
+
+    def reverse_padns_lookup(self, qtype: str, qname: str, **kwargs) -> Dict[str, Any]:
+        """
+        Perform a reverse PADNS lookup using various filtering parameters.
+
+        Args:
+            qtype (str): Type of DNS record.
+            qname (str): The DNS record name to lookup.
+            **kwargs: Optional parameters for filtering and pagination.
+
+        Returns:
+            Dict[str, Any]: Reverse PADNS lookup results.
+        """
+        url_suffix = f"explore/padns/lookup/answer/{qtype}/{qname}"
+        
+        params = {k: v for k, v in kwargs.items() if v is not None}
+        
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+        return response
+    
+    def density_lookup(self, qtype: str, query: str, **kwargs) -> Dict[str, Any]:
+        """
+        Perform a density lookup based on various query types and parameters.
+
+        Args:
+            qtype (str): Query type (nssrv, mxsrv, nshash, mxhash, ipv4, ipv6, asn, chv)
+            query (str): Value to lookup
+            **kwargs: Optional parameters for filtering and scoping
+
+        Returns:
+            Dict[str, Any]: Density lookup results
+        """
+        url_suffix = f"explore/padns/lookup/density/{qtype}/{query}"
+        
+        params = {k: v for k, v in kwargs.items() if v is not None}
+        
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+        return response
 
 
 def test_module(client: Client) -> str:
@@ -784,7 +855,6 @@ def get_enrichment_data_command(client: Client, args: dict) -> CommandResults:
     if not resource or not value:
         raise ValueError("Both 'resource' and 'value' arguments are required.")
 
-    # Simplified IP validation with a single if statement
     if resource in ["ip", "ipv4", "ipv6"] and not validate_ip_address(value, allow_ipv6=(resource != "ipv4")):
         raise DemistoException(f"Invalid {resource.upper()} address: {value}")
 
@@ -1098,7 +1168,238 @@ def get_asns_for_domain_command(client: Client, args: dict) -> CommandResults:
             outputs_key_field='error',
             outputs={'error': str(e)}
         )
+        
+def forward_padns_lookup_command(client: Client, args: dict) -> CommandResults:
+    """
+    Command function to perform forward PADNS lookup.
 
+    Args:
+        client (Client): SilentPush API client.
+        args (dict): Command arguments.
+
+    Returns:
+        CommandResults: Formatted results of the PADNS lookup.
+    """
+    qtype = args.get('qtype')
+    qname = args.get('qname')
+
+    if not qtype or not qname:
+        raise DemistoException("Both 'qtype' and 'qname' are required parameters.")
+
+    netmask = args.get('netmask')
+    subdomains = argToBoolean(args.get('subdomains')) if 'subdomains' in args else None
+    regex = args.get('regex')
+    match = args.get('match')
+    first_seen_after = args.get('first_seen_after')
+    first_seen_before = args.get('first_seen_before')
+    last_seen_after = args.get('last_seen_after')
+    last_seen_before = args.get('last_seen_before')
+    as_of = args.get('as_of')
+    sort = args.get('sort')
+    output_format = args.get('output_format')
+    prefer = args.get('prefer')
+    with_metadata = argToBoolean(args.get('with_metadata')) if 'with_metadata' in args else None
+    max_wait = arg_to_number(args.get('max_wait'))
+    skip = arg_to_number(args.get('skip'))
+    limit = arg_to_number(args.get('limit'))
+
+    try:
+        raw_response = client.forward_padns_lookup(
+            qtype=qtype,
+            qname=qname,
+            netmask=netmask,
+            subdomains=subdomains,
+            regex=regex,
+            match=match,
+            first_seen_after=first_seen_after,
+            first_seen_before=first_seen_before,
+            last_seen_after=last_seen_after,
+            last_seen_before=last_seen_before,
+            as_of=as_of,
+            sort=sort,
+            output_format=output_format,
+            prefer=prefer,
+            with_metadata=with_metadata,
+            max_wait=max_wait,
+            skip=skip,
+            limit=limit
+        )
+
+        records = raw_response.get('response', {}).get('records', [])
+        
+        if not records:
+            readable_output = f"No records found for {qtype} {qname}"
+        else:
+            readable_output = tableToMarkdown(
+                f"PADNS Lookup Results for {qtype} {qname}",
+                records,
+                removeNull=True
+            )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.PADNSLookup',
+            outputs_key_field='qname',
+            outputs={
+                'qtype': qtype,
+                'qname': qname,
+                'records': records
+            },
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error performing PADNS lookup: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
+
+def reverse_padns_lookup_command(client: Client, args: dict) -> CommandResults:
+    """
+    Command function to perform reverse PADNS lookup.
+
+    Args:
+        client (Client): SilentPush API client.
+        args (dict): Command arguments.
+
+    Returns:
+        CommandResults: Formatted results of the reverse PADNS lookup.
+    """
+    qtype = args.get('qtype')
+    qname = args.get('qname')
+
+    if not qtype or not qname:
+        raise DemistoException("Both 'qtype' and 'qname' are required parameters.")
+
+    netmask = args.get('netmask')
+    subdomains = argToBoolean(args.get('subdomains')) if 'subdomains' in args else None
+    regex = args.get('regex')
+    first_seen_after = args.get('first_seen_after')
+    first_seen_before = args.get('first_seen_before')
+    last_seen_after = args.get('last_seen_after')
+    last_seen_before = args.get('last_seen_before')
+    as_of = args.get('as_of')
+    sort = args.get('sort')
+    output_format = args.get('output_format')
+    prefer = args.get('prefer')
+    with_metadata = argToBoolean(args.get('with_metadata')) if 'with_metadata' in args else None
+    max_wait = arg_to_number(args.get('max_wait'))
+    skip = arg_to_number(args.get('skip'))
+    limit = arg_to_number(args.get('limit'))
+
+    try:
+        raw_response = client.reverse_padns_lookup(
+            qtype=qtype,
+            qname=qname,
+            netmask=netmask,
+            subdomains=subdomains,
+            regex=regex,
+            first_seen_after=first_seen_after,
+            first_seen_before=first_seen_before,
+            last_seen_after=last_seen_after,
+            last_seen_before=last_seen_before,
+            as_of=as_of,
+            sort=sort,
+            output_format=output_format,
+            prefer=prefer,
+            with_metadata=with_metadata,
+            max_wait=max_wait,
+            skip=skip,
+            limit=limit
+        )
+
+        records = raw_response.get('response', {}).get('records', [])
+        
+        if not records:
+            readable_output = f"No records found for {qtype} {qname}"
+        else:
+            readable_output = tableToMarkdown(
+                f"Reverse PADNS Lookup Results for {qtype} {qname}",
+                records,
+                removeNull=True
+            )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.ReversePADNSLookup',
+            outputs_key_field='qname',
+            outputs={
+                'qtype': qtype,
+                'qname': qname,
+                'records': records
+            },
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error performing reverse PADNS lookup: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
+        
+def density_lookup_command(client: Client, args: dict) -> CommandResults:
+    """
+    Command function to perform density lookup.
+
+    Args:
+        client (Client): SilentPush API client.
+        args (dict): Command arguments.
+
+    Returns:
+        CommandResults: Formatted results of the density lookup.
+    """
+    qtype = args.get('qtype')
+    query = args.get('query')
+
+    if not qtype or not query:
+        raise DemistoException("Both 'qtype' and 'query' are required parameters.")
+
+    scope = args.get('scope')
+
+    try:
+        raw_response = client.density_lookup(
+            qtype=qtype,
+            query=query,
+            scope=scope
+        )
+
+        records = raw_response.get('response', {}).get('records', [])
+        
+        if not records:
+            readable_output = f"No density records found for {qtype} {query}"
+        else:
+            readable_output = tableToMarkdown(
+                f"Density Lookup Results for {qtype} {query}",
+                records,
+                removeNull=True
+            )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.DensityLookup',
+            outputs_key_field='query',
+            outputs={
+                'qtype': qtype,
+                'query': query,
+                'records': records
+            },
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error performing density lookup: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
 
 
 def main():
@@ -1133,7 +1434,10 @@ def main():
             'silentpush-get-job-status': get_job_status_command,
             'silentpush-get-nameserver-reputation': get_nameserver_reputation_command,
             'silentpush-get-subnet-reputation': get_subnet_reputation_command,
-            'silentpush-get-asns-for-domain': get_asns_for_domain_command
+            'silentpush-get-asns-for-domain': get_asns_for_domain_command,
+            'silentpush-forward-padns-lookup': forward_padns_lookup_command,
+            'silentpush-reverse-padns-lookup': reverse_padns_lookup_command,
+            'silentpush-density-lookup': density_lookup_command
         }
 
         if command in command_handlers:
