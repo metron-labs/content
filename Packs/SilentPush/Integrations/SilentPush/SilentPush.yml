@@ -1,109 +1,175 @@
 commonfields:
   id: SilentPush
   version: -1
-  name: SilentPush
+
+name: SilentPush
+display: SilentPush
+category: Data Enrichment & Threat Intelligence
+description: SilentPush integration for domain and IP intelligence
+
+configuration:
+  - display: API Key
+    name: credentials
+    type: 9
+    required: true
+    
+  - display: Base URL
+    name: url
+    defaultvalue: https://api.silentpush.com
+    type: 0
+    required: true
+    
+  - display: Trust any certificate (not secure)
+    name: insecure
+    type: 8
+    required: false
+    
+  - display: Use system proxy settings
+    name: proxy
+    type: 8
+    required: false
+
+script:
+  script: ''
   type: python
-  subType: python3
-  description: |
-    This integration allows fetching domain information from the SilentPush API. It includes commands to get domain-related information such as WHOIS data, domain age, and risk scores.
-  tags: []
-  enabled: true
-  manufacturer: SilentPush
-  comment: ''
-  minVersion: -1
-  dependencies:
-    - CommonServerPython
-    - CommonServerUserPython
+  commands:
+    - name: test-module
+      description: Validates the API credentials.
+      
+    - name: silentpush-list-domain-information
+      description: Retrieves information about specified domains.
+      arguments:
+        - name: domains
+          description: Comma-separated list of domains to query.
+          required: true
+        - name: fetch_risk_score
+          description: Whether to fetch risk scores for the domains.
+          required: false
+          auto: true
+          default: false
+        - name: fetch_whois_info
+          description: Whether to fetch WHOIS information for the domains.
+          required: false
+          auto: true
+          default: false
+          
+    - name: silentpush-get-domain-certificates
+      description: Retrieves SSL/TLS certificate information for a domain.
+      arguments:
+        - name: domain
+          description: The domain to query certificates for.
+          required: true
+        - name: domain_regex
+          description: Regular expression to match domains.
+          required: false
+        - name: certificate_issuer
+          description: Filter by certificate issuer.
+          required: false
+        - name: date_min
+          description: Filter certificates issued on or after this date.
+          required: false
+        - name: date_max
+          description: Filter certificates issued on or before this date.
+          required: false
+          
+    - name: silentpush-search-domains
+      description: Search for domains with optional filters.
+      arguments:
+        - name: query
+          description: Search query string.
+          required: false
+        - name: start_date
+          description: Filter domains registered after this date.
+          required: false
+        - name: end_date
+          description: Filter domains registered before this date.
+          required: false
+        - name: risk_score_min
+          description: Minimum risk score filter.
+          required: false
+        - name: risk_score_max
+          description: Maximum risk score filter.
+          required: false
+        - name: limit
+          description: Maximum number of results to return.
+          required: false
+          defaultValue: "100"
+          
+    - name: silentpush-list-domain-infratags
+      description: Get infrastructure tags for multiple domains.
+      arguments:
+        - name: domains
+          description: Comma-separated list of domains.
+          required: true
+        - name: cluster
+          description: Whether to cluster the results.
+          required: false
+          auto: true
+          default: false
+        - name: mode
+          description: Mode for lookup (live/padns).
+          required: false
+          defaultValue: live
+        - name: match
+          description: Handling of self-hosted infrastructure.
+          required: false
+          defaultValue: self
+          
+    - name: silentpush-get-enrichment-data
+      description: Get enrichment data for a resource.
+      arguments:
+        - name: resource
+          description: The resource to query (domain/IP).
+          required: true
+        - name: resource_type
+          description: Type of resource (domain/ipv4/ipv6).
+          required: true
+        - name: explain
+          description: Include explanation of data calculations.
+          required: false
+          auto: true
+        - name: scan_data
+          description: Include scan data (IPv4 only).
+          required: false
+          auto: true
+          
+    - name: silentpush-list-ip-information
+      description: Get information about IP addresses.
+      arguments:
+        - name: ips
+          description: Comma-separated list of IP addresses.
+          required: true
+        - name: explain
+          description: Include explanation of calculations.
+          required: false
+          auto: true
+        - name: scan_data
+          description: Include scan data (IPv4 only).
+          required: false
+          auto: true
+        - name: sparse
+          description: Specific data to return (asn/asname/sp_risk_score).
+          required: false
+          
+    - name: silentpush-get-asn-reputation
+      description: Get reputation information for an ASN.
+      arguments:
+        - name: asn
+          description: The ASN to lookup.
+          required: true
+          
+    - name: silentpush-get-asn-takedown-reputation
+      description: Get takedown reputation for an ASN.
+      arguments:
+        - name: asn
+          description: The ASN to lookup.
+          required: true
 
-scripts:
-  - path: SilentPush.py
-    comment: |
-      Integration for SilentPush that enables fetching domain information, including WHOIS data, domain age, and risk scores.
-
-commands:
-  - name: test-module
-    description: |
-      Tests the connectivity to the SilentPush API and checks the authentication status.
-    isArray: false
-    argContext:
-      - id: base_url
-        type: string
-        description: The base URL for the SilentPush API.
-      - id: api_key
-        type: string
-        description: The API key used to authenticate requests.
-      - id: verify_ssl
-        type: boolean
-        description: Flag to determine whether SSL verification is enabled.
-    examples: |
-      !test-module
-
-  - name: silentpush-list-domain-information
-    description: |
-      Fetches domain information, such as WHOIS data, domain age, and risk scores.
-    isArray: false
-    argContext:
-      - id: domain
-        type: string
-        description: The domain name to fetch information for.
-    examples: |
-      !silentpush-list-domain-information domain=example.com
-
-args:
-  - id: domain
-    isArray: false
-    description: |
-      The domain to fetch information for.
-    type: string
-
-outputs:
-  - id: SilentPush.Domain
-    type: complex
-    description: |
-      The domain information fetched from SilentPush API, including WHOIS data, domain age, and risk scores.
-    contents:
-      - name: domain
-        type: string
-      - name: whois_data
-        type: string
-      - name: domain_age
-        type: integer
-      - name: risk_score
-        type: float
+  dockerimage: demisto/python3:3.10
+  runonce: false
+  subtype: python3
 
 tests:
-  - name: Test SilentPush Integration
-    description: Test the integration with the SilentPush API.
-    steps:
-      - script: test-module
-        name: Test SilentPush API Connectivity
-        args:
-          base_url: https://api.silentpush.com
-          api_key: 'your_api_key'
+  - No tests (auto formatted)
 
-# Optional: Adding the configuration section for any configuration-related parameters
-configurations:
-  - default: true
-    isArray: false
-    description: The configuration parameters required for connecting to SilentPush API.
-    context:
-      - id: base_url
-        type: string
-        description: The base URL for the SilentPush API.
-      - id: api_key
-        type: string
-        description: The API key used to authenticate requests.
-      - id: verify_ssl
-        type: boolean
-        description: Flag to determine whether SSL verification is enabled.
-      - id: proxy
-        type: boolean
-        description: Flag to determine whether to use a proxy.
-
-errorHandling:
-  - errorCode: 403
-    description: |
-      If an authorization error is encountered, it could indicate an incorrect or expired API key.
-  - errorCode: 400
-    description: |
-      Bad Request error, likely due to incorrect input format or invalid parameters in the request.
+fromversion: 6.0.0

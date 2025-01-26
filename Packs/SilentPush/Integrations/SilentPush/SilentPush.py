@@ -1,5 +1,7 @@
-import demistomock as demisto  # noqa: F401
-from CommonServerPython import *  # noqa: F401
+import demistomock as demisto           # noqa: F401
+from CommonServerPython import *        # noqa: F401
+import ipaddress
+import re
 """Base Integration for Cortex XSOAR (aka Demisto)
 
 This is an integration to interact with the SilentPush API and provide functionality within XSOAR.
@@ -9,28 +11,17 @@ Code Conventions: https://xsoar.pan.dev/docs/integrations/code-conventions
 Linting: https://xsoar.pan.dev/docs/integrations/linting
 """
 
-from CommonServerUserPython import *  # noqa
-
+import requests
 import urllib3
-from typing import Any
+from typing import Any, Optional, Dict, List
 
-# Disable insecure warnings
 urllib3.disable_warnings()
-
-
-def mock_debug(message):
-    """Print debug messages to the XSOAR logs"""
-    print(f"DEBUG: {message}")
-
-
-demisto.debug = mock_debug
 
 ''' CONSTANTS '''
 
 DATE_FORMAT = '%Y-%m-%dT%H:%M:%SZ'  # ISO8601 format with UTC, default in XSOAR
 
 ''' CLIENT CLASS '''
-
 
 class Client(BaseClient):
     """Client class to interact with the SilentPush API
@@ -44,7 +35,7 @@ class Client(BaseClient):
     def __init__(self, base_url: str, api_key: str, verify: bool = True, proxy: bool = False):
         """
         Initializes the client with the necessary parameters.
-        
+
         Args:
             base_url (str): The base URL for the SilentPush API.
             api_key (str): The API key for authentication.
@@ -59,33 +50,24 @@ class Client(BaseClient):
             'X-API-Key': api_key,
             'Content-Type': 'application/json'
         }
-        demisto.debug(f'Initialized client with base URL: {self.base_url}')
 
     def _http_request(self, method: str, url_suffix: str, params: dict = None, data: dict = None) -> Any:
         """
-        Handles the HTTP requests to the SilentPush API.
-        
-        This function builds the request URL, adds the necessary headers, and sends a request
-        to the API. It returns the response in JSON format.
-        
+        Perform an HTTP request to the SilentPush API.
+
         Args:
-            method (str): The HTTP method (GET, POST, etc.).
-            url_suffix (str): The specific endpoint to be appended to the base URL.
-            params (dict, optional): The URL parameters to be sent with the request.
-            data (dict, optional): The data to be sent with the request.
-        
+            method (str): The HTTP method to use (e.g., 'GET', 'POST').
+            url_suffix (str): The endpoint suffix to append to the base URL.
+            params (dict, optional): Query parameters to include in the request. Defaults to None.
+            data (dict, optional): JSON data to send in the request body. Defaults to None.
+
         Returns:
-            Any: The JSON response from the API.
-        
+            Any: The JSON response from the API or text response if not JSON.
+
         Raises:
-            DemistoException: If there is an error in the API response.
+            DemistoException: If there's an error during the API call.
         """
         full_url = f'{self.base_url}{url_suffix}'
-        masked_headers = {k: v if k != 'X-API-Key' else '****' for k, v in self._headers.items()}
-        demisto.debug(f'Headers: {masked_headers}')
-        demisto.debug(f'Params: {params}')
-        demisto.debug(f'Data: {data}')
-
         try:
             response = requests.request(
                 method,
@@ -95,83 +77,768 @@ class Client(BaseClient):
                 params=params,
                 json=data
             )
-            demisto.debug(f'Response status code: {response.status_code}')
-            demisto.debug(f'Response body: {response.text}')
-
-            if response.status_code not in {200, 201}:
-                raise DemistoException(f'Error in API call [{response.status_code}] - {response.text}')
-            return response.json()
+            if response.headers.get('Content-Type', '').startswith('application/json'):
+                return response.json()
+            else:
+                return response.text
         except Exception as e:
-            demisto.error(f'Error in API call: {str(e)}')
-            raise
+            raise DemistoException(f'Error in API call: {str(e)}')
+        
+    def parse_subject(self,subject: Any) -> Dict[str, Any]:
+        """
+        Parse the subject of a certificate or domain record.
 
-    def list_domain_information(self, domain: str) -> dict:
-        """
-        Fetches domain information such as WHOIS data, domain age, and risk scores.
-        
         Args:
-            domain (str): The domain to fetch information for.
-        
+            subject (Any): The subject to parse, which can be a dictionary, string, or other type.
+
         Returns:
-            dict: A dictionary containing domain information fetched from the API.
+            Dict[str, Any]: A dictionary representation of the subject, 
+            with a fallback to {'CN': subject} or {'CN': 'N/A'} if parsing fails.
         """
-        demisto.debug(f'Fetching domain information for domain: {domain}')
-        url_suffix = f'explore/domain/domaininfo/{domain}'
-        return self._http_request('GET', url_suffix)
+        if isinstance(subject, dict):
+            return subject
+        elif isinstance(subject, str):
+            try:
+                return json.loads(subject.replace("'", '"'))
+            except (json.JSONDecodeError, TypeError):
+                demisto.debug(f"Failed to parse subject: {subject}")
+                return {'CN': subject}
+        else:
+            return {'CN': 'N/A'}
+        
+
+    def validate_ip_address(ip: str, allow_ipv6: bool = True) -> bool:
+        """
+        Validate an IP address.
+
+        Args:
+            ip (str): IP address to validate.
+            allow_ipv6 (bool, optional): Whether to allow IPv6 addresses. Defaults to True.
+
+        Returns:
+            bool: True if valid IP address, False otherwise.
+        """
+        try:
+            ip = ip.strip()
+            ip_obj = ipaddress.ip_address(ip)
+            
+            return not (not allow_ipv6 and ip_obj.version == 6)
+        except ValueError:
+            return False
+
+    def validate_ip_inputs(ips: list[str], allow_ipv6: bool = True) -> list[str]:
+        """
+        Validate a list of IP addresses.
+
+        Args:
+            ips (list[str]): List of IP addresses to validate.
+            allow_ipv6 (bool, optional): Whether to allow IPv6 addresses. Defaults to True.
+
+        Returns:
+            list[str]: List of valid IP addresses.
+
+        Raises:
+            DemistoException: If no valid IP addresses are found.
+        """
+        valid_ips = [ip.strip() for ip in ips if validate_ip_address(ip, allow_ipv6)]
+        
+        if not valid_ips:
+            raise DemistoException(f"No valid {'IPv4 and IPv6' if allow_ipv6 else 'IPv4'} addresses found.")
+        
+        return valid_ips
+
+    def list_domain_information(self, domains: List[str], fetch_risk_score: Optional[bool] = False, fetch_whois_info: Optional[bool] = False) -> Dict:
+        """
+        Retrieve comprehensive information for multiple domains.
+
+        Args:
+            domains (List[str]): List of domains to fetch information for.
+            fetch_risk_score (bool, optional): Whether to retrieve risk scores. Defaults to False.
+            fetch_whois_info (bool, optional): Whether to retrieve WHOIS information. Defaults to False.
+
+        Returns:
+            Dict: A dictionary containing domain information, including optional risk scores and WHOIS data.
+
+        Raises:
+            DemistoException: If more than 100 domains are submitted.
+        """
+        if len(domains) > 100:
+            raise DemistoException("Maximum of 100 domains can be submitted in a single request.")
+
+        domains_data = {'domains': domains}
+        bulk_info_response = self._http_request('POST', 'explore/bulk/domaininfo', data=domains_data)
+
+        domain_info_list = bulk_info_response.get('response', {}).get('domaininfo', [])
+        domain_info_dict = {item['domain']: item for item in domain_info_list}
+
+        risk_score_dict = {}
+        if fetch_risk_score:
+            bulk_risk_response = self._http_request('POST', 'explore/bulk/domain/riskscore', data=domains_data)
+            risk_score_list = bulk_risk_response.get('response', [])
+            risk_score_dict = {item['domain']: item for item in risk_score_list}
+
+        live_whois_info = {}
+        if fetch_whois_info:
+            for domain in domains:
+                try:
+                    live_whois_response = self._http_request('GET', f'explore/domain/whoislive/{domain}')
+                    live_whois_info[domain] = live_whois_response.get('response', {})
+                except Exception as e:
+                    live_whois_info[domain] = {'error': str(e)}
+
+        combined_results = [{
+            'domain': domain,
+            **domain_info_dict.get(domain, {}),
+            'sp_risk_score': risk_score_dict.get(domain, {}).get('sp_risk_score', 'N/A'),
+            'sp_risk_score_explain': risk_score_dict.get(domain, {}).get('sp_risk_score_explain', 'N/A'),
+            'whois_info': live_whois_info.get(domain, 'N/A')
+        } for domain in domains]
+
+        return {'domains': combined_results}
+
+    def get_domain_certificates(self, domain: str, **kwargs) -> Dict[str, Any]:
+        """
+            Retrieve SSL/TLS certificates for a given domain.
+
+            Args:
+                domain (str): The domain to retrieve certificates for.
+                **kwargs: Additional optional parameters for filtering certificates.
+
+            Returns:
+                Dict[str, Any]: A dictionary containing domain certificate information.
+            """
+        url_suffix = f"explore/domain/certificates/{domain}"
+        params = {k: v for k, v in kwargs.items() if v is not None}
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+        demisto.debug(f"Raw response from API: {response}")
+        return response
+
+
+
+
+    def search_domains(self, query: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, risk_score_min: Optional[int] = None, risk_score_max: Optional[int] = None, limit: int = 100, domain_regex: Optional[str] = None, name_server: Optional[str] = None, asnum: Optional[int] = None, asname: Optional[str] = None, min_ip_diversity: Optional[int] = None, registrar: Optional[str] = None, min_asn_diversity: Optional[int] = None, certificate_issuer: Optional[str] = None, whois_date_after: Optional[str] = None, skip: Optional[int] = None) -> dict:
+        """
+            Search for domains based on various filtering criteria.
+
+            Args:
+                query (str, optional): Domain search query.
+                start_date (str, optional): Start date for domain search.
+                end_date (str, optional): End date for domain search.
+                risk_score_min (int, optional): Minimum risk score filter.
+                risk_score_max (int, optional): Maximum risk score filter.
+                limit (int, optional): Maximum number of results to return. Defaults to 100.
+                domain_regex (str, optional): Regular expression to filter domains.
+                name_server (str, optional): Name server filter.
+                asnum (int, optional): Autonomous System Number filter.
+                asname (str, optional): Autonomous System Name filter.
+                min_ip_diversity (int, optional): Minimum IP diversity filter.
+                registrar (str, optional): Domain registrar filter.
+                min_asn_diversity (int, optional): Minimum ASN diversity filter.
+                certificate_issuer (str, optional): Certificate issuer filter.
+                whois_date_after (str, optional): WHOIS date filter.
+                skip (int, optional): Number of results to skip.
+
+            Returns:
+                dict: Search results matching the specified criteria.
+            """
+        url_suffix = 'explore/domain/search'
+        params = {k: v for k, v in {
+            'domain': query,
+            'start_date': start_date,
+            'end_date': end_date,
+            'risk_score_min': risk_score_min,
+            'risk_score_max': risk_score_max,
+            'limit': limit,
+            'domain_regex': domain_regex,
+            'name_server': name_server,
+            'asnum': asnum,
+            'asname': asname,
+            'min_ip_diversity': min_ip_diversity,
+            'registrar': registrar,
+            'min_asn_diversity': min_asn_diversity,
+            'certificate_issuer': certificate_issuer,
+            'whois_date_after': whois_date_after,
+            'skip': skip,
+        }.items() if v is not None}
+        response = self._http_request('GET', url_suffix, params=params)
+        return response
+
+    def list_domain_infratags(self, domains: list, cluster: bool = False, mode: str = 'live', match: str = 'self', as_of: Optional[str] = None) -> dict:
+        """
+            Retrieve infrastructure tags for specified domains.
+
+            Args:
+                domains (list): List of domains to fetch infrastructure tags for.
+                cluster (bool, optional): Whether to cluster tags. Defaults to False.
+                mode (str, optional): Tag retrieval mode. Defaults to 'live'.
+                match (str, optional): Matching criteria. Defaults to 'self'.
+                as_of (str, optional): Specific timestamp for tag retrieval. Defaults to None.
+
+            Returns:
+                dict: Infrastructure tags and optional tag clusters for the domains.
+            """
+        url = 'explore/bulk/domain/infratags'
+        payload = {
+            'domains': domains
+        }
+        params = {
+            'mode': mode,
+            'match': match,
+            'clusters': cluster
+        }
+
+        if as_of:
+            params['as_of'] = as_of
+
+        response = self._http_request(
+            method='POST',
+            url_suffix=url,
+            params=params,
+            data=payload
+        )
+
+        return response
+
+    def get_enrichment_data(self, resource: str, value: str, explain: Optional[bool] = False, scan_data: Optional[bool] = False) -> dict:
+        """
+        Retrieve enrichment data for a specific resource.
+
+        Args:
+            resource (str): Type of resource (e.g., 'ip', 'domain').
+            value (str): The specific value to enrich.
+            explain (bool, optional): Whether to include detailed explanations. Defaults to False.
+            scan_data (bool, optional): Whether to include scan data. Defaults to False.
+
+        Returns:
+            dict: Enrichment data for the specified resource.
+        """
+        endpoint = f"explore/enrich/{resource}/{value}"
+
+        query_params = {}
+        query_params["explain"] = int(explain) if explain else query_params.get("explain", 0)
+        query_params["scan_data"] = int(scan_data) if scan_data else query_params.get("scan_data", 0)
+
+        response = self._http_request(
+            method="GET",
+            url_suffix=endpoint,
+            params=query_params
+        )
+
+        if resource in ["ip", "ipv4", "ipv6"]:
+            ip2asn_data = response.get("response", {}).get("ip2asn", [])
+            return ip2asn_data[0] if isinstance(ip2asn_data, list) and ip2asn_data else {}
+        else:
+            return response.get("response", {}).get("domaininfo", {})
+
+    def list_ip_information(self, ips: List[str]) -> Dict:
+        """
+        Retrieve information for multiple IP addresses.
+
+        Args:
+            ips (List[str]): List of IPv4 or IPv6 addresses to fetch information for.
+
+        Returns:
+            Dict: API response containing IP information.
+        """
+        if len(ips) > 100:
+            raise DemistoException("Maximum of 100 IPs can be submitted in a single request.")
+
+        ip_data = {'ips': ips}
+        bulk_ip_response = self._http_request('POST', 'explore/bulk/ip2asn/ipv4', data=ip_data)
+
+        return bulk_ip_response
+
+
+    def get_asn_reputation(self, asn: int, explain: bool = False, limit: int = None) -> Dict[str, Any]:
+        """
+            Retrieve reputation history for a specific Autonomous System Number (ASN).
+
+            Args:
+                asn (int): The Autonomous System Number to query.
+                explain (bool, optional): Whether to include detailed explanations. Defaults to False.
+                limit (int, optional): Maximum number of results to return. Defaults to None.
+
+            Returns:
+                Dict[str, Any]: ASN reputation history information.
+            """
+        url_suffix = f"explore/ipreputation/history/asn/{asn}"
+        query_params = {}
+        if explain:
+            query_params['explain'] = 'true'
+        if limit:
+            query_params['limit'] = limit
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=query_params
+        )
+        return response
+
+    def get_asn_takedown_reputation(self, args):
+        """
+        Retrieve takedown reputation for a specific Autonomous System Number (ASN).
+
+        Args:
+            args (dict): Arguments containing ASN, optional explain flag, and optional result limit.
+
+        Returns:
+            dict: Takedown reputation information for the specified ASN.
+
+        Raises:
+            ValueError: If ASN is not provided.
+        """
+        asn = args.get('asn')
+        explain = argToBoolean(args.get('explain', 'false'))
+        limit = args.get('limit')
+
+        if not asn:
+            raise ValueError('The "asn" argument is required.')
+
+        endpoint = f'explore/takedownreputation/asn/{asn}'
+
+        params = {}
+        if explain:
+            params['explain'] = explain
+        if limit:
+            params['limit'] = limit
+
+        response = self._http_request(
+            method='GET',
+            url_suffix=endpoint,
+            params=params
+        )
+
+        return response.get('response', {}).get('takedown_reputation', {})
+
+    def get_ipv4_reputation(self, ipv4, explain=False, limit=None):
+        """
+            Retrieve reputation history for a specific IPv4 address.
+
+            Args:
+                ipv4 (str): The IPv4 address to query.
+                explain (bool, optional): Whether to include detailed explanations. Defaults to False.
+                limit (int, optional): Maximum number of results to return. Defaults to None.
+
+            Returns:
+                dict: IPv4 reputation history information.
+            """
+        url_suffix = f"explore/ipreputation/history/ipv4/{ipv4}"
+        params = {}
+        if explain:
+            params['explain'] = 'true'
+        if limit is not None:
+            params['limit'] = limit
+
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+        return response
+
+    def get_job_status(self, job_id: str, max_wait: Optional[int] = None, result_type: Optional[str] = None) -> Dict[str, Any]:
+        """
+            Retrieve the status of a specific job.
+
+            Args:
+                job_id (str): The unique identifier of the job to check.
+                max_wait (int, optional): Maximum wait time in seconds. Must be between 0 and 25. Defaults to None.
+                result_type (str, optional): Type of result to retrieve. Defaults to None.
+
+            Returns:
+                Dict[str, Any]: Job status information.
+
+            Raises:
+                ValueError: If max_wait is invalid or result_type is not in allowed values.
+            """
+        url_suffix = f"explore/job/{job_id}"
+
+        params = {}
+        if max_wait is not None:
+            if not isinstance(max_wait, int) or max_wait < 0 or max_wait > 25:
+                raise ValueError("max_wait must be an integer between 0 and 25")
+            params['max_wait'] = max_wait
+
+        if result_type:
+            valid_result_types = ['Status', 'Include Metadata', 'Exclude Metadata']
+            if result_type not in valid_result_types:
+                raise ValueError(f"result_type must be one of {valid_result_types}")
+            params['result_type'] = result_type
+
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+        return response
+
+    def get_nameserver_reputation(self, nameserver: str, explain: Optional[bool] = None, limit: Optional[int] = None) -> Dict[str, Any]:
+        """
+            Retrieve reputation history for a specific nameserver.
+
+            Args:
+                nameserver (str): The nameserver to query.
+                explain (bool, optional): Whether to include detailed explanations. Defaults to None.
+                limit (int, optional): Maximum number of results to return. Defaults to None.
+
+            Returns:
+                Dict[str, Any]: Nameserver reputation history information.
+            """
+        url_suffix = f"explore/nsreputation/history/nameserver/{nameserver}"
+        params = {}
+        if explain is not None:
+            params['explain'] = str(explain).lower()
+        if limit is not None:
+            params['limit'] = limit
+
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+        return response
+
+    def get_subnet_reputation(self, subnet: str, explain: Optional[bool] = False, limit: Optional[int] = None) -> Dict[str, Any]:
+        """
+            Retrieve reputation history for a specific subnet.
+
+            Args:
+                subnet (str): The subnet to query.
+                explain (bool, optional): Whether to include detailed explanations. Defaults to False.
+                limit (int, optional): Maximum number of results to return. Defaults to None.
+
+            Returns:
+                Dict[str, Any]: Subnet reputation history information.
+            """
+        url_suffix = f"explore/ipreputation/history/subnet/{subnet}"
+
+        params = {}
+        if explain:
+            params['explain'] = str(explain).lower()
+        if limit is not None:
+            params['limit'] = limit
+
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+        return response
+
+    def get_asns_for_domain(self, domain: str) -> Dict[str, Any]:
+        """
+            Retrieve Autonomous System Numbers (ASNs) associated with a domain.
+
+            Args:
+                domain (str): The domain to retrieve ASNs for.
+
+            Returns:
+                Dict[str, Any]: Domain ASN information.
+            """
+        url_suffix = f"explore/padns/lookup/domain/asns/{domain}"
+
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix
+        )
+
+        return response
+    
+    def forward_padns_lookup(self, qtype: str, qname: str, **kwargs) -> Dict[str, Any]:
+        """
+        Perform a forward PADNS lookup using various filtering parameters.
+
+        Args:
+            qtype (str): Type of DNS record.
+            qname (str): The DNS record name to lookup.
+            **kwargs: Optional parameters for filtering and pagination.
+
+        Returns:
+            Dict[str, Any]: PADNS lookup results.
+        """
+        url_suffix = f"explore/padns/lookup/query/{qtype}/{qname}"
+        
+        params = {k: v for k, v in kwargs.items() if v is not None}
+        
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+        return response
+
+    def reverse_padns_lookup(self, qtype: str, qname: str, **kwargs) -> Dict[str, Any]:
+        """
+        Perform a reverse PADNS lookup using various filtering parameters.
+
+        Args:
+            qtype (str): Type of DNS record.
+            qname (str): The DNS record name to lookup.
+            **kwargs: Optional parameters for filtering and pagination.
+
+        Returns:
+            Dict[str, Any]: Reverse PADNS lookup results.
+        """
+        url_suffix = f"explore/padns/lookup/answer/{qtype}/{qname}"
+        
+        params = {k: v for k, v in kwargs.items() if v is not None}
+        
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+        return response
+    
+    def density_lookup(self, qtype: str, query: str, **kwargs) -> Dict[str, Any]:
+        """
+        Perform a density lookup based on various query types and parameters.
+
+        Args:
+            qtype (str): Query type (nssrv, mxsrv, nshash, mxhash, ipv4, ipv6, asn, chv)
+            query (str): Value to lookup
+            **kwargs: Optional parameters for filtering and scoping
+
+        Returns:
+            Dict[str, Any]: Density lookup results
+        """
+        url_suffix = f"explore/padns/lookup/density/{qtype}/{query}"
+        
+        params = {k: v for k, v in kwargs.items() if v is not None}
+        
+        response = self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+        return response
 
 
 def test_module(client: Client) -> str:
-    """
-    Tests connectivity to the SilentPush API and checks the authentication status.
-    
-    This function will validate the API key and ensure that the client can successfully connect 
-    to the API. It is called when running the 'Test' button in XSOAR.
-    
-    Args:
-        client (Client): The client instance to use for the connection test.
-    
-    Returns:
-        str: 'ok' if the connection is successful, otherwise returns an error message.
-    """
-    demisto.debug('Running test module...')
     try:
         client.list_domain_information('silentpush.com')
-        demisto.debug('Test module completed successfully')
         return 'ok'
     except DemistoException as e:
-        demisto.debug(f'Test module failed: {str(e)}')
         if 'Forbidden' in str(e) or 'Authorization' in str(e):
             return 'Authorization Error: make sure API Key is correctly set'
         raise e
-    
-    
-''' COMMAND FUNCTIONS '''
 
+def list_domain_information_command(client: Client, args: Dict[str, Any]) -> CommandResults:
+    domains_arg = args.get('domains') or args.get('domain')
+    if not domains_arg:
+        raise DemistoException('No domains provided')
 
-def list_domain_information_command(client: Client, args: dict) -> CommandResults:
-    """
-    Command handler for fetching domain information.
-    
-    This function processes the command for 'silentpush-list-domain-information', retrieves the
-    domain information using the client, and formats it for XSOAR output.
-    
-    Args:
-        client (Client): The client instance to fetch the data.
-        args (dict): The arguments passed to the command, including the domain.
-    
-    Returns:
-        CommandResults: The command results containing readable output and the raw response.
-    """
-    domain = args.get('domain', 'silentpush.com')
-    demisto.debug(f'Processing domain: {domain}')
+    domains = [domain.strip() for domain in domains_arg.split(',') if domain.strip()]
+    fetch_risk_score = argToBoolean(args.get('fetch_risk_score', False))
+    fetch_whois_info = argToBoolean(args.get('fetch_whois_info', False))
 
-    raw_response = client.list_domain_information(domain)
-    demisto.debug(f'Response from API: {raw_response}')
+    raw_response = client.list_domain_information(domains, fetch_risk_score, fetch_whois_info)
 
-    readable_output = tableToMarkdown('Domain Information', raw_response)
+    markdown = ['# Domain Information Results\n']
+    for domain_info in raw_response.get('domains', []):
+        markdown.append(f"## Domain: {domain_info.get('domain', 'N/A')}")
+
+        basic_info = {
+            'Created Date': domain_info.get('whois_created_date', 'N/A'),
+            'Updated Date': domain_info.get('whois_updated_date', 'N/A'),
+            'Expiration Date': domain_info.get('whois_expiration_date', 'N/A'),
+            'Registrar': domain_info.get('registrar', 'N/A'),
+            'Status': domain_info.get('status', 'N/A'),
+            'Name Servers': domain_info.get('nameservers', 'N/A')
+        }
+        markdown.append(tableToMarkdown('Domain Information', [basic_info]))
+
+        if fetch_risk_score:
+            risk_info = {
+                'Risk Score': domain_info.get('sp_risk_score', 'N/A'),
+                'Risk Score Explanation': domain_info.get('sp_risk_score_explain', 'N/A')
+            }
+            markdown.append(tableToMarkdown('Risk Assessment', [risk_info]))
+
+        if fetch_whois_info and domain_info.get('whois_info') != 'N/A':
+            whois_info = domain_info.get('whois_info', {})
+            if isinstance(whois_info, dict):
+                whois_data = {
+                    'Registrant Name': whois_info.get('registrant_name', 'N/A'),
+                    'Registrant Organization': whois_info.get('registrant_organization', 'N/A'),
+                    'Registrant Email': whois_info.get('registrant_email', 'N/A'),
+                    'Admin Email': whois_info.get('admin_email', 'N/A'),
+                    'Tech Email': whois_info.get('tech_email', 'N/A')
+                }
+                markdown.append(tableToMarkdown('WHOIS Information', [whois_data]))
+
+        markdown.append('\n---\n')
 
     return CommandResults(
         outputs_prefix='SilentPush.Domain',
+        outputs_key_field='domain',
+        outputs=raw_response.get('domains', []),
+        readable_output='\n'.join(markdown),
+        raw_response=raw_response
+    )
+
+def get_domain_certificates_command(client: Client, args: Dict[str, Any]) -> CommandResults:
+    domain = args.get('domain')
+    if not domain:
+        raise DemistoException("The 'domain' parameter is required.")
+    params = {
+        'domain_regex': args.get('domain_regex'),
+        'certificate_issuer': args.get('certificate_issuer'),
+        'date_min': args.get('date_min'),
+        'date_max': args.get('date_max'),
+        'prefer': args.get('prefer'),
+        'max_wait': arg_to_number(args.get('max_wait')) if args.get('max_wait') else None,
+        'with_metadata': argToBoolean(args.get('with_metadata')) if 'with_metadata' in args else None,
+        'skip': arg_to_number(args.get('skip')) if args.get('skip') else None,
+        'limit': arg_to_number(args.get('limit')) if args.get('limit') else None
+    }
+    params = {k: v for k, v in params.items() if v is not None}
+
+    try:
+        raw_response = client.get_domain_certificates(domain, **params)
+
+        certificates = raw_response.get('response', {}).get('domain_certificates', [])
+        metadata = raw_response.get('response', {}).get('metadata', {})
+
+        if not certificates:
+            return CommandResults(
+                readable_output=f"No certificates found for domain: {domain}",
+                outputs_prefix='SilentPush.Certificate',
+                outputs_key_field='domain',
+                outputs={'domain': domain, 'certificates': [], 'metadata': metadata},
+                raw_response=raw_response
+            )
+
+        markdown = [f"# SSL/TLS Certificate Information for Domain: {domain}\n"]
+        for cert in certificates:
+            subject = client.parse_subject(cert.get('subject', {}))
+            cert_info = {
+                'Issuer': cert.get('issuer', 'N/A'),
+                'Issued On': cert.get('not_before', 'N/A'),
+                'Expires On': cert.get('not_after', 'N/A'),
+                'Common Name': subject.get('CN', 'N/A'),
+                'Subject Alternative Names': ', '.join(cert.get('domains', [])),
+                'Serial Number': cert.get('serial_number', 'N/A'),
+                'Fingerprint SHA256': cert.get('fingerprint_sha256', 'N/A'),
+            }
+            markdown.append(tableToMarkdown('Certificate Information', [cert_info]))
+
+        return CommandResults(
+            outputs_prefix='SilentPush.Certificate',
+            outputs_key_field='domain',
+            outputs={'domain': domain, 'certificates': certificates, 'metadata': metadata},
+            readable_output='\n'.join(markdown),
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        raise DemistoException(f"Error retrieving certificates for domain '{domain}': {str(e)}")
+
+def search_domains_command(client: Client, args: dict) -> CommandResults:
+    query = args.get('query')
+    start_date = args.get('start_date')
+    end_date = args.get('end_date')
+    risk_score_min = arg_to_number(args.get('risk_score_min'))
+    risk_score_max = arg_to_number(args.get('risk_score_max'))
+    limit = arg_to_number(args.get('limit', 100))
+    domain_regex = args.get('domain_regex')
+    name_server = args.get('name_server')
+    asnum = arg_to_number(args.get('asnum'))
+    asname = args.get('asname')
+    min_ip_diversity = arg_to_number(args.get('min_ip_diversity'))
+    registrar = args.get('registrar')
+    min_asn_diversity = arg_to_number(args.get('min_asn_diversity'))
+    certificate_issuer = args.get('certificate_issuer')
+    whois_date_after = args.get('whois_date_after')
+    skip = arg_to_number(args.get('skip'))
+
+    try:
+        raw_response = client.search_domains(
+            query=query,
+            start_date=start_date,
+            end_date=end_date,
+            risk_score_min=risk_score_min,
+            risk_score_max=risk_score_max,
+            limit=limit,
+            domain_regex=domain_regex,
+            name_server=name_server,
+            asnum=asnum,
+            asname=asname,
+            min_ip_diversity=min_ip_diversity,
+            registrar=registrar,
+            min_asn_diversity=min_asn_diversity,
+            certificate_issuer=certificate_issuer,
+            whois_date_after=whois_date_after,
+            skip=skip
+        )
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error'
+        )
+
+    if raw_response.get('error'):
+        return CommandResults(
+            readable_output=f"Error: {raw_response['error']}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error'
+        )
+
+    records = raw_response.get('response', {}).get('records', [])
+
+    if not records:
+        return CommandResults(
+            readable_output="No domains found.",
+            raw_response=raw_response,
+            outputs_prefix='SilentPush.SearchResults',
+            outputs_key_field='domain',
+            outputs=raw_response
+        )
+
+    readable_output = tableToMarkdown('Domain Search Results', records)
+
+    return CommandResults(
+        outputs_prefix='SilentPush.SearchResults',
+        outputs_key_field='domain',
+        outputs=raw_response,
+        readable_output=readable_output,
+        raw_response=raw_response
+    )
+
+def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
+    domains = argToList(args.get('domains', ''))
+    cluster = argToBoolean(args.get('cluster', False))
+    mode = args.get('mode', 'live')
+    match = args.get('match', 'self')
+    as_of = args.get('as_of', None)
+
+    if not domains:
+        raise ValueError('"domains" argument is required and cannot be empty.')
+
+    raw_response = client.list_domain_infratags(domains, cluster, mode, match, as_of)
+
+    infratags = raw_response.get('response', {}).get('infratags', [])
+    tag_clusters = raw_response.get('response', {}).get('tag_clusters', [])
+
+    readable_output = tableToMarkdown('Domain Infratags', infratags)
+    if tag_clusters:
+        readable_output += tableToMarkdown('Domain Tag Clusters', tag_clusters)
+
+    return CommandResults(
+        outputs_prefix='SilentPush.InfraTags',
         outputs_key_field='domain',
         outputs=raw_response,
         readable_output=readable_output,
@@ -179,29 +846,570 @@ def list_domain_information_command(client: Client, args: dict) -> CommandResult
     )
 
 
-''' MAIN FUNCTION '''
+def get_enrichment_data_command(client: Client, args: dict) -> CommandResults:
+    resource = args.get("resource")
+    value = args.get("value")
+    explain = argToBoolean(args.get("explain", False))
+    scan_data = argToBoolean(args.get("scan_data", False))
+
+    if not resource or not value:
+        raise ValueError("Both 'resource' and 'value' arguments are required.")
+
+    if resource in ["ip", "ipv4", "ipv6"] and not validate_ip_address(value, allow_ipv6=(resource != "ipv4")):
+        raise DemistoException(f"Invalid {resource.upper()} address: {value}")
+
+    enrichment_data = client.get_enrichment_data(resource, value, explain, scan_data)
+
+    if not enrichment_data:
+        return CommandResults(
+            readable_output=f"No enrichment data found for resource: {value}",
+            outputs_prefix="SilentPush.Enrichment",
+            outputs_key_field="value",
+            outputs={"value": value, "data": {}},
+            raw_response=enrichment_data
+        )
+
+    readable_output = tableToMarkdown(
+        f"Enrichment Data for {value}",
+        enrichment_data,
+        removeNull=True
+    )
+
+    return CommandResults(
+        outputs_prefix="SilentPush.Enrichment",
+        outputs_key_field="value",
+        outputs={"value": value, **enrichment_data},
+        readable_output=readable_output,
+        raw_response=enrichment_data
+    )
+
+
+def list_ip_information_command(client: Client, args: Dict[str, Any]) -> CommandResults:
+    ips = argToList(args.get("ips", ""))
+    if not ips:
+        raise ValueError("The 'ips' parameter is required.")
+
+    try:
+        valid_ips = validate_ip_inputs(ips)
+    except DemistoException as e:
+        return CommandResults(
+            readable_output=str(e),
+            outputs_prefix="SilentPush.Error",
+            outputs_key_field="error",
+            outputs={"error": str(e)}
+        )
+
+    response = client.list_ip_information(valid_ips)
+    outputs = response.get("response", {}).get("ip2asn", [])
+
+    if not outputs:
+        return CommandResults(
+            readable_output=f"No information found for IPs: {', '.join(valid_ips)}",
+            outputs_prefix="SilentPush.IPInformation",
+            outputs_key_field="ip",
+            outputs=[],
+            raw_response=response
+        )
+
+    readable_output = tableToMarkdown(
+        "Comprehensive IP Information",
+        outputs,
+        removeNull=True
+    )
+
+    return CommandResults(
+        outputs_prefix="SilentPush.IPInformation",
+        outputs_key_field="ip",
+        outputs=outputs,
+        readable_output=readable_output,
+        raw_response=response
+    )
+
+def get_asn_reputation_command(self, args: dict) -> CommandResults:
+    asn = args.get("asn")
+    explain = argToBoolean(args.get("explain", False))
+    limit = arg_to_number(args.get("limit", None))
+
+    if not asn:
+        raise ValueError("ASN is required.")
+
+    try:
+        asn_reputation_data = self.get_asn_reputation(asn, explain, limit)
+
+        command_results = CommandResults(
+            outputs_prefix="SilentPush.ASNReputation",
+            outputs_key_field="asn",
+            outputs=asn_reputation_data,
+            raw_response=asn_reputation_data
+        )
+
+        return command_results
+
+    except Exception as e:
+        raise DemistoException(f"Error retrieving ASN reputation data: {str(e)}")
+
+def get_asn_takedown_reputation_command(client: Client, args):
+    
+    takedown_reputation = client.get_asn_takedown_reputation(args)
+    asn = args.get('asn')
+
+    readable_output = tableToMarkdown(
+        f'Takedown Reputation for ASN {asn}',
+        [takedown_reputation],
+        headers=['asn', 'asname', 'asn_allocation_date', 'asn_takedown_reputation']
+    )
+
+    return CommandResults(
+        outputs_prefix='SilentPush.TakedownReputation',
+        outputs_key_field='asn',
+        outputs=takedown_reputation,
+        readable_output=readable_output,
+        raw_response=takedown_reputation
+    )
+
+def get_ipv4_reputation_command(client: Client, args: dict) -> CommandResults:
+    ipv4 = args.get('ipv4')
+    if not ipv4:
+        raise ValueError("The 'ipv4' parameter is required.")
+
+    if not validate_ip_address(ipv4, allow_ipv6=False):
+        raise DemistoException(f"Invalid IPv4 address: {ipv4}")
+
+    explain = argToBoolean(args.get('explain', False))
+    limit = arg_to_number(args.get('limit', None))
+
+    try:
+        raw_response = client.get_ipv4_reputation(ipv4, explain, limit)
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error'
+        )
+
+    ip_reputation = raw_response.get('response', {}).get('ip_reputation_history', [])
+
+    if not ip_reputation:
+        readable_output = f"No reputation information found for IPv4: {ipv4}"
+    else:
+        readable_output = tableToMarkdown(f"IPv4 Reputation for {ipv4}", ip_reputation)
+
+    return CommandResults(
+        outputs_prefix='SilentPush.IPv4Reputation',
+        outputs_key_field='ip',
+        outputs={
+            'ip': ipv4,
+            'reputation_history': ip_reputation
+        },
+        readable_output=readable_output,
+        raw_response=raw_response
+    )
+
+def get_job_status_command(client: Client, args: dict) -> CommandResults:
+    job_id = args.get('job_id')
+    max_wait = arg_to_number(args.get('max_wait'))
+    result_type = args.get('result_type')
+
+    if not job_id:
+        raise DemistoException("job_id is a required parameter")
+
+    try:
+        raw_response = client.get_job_status(job_id, max_wait, result_type)
+
+        job_status = raw_response.get('response', {})
+
+        headers = list(job_status.keys())
+        rows = [job_status]
+
+        readable_output = tableToMarkdown(
+            f"Job Status for Job ID: {job_id}",
+            rows,
+            headers=headers,
+            removeNull=True
+        )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.JobStatus',
+            outputs_key_field='job_id',
+            outputs={'job_id': job_id, **job_status},
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error retrieving job status: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
+
+def get_nameserver_reputation_command(client: Client, args: Dict[str, Any]) -> CommandResults:
+    nameserver = args.get('nameserver')
+    if not nameserver:
+        raise DemistoException("The 'nameserver' parameter is required.")
+
+    explain = argToBoolean(args.get('explain', False))
+    limit = arg_to_number(args.get('limit'))
+
+    try:
+        raw_response = client.get_nameserver_reputation(nameserver, explain, limit)
+        reputation_history = raw_response.get('response', {}).get('ns_server_reputation_history', [])
+
+        if not reputation_history:
+            readable_output = f"No reputation history found for nameserver: {nameserver}"
+        else:
+            readable_output = tableToMarkdown(
+                f"Nameserver Reputation for {nameserver}",
+                reputation_history,
+                removeNull=True
+            )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.NameserverReputation',
+            outputs_key_field='nameserver',
+            outputs={'nameserver': nameserver, 'reputation_history': reputation_history},
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error retrieving nameserver reputation: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
+
+def get_subnet_reputation_command(client: Client, args: dict) -> CommandResults:
+    subnet = args.get('subnet')
+    explain = argToBoolean(args.get('explain', False))
+    limit = arg_to_number(args.get('limit'))
+
+    if not subnet:
+        raise DemistoException("Subnet is a required parameter.")
+
+    try:
+        raw_response = client.get_subnet_reputation(subnet, explain, limit)
+
+        subnet_reputation = raw_response.get('response', {}).get('subnet_reputation_history', [])
+
+        if not subnet_reputation:
+            readable_output = f"No reputation history found for subnet: {subnet}"
+        else:
+            readable_output = tableToMarkdown(
+                f"Subnet Reputation for {subnet}",
+                subnet_reputation,
+                removeNull=True
+            )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.SubnetReputation',
+            outputs_key_field='subnet',
+            outputs={'subnet': subnet, 'reputation_history': subnet_reputation},
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error retrieving subnet reputation: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
+
+def get_asns_for_domain_command(client: Client, args: dict) -> CommandResults:
+    domain = args.get('domain')
+
+    if not domain:
+        raise DemistoException("domain is a required parameter")
+
+    try:
+        raw_response = client.get_asns_for_domain(domain)
+
+        records = raw_response.get('response', {}).get('records', [])
+
+        if not records or 'domain_asns' not in records[0]:
+            readable_output = f"No ASNs found for domain: {domain}"
+            asns = []
+        else:
+            domain_asns = records[0]['domain_asns']
+
+            asns = [{'ASN': asn, 'Description': description}
+                    for asn, description in domain_asns.items()]
+
+            readable_output = tableToMarkdown(
+                f"ASNs for Domain: {domain}",
+                asns,
+                headers=['ASN', 'Description']
+            )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.DomainASNs',
+            outputs_key_field='domain',
+            outputs={
+                'domain': domain,
+                'asns': asns
+            },
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error retrieving domain ASNs: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
+        
+def forward_padns_lookup_command(client: Client, args: dict) -> CommandResults:
+    """
+    Command function to perform forward PADNS lookup.
+
+    Args:
+        client (Client): SilentPush API client.
+        args (dict): Command arguments.
+
+    Returns:
+        CommandResults: Formatted results of the PADNS lookup.
+    """
+    qtype = args.get('qtype')
+    qname = args.get('qname')
+
+    if not qtype or not qname:
+        raise DemistoException("Both 'qtype' and 'qname' are required parameters.")
+
+    netmask = args.get('netmask')
+    subdomains = argToBoolean(args.get('subdomains')) if 'subdomains' in args else None
+    regex = args.get('regex')
+    match = args.get('match')
+    first_seen_after = args.get('first_seen_after')
+    first_seen_before = args.get('first_seen_before')
+    last_seen_after = args.get('last_seen_after')
+    last_seen_before = args.get('last_seen_before')
+    as_of = args.get('as_of')
+    sort = args.get('sort')
+    output_format = args.get('output_format')
+    prefer = args.get('prefer')
+    with_metadata = argToBoolean(args.get('with_metadata')) if 'with_metadata' in args else None
+    max_wait = arg_to_number(args.get('max_wait'))
+    skip = arg_to_number(args.get('skip'))
+    limit = arg_to_number(args.get('limit'))
+
+    try:
+        raw_response = client.forward_padns_lookup(
+            qtype=qtype,
+            qname=qname,
+            netmask=netmask,
+            subdomains=subdomains,
+            regex=regex,
+            match=match,
+            first_seen_after=first_seen_after,
+            first_seen_before=first_seen_before,
+            last_seen_after=last_seen_after,
+            last_seen_before=last_seen_before,
+            as_of=as_of,
+            sort=sort,
+            output_format=output_format,
+            prefer=prefer,
+            with_metadata=with_metadata,
+            max_wait=max_wait,
+            skip=skip,
+            limit=limit
+        )
+
+        records = raw_response.get('response', {}).get('records', [])
+        
+        if not records:
+            readable_output = f"No records found for {qtype} {qname}"
+        else:
+            readable_output = tableToMarkdown(
+                f"PADNS Lookup Results for {qtype} {qname}",
+                records,
+                removeNull=True
+            )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.PADNSLookup',
+            outputs_key_field='qname',
+            outputs={
+                'qtype': qtype,
+                'qname': qname,
+                'records': records
+            },
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error performing PADNS lookup: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
+
+def reverse_padns_lookup_command(client: Client, args: dict) -> CommandResults:
+    """
+    Command function to perform reverse PADNS lookup.
+
+    Args:
+        client (Client): SilentPush API client.
+        args (dict): Command arguments.
+
+    Returns:
+        CommandResults: Formatted results of the reverse PADNS lookup.
+    """
+    qtype = args.get('qtype')
+    qname = args.get('qname')
+
+    if not qtype or not qname:
+        raise DemistoException("Both 'qtype' and 'qname' are required parameters.")
+
+    netmask = args.get('netmask')
+    subdomains = argToBoolean(args.get('subdomains')) if 'subdomains' in args else None
+    regex = args.get('regex')
+    first_seen_after = args.get('first_seen_after')
+    first_seen_before = args.get('first_seen_before')
+    last_seen_after = args.get('last_seen_after')
+    last_seen_before = args.get('last_seen_before')
+    as_of = args.get('as_of')
+    sort = args.get('sort')
+    output_format = args.get('output_format')
+    prefer = args.get('prefer')
+    with_metadata = argToBoolean(args.get('with_metadata')) if 'with_metadata' in args else None
+    max_wait = arg_to_number(args.get('max_wait'))
+    skip = arg_to_number(args.get('skip'))
+    limit = arg_to_number(args.get('limit'))
+
+    try:
+        raw_response = client.reverse_padns_lookup(
+            qtype=qtype,
+            qname=qname,
+            netmask=netmask,
+            subdomains=subdomains,
+            regex=regex,
+            first_seen_after=first_seen_after,
+            first_seen_before=first_seen_before,
+            last_seen_after=last_seen_after,
+            last_seen_before=last_seen_before,
+            as_of=as_of,
+            sort=sort,
+            output_format=output_format,
+            prefer=prefer,
+            with_metadata=with_metadata,
+            max_wait=max_wait,
+            skip=skip,
+            limit=limit
+        )
+
+        records = raw_response.get('response', {}).get('records', [])
+        
+        if not records:
+            readable_output = f"No records found for {qtype} {qname}"
+        else:
+            readable_output = tableToMarkdown(
+                f"Reverse PADNS Lookup Results for {qtype} {qname}",
+                records,
+                removeNull=True
+            )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.ReversePADNSLookup',
+            outputs_key_field='qname',
+            outputs={
+                'qtype': qtype,
+                'qname': qname,
+                'records': records
+            },
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error performing reverse PADNS lookup: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
+        
+def density_lookup_command(client: Client, args: dict) -> CommandResults:
+    """
+    Command function to perform density lookup.
+
+    Args:
+        client (Client): SilentPush API client.
+        args (dict): Command arguments.
+
+    Returns:
+        CommandResults: Formatted results of the density lookup.
+    """
+    qtype = args.get('qtype')
+    query = args.get('query')
+
+    if not qtype or not query:
+        raise DemistoException("Both 'qtype' and 'query' are required parameters.")
+
+    scope = args.get('scope')
+
+    try:
+        raw_response = client.density_lookup(
+            qtype=qtype,
+            query=query,
+            scope=scope
+        )
+
+        records = raw_response.get('response', {}).get('records', [])
+        
+        if not records:
+            readable_output = f"No density records found for {qtype} {query}"
+        else:
+            readable_output = tableToMarkdown(
+                f"Density Lookup Results for {qtype} {query}",
+                records,
+                removeNull=True
+            )
+
+        return CommandResults(
+            outputs_prefix='SilentPush.DensityLookup',
+            outputs_key_field='query',
+            outputs={
+                'qtype': qtype,
+                'query': query,
+                'records': records
+            },
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
+
+    except Exception as e:
+        return CommandResults(
+            readable_output=f"Error performing density lookup: {str(e)}",
+            raw_response={},
+            outputs_prefix='SilentPush.Error',
+            outputs_key_field='error',
+            outputs={'error': str(e)}
+        )
 
 
 def main():
-    """
-    Main function to initialize the client and process the commands.
-    
-    This function parses the parameters, sets up the client, and routes the command to 
-    the appropriate function.
-    
-    It handles the setup of authentication, base URL, SSL verification, and proxy configuration.
-    Also, it routes the `test-module` and `silentpush-list-domain-information` commands to the
-    corresponding functions.
-    """
+
     try:
         params = demisto.params()
         api_key = params.get('credentials', {}).get('password')
         base_url = params.get('url', 'https://api.silentpush.com')
         verify_ssl = not params.get('insecure', False)
         proxy = params.get('proxy', False)
-
-        demisto.debug(f'Base URL: {base_url}')
-        demisto.debug('Initializing client...')
 
         client = Client(
             base_url=base_url,
@@ -211,15 +1419,33 @@ def main():
         )
 
         command = demisto.command()
-        demisto.debug(f'Command being called is {command}')
 
-        if command == 'test-module':
-            result = test_module(client)
-            return_results(result)
-        
-        elif command == 'silentpush-list-domain-information':
-            return_results(list_domain_information_command(client, demisto.args()))
-        
+        command_handlers = {
+            'test-module': test_module,
+            'silentpush-list-domain-information': list_domain_information_command,
+            'silentpush-get-domain-certificates': get_domain_certificates_command,
+            'silentpush-search-domains': search_domains_command,
+            'silentpush-list-domain-infratags': list_domain_infratags_command,
+            'silentpush-get-enrichment-data' : get_enrichment_data_command,
+            'silentpush-list-ip-information' : list_ip_information_command,
+            'silentpush-get-asn-reputation' : get_asn_reputation_command,
+            'silentpush-get-asn-takedown-reputation': get_asn_takedown_reputation_command,
+            'silentpush-get-ipv4-reputation': get_ipv4_reputation_command,
+            'silentpush-get-job-status': get_job_status_command,
+            'silentpush-get-nameserver-reputation': get_nameserver_reputation_command,
+            'silentpush-get-subnet-reputation': get_subnet_reputation_command,
+            'silentpush-get-asns-for-domain': get_asns_for_domain_command,
+            'silentpush-forward-padns-lookup': forward_padns_lookup_command,
+            'silentpush-reverse-padns-lookup': reverse_padns_lookup_command,
+            'silentpush-density-lookup': density_lookup_command
+        }
+
+        if command in command_handlers:
+            if command == 'test-module':
+                result = command_handlers[command](client)
+                return_results(result)
+            else:
+                return_results(command_handlers[command](client, demisto.args()))
         else:
             raise DemistoException(f'Unsupported command: {command}')
 
@@ -229,7 +1455,6 @@ def main():
 
 
 ''' ENTRY POINT '''
-
 
 if __name__ in ('__main__', '__builtin__', 'builtins'):
     main()
