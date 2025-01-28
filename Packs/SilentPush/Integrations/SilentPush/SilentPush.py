@@ -622,6 +622,33 @@ class Client(BaseClient):
         )
 
         return response
+    
+    def search_scan_data(self, skip, limit, with_metadata, query, fields, sort):
+        """
+        Search scan data based on various filtering criteria.
+
+        Args:
+            skip (int): Number of results to skip.
+            limit (int): Maximum number of results to return.
+            with_metadata (bool): Whether to include metadata.
+            query (str): Search query.
+            fields (str): Fields to search.
+            sort (str): Sort order.
+
+        Returns:
+            dict: Scan data search results.
+        """
+        url_suffix = f'explore/scandata/search/raw?skip={skip}&limit={limit}&with_metadata={with_metadata}'
+    
+        body = {}
+        body['query'] = query if query else ''
+        if fields:
+            body['fields'] = fields
+        if sort:
+            body['sort'] = sort
+
+        response = self._http_request('POST', url_suffix, data=body)
+        return response
 
 
 def test_module(client: Client) -> str:
@@ -1401,6 +1428,41 @@ def density_lookup_command(client: Client, args: dict) -> CommandResults:
             outputs={'error': str(e)}
         )
 
+def search_scan_data_command(client: Client, args: dict) -> CommandResults:
+    """Command to search for the scanned data
+
+    client (Client): SilentPush API client.
+        args (dict): Command arguments.
+
+    Returns:
+        CommandResults: Requested Single page for search scan data, formatted for Demisto.
+    """
+    
+    skip = args.get('skip', 0)
+    limit = args.get('limit', 100)
+    with_metadata = args.get('with_metadata', 1)
+    query = args.get('query')
+    fields = args.get('fields')
+    sort = args.get('sort')
+    
+    raw_response = client.search_scan_data(skip, limit, with_metadata, query, fields, sort)
+    scandata_raw = raw_response['response']['scandata_raw']
+    readable_output = tableToMarkdown(
+        f"Search Scan Data Results for {query}",
+        scandata_raw,
+        removeNull=True
+    )
+    
+    return CommandResults(
+            outputs_prefix='SilentPush.SearchScanData',
+            outputs_key_field='query',
+            outputs={
+                'query': query,
+                'records': scandata_raw
+            },
+            readable_output=readable_output,
+            raw_response=raw_response
+        )
 
 def main():
 
@@ -1437,7 +1499,8 @@ def main():
             'silentpush-get-asns-for-domain': get_asns_for_domain_command,
             'silentpush-forward-padns-lookup': forward_padns_lookup_command,
             'silentpush-reverse-padns-lookup': reverse_padns_lookup_command,
-            'silentpush-density-lookup': density_lookup_command
+            'silentpush-density-lookup': density_lookup_command,
+            'silentpush-search-scan-data': search_scan_data_command
         }
 
         if command in command_handlers:
