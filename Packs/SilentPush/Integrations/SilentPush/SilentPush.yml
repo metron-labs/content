@@ -57,6 +57,47 @@ script:
     - contextPath: SilentPush.JobStatus.status
       description: Current status of the job.
       type: String
+  - deprecated: false
+    description: This command retrieve historical reputation data for a specified nameserver, including reputation scores and optional detailed calculation information.
+    name: silentpush-get-nameserver-reputation
+    arguments:
+    - name: nameserver
+      isArray: false
+      description: Nameserver name for which information needs to be retrieved
+      required: true
+      secret: false
+      default: false
+    - name: explain
+      isArray: false
+      description: Show the information used to calculate the reputation score
+      required: false
+      secret: false
+      default: false
+    - name: limit
+      isArray: false
+      description: The maximum number of reputation history to retrieve
+      required: false
+      secret: false
+      default: false
+    outputs:
+    - contextPath: SilentPush.NameserverReputation.date
+      description: Date of the reputation history entry (in YYYYMMDD format).
+      type: Number
+    - contextPath: SilentPush.NameserverReputation.ns_server
+      description: Name of the nameserver associated with the reputation history entry.
+      type: String
+    - contextPath: SilentPush.NameserverReputation.ns_server_reputation
+      description: Reputation score of the nameserver on the specified date.
+      type: Number
+    - contextPath: SilentPush.NameserverReputation.ns_server_reputation_explain
+      description: Explanation of the reputation score, including domain density and listed domains.
+      type: Unknown
+    - contextPath: SilentPush.NameserverReputation.ns_server_domain_density
+      description: Number of domains associated with the nameserver.
+      type: Number
+    - contextPath: SilentPush.NameserverReputation.ns_server_domains_listed
+      description: Number of domains listed in reputation databases.
+      type: Number
   script: '-'
   type: python
   subtype: python3

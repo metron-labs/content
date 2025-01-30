@@ -18,6 +18,45 @@ DATE_FORMAT = '%Y-%m-%dT%H:%M:%SZ'
 
 # API ENDPOINTS
 JOB_STATUS = "explore/job"
+NAMESERVER_REPUTATION = "explore/nsreputation/nameserver"
+
+''' COMMANDS INPUTS '''
+
+JOB_STATUS_INPUTS = [
+                    InputArgument(name='job_id',  # option 1
+                                      description='ID of the job returned by Silent Push actions.',
+                                      required=True),
+                    InputArgument(name='max_wait',
+                                description='Number of seconds to wait for results (0-25 seconds).'),
+                    InputArgument(name='result_type',
+                                description='Type of result to include in the response.')
+                    ]
+NAMESERVER_REPUTATION_INPUTS = [
+                    InputArgument(name='nameserver',
+                                description='Nameserver name for which information needs to be retrieved',
+                                required=True),
+                    InputArgument(name='explain',
+                                description='Show the information used to calculate the reputation score'),
+                    InputArgument(name='limit',
+                                description='The maximum number of reputation history to retrieve')
+                ]
+
+''' COMMANDS OUTPUTS '''
+
+JOB_STATUS_OUTPUTS = [
+                    OutputArgument(name='get', output_type=str, description='URL to retrieve the job status.'),
+                    OutputArgument(name='job_id', output_type=str, description='Unique identifier for the job.'),
+                    OutputArgument(name='status', output_type=str, description='Current status of the job.')
+                ]
+
+NAMESERVER_REPUTATION_OUTPUTS = [
+                        OutputArgument(name='date', output_type=int, description='Date of the reputation history entry (in YYYYMMDD format).'),
+                        OutputArgument(name='ns_server', output_type=str, description='Name of the nameserver associated with the reputation history entry.'),
+                        OutputArgument(name='ns_server_reputation', output_type=int, description='Reputation score of the nameserver on the specified date.'),
+                        OutputArgument(name='ns_server_reputation_explain', output_type=dict, description='Explanation of the reputation score, including domain density and listed domains.'),
+                        OutputArgument(name='ns_server_domain_density', output_type=int, description='Number of domains associated with the nameserver.'),
+                        OutputArgument(name='ns_server_domains_listed', output_type=int, description='Number of domains listed in reputation databases.')
+                    ]
 
 
 metadata_collector = YMLMetadataCollector(
@@ -167,6 +206,28 @@ class Client(BaseClient):
 
         return self._http_request(method="GET", url_suffix=url_suffix, params=params)
 
+    def get_nameserver_reputation(self, nameserver: str, explain: bool = False, limit: int = None):
+        """
+        Retrieve historical reputation data for the specified nameserver.
+
+        Args:
+            nameserver (str): The nameserver for which the reputation data is to be fetched.
+            explain (bool): Whether to include detailed calculation explanations.
+            limit (int): Maximum number of reputation entries to return.
+
+        Returns:
+            dict: Reputation history for the given nameserver.
+        """
+
+        url_suffix = f"{NAMESERVER_REPUTATION}/{nameserver}"
+
+        params = filter_none_values({'explain': explain, 'limit': limit})
+
+        response = self._http_request(method="GET", url_suffix=url_suffix, params=params)
+
+        # Return the reputation history, or an empty list if not found
+        return response.get('response', {}).get('ns_server_reputation', [])
+
 
 ''' HELPER FUNCTIONS '''
 def filter_none_values(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -213,22 +274,6 @@ def test_module(client: Client, first_fetch_time: int) -> str:
             return 'Authorization Error: make sure API Key is correctly set'
         raise e
 
-
-JOB_STATUS_INPUTS = [
-                    InputArgument(name='job_id',  # option 1
-                                      description='ID of the job returned by Silent Push actions.',
-                                      required=True),
-                    InputArgument(name='max_wait',
-                                description='Number of seconds to wait for results (0-25 seconds).'),
-                    InputArgument(name='result_type',
-                                description='Type of result to include in the response.')
-                    ]
-
-JOB_STATUS_OUTPUTS = [
-                    OutputArgument(name='get', output_type=str, description='URL to retrieve the job status.'),
-                    OutputArgument(name='job_id', output_type=str, description='Unique identifier for the job.'),
-                    OutputArgument(name='status', output_type=str, description='Current status of the job.')
-                ]
 
 @metadata_collector.command(
     command_name="silentpush-get-job-status",
@@ -286,7 +331,57 @@ def get_job_status_command(client: Client, args: dict) -> CommandResults:
         readable_output=readable_output,
         raw_response=raw_response
     )
-    
+
+
+@metadata_collector.command(
+    command_name="silentpush-get-nameserver-reputation",
+    inputs_list=NAMESERVER_REPUTATION_INPUTS,
+    outputs_prefix="SilentPush.NameserverReputation",
+    outputs_list=NAMESERVER_REPUTATION_OUTPUTS,
+    description="This command retrieve historical reputation data for a specified nameserver, including reputation scores and optional detailed calculation information.",
+)
+def get_nameserver_reputation_command(client: Client, args: dict) -> CommandResults:
+    """
+    Command handler for retrieving nameserver reputation.
+
+    Args:
+        client (Client): The API client instance.
+        args (dict): Command arguments.
+
+    Returns:
+        CommandResults: The command results containing nameserver reputation data.
+    """
+    nameserver = args.get("nameserver")
+    explain = argToBoolean(args.get("explain", "false"))
+    limit = arg_to_number(args.get("limit"))
+
+    if not nameserver:
+        raise ValueError("Nameserver is required.")
+
+    # Fetch reputation data
+    reputation_data = client.get_nameserver_reputation(nameserver, explain, limit)
+
+    # Prepare the readable output
+    if reputation_data:
+        readable_output = tableToMarkdown(
+            f"Nameserver Reputation for {nameserver}",
+            reputation_data,
+            headers=list(reputation_data[0].keys()),
+            removeNull=True
+        )
+    else:
+        readable_output = f"No reputation history found for nameserver: {nameserver}"
+
+    # Return command results
+    return CommandResults(
+        outputs_prefix="SilentPush.NameserverReputation",
+        outputs_key_field="ns_server",
+        outputs={"nameserver": nameserver, "reputation_data": reputation_data},
+        readable_output=readable_output,
+        raw_response=reputation_data
+    )
+
+
 ''' MAIN FUNCTION '''
 
 
@@ -317,6 +412,9 @@ def main() -> None:
 
         elif demisto.command() == 'silentpush-get-job-status':
             return_results(get_job_status_command(client, demisto.args()))
+
+        elif demisto.command() == 'silentpush-get-nameserver-reputation':
+            return_results(get_nameserver_reputation_command(client, demisto.args()))
 
     except Exception as e:
         demisto.error(traceback.format_exc())  # print the traceback
