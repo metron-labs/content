@@ -1,36 +1,253 @@
-import demistomock as demisto  # noqa: F401
-from CommonServerPython import *  # noqa: F401
-"""Base Integration for Cortex XSOAR (aka Demisto)
+import demistomock as demisto
+from CommonServerPython import *
+from CommonServerUserPython import *
 
-This is an integration to interact with the SilentPush API and provide functionality within XSOAR.
-
-Developer Documentation: https://xsoar.pan.dev/docs/welcome
-Code Conventions: https://xsoar.pan.dev/docs/integrations/code-conventions
-Linting: https://xsoar.pan.dev/docs/integrations/linting
-"""
-
-from CommonServerUserPython import *  # noqa
-
+import enum
+import json
 import urllib3
-from typing import Any
+import dateparser
+import traceback
+from typing import Any, Dict, List, Optional, Union
 
 # Disable insecure warnings
 urllib3.disable_warnings()
 
-
-def mock_debug(message):
-    """Print debug messages to the XSOAR logs"""
-    print(f"DEBUG: {message}")
-
-
-demisto.debug = mock_debug
-
 ''' CONSTANTS '''
 
-DATE_FORMAT = '%Y-%m-%dT%H:%M:%SZ'  # ISO8601 format with UTC, default in XSOAR
+DATE_FORMAT = '%Y-%m-%dT%H:%M:%SZ'
+
+# API ENDPOINTS
+JOB_STATUS = "explore/job"
+NAMESERVER_REPUTATION = "explore/nsreputation/nameserver"
+SUBNET_REPUTATION = "explore/ipreputation/history/subnet"
+ASNS_DOMAIN = "explore/padns/lookup/domain/asns"
+DENSITY_LOOKUP = "explore/padns/lookup/density"
+SEARCH_DOMAIN = "explore/domain/search"
+DOMAIN_INFRATAGS = "explore/bulk/domain/infratags"
+
+''' COMMANDS INPUTS '''
+
+JOB_STATUS_INPUTS = [
+                    InputArgument(name='job_id',  # option 1
+                                      description='ID of the job returned by Silent Push actions.',
+                                      required=True),
+                    InputArgument(name='max_wait',
+                                description='Number of seconds to wait for results (0-25 seconds).'),
+                    InputArgument(name='result_type',
+                                description='Type of result to include in the response.')
+                    ]
+NAMESERVER_REPUTATION_INPUTS = [
+                    InputArgument(name='nameserver',
+                                description='Nameserver name for which information needs to be retrieved',
+                                required=True),
+                    InputArgument(name='explain',
+                                description='Show the information used to calculate the reputation score'),
+                    InputArgument(name='limit',
+                                description='The maximum number of reputation history to retrieve')
+                ]
+SUBNET_REPUTATION_INPUTS = [
+                    InputArgument(
+                        name='subnet',
+                        description='IPv4 subnet for which reputation information needs to be retrieved.',
+                        required=True
+                    ),
+                    InputArgument(
+                        name='explain',
+                        description='Show the detailed information used to calculate the reputation score.'
+                    ),
+                    InputArgument(
+                        name='limit',
+                        description='Maximum number of reputation history entries to retrieve.'
+                    )
+                ]
+ASNS_DOMAIN_INPUTS = [
+                    InputArgument(name='domain',  # option 1
+                                description='Domain name to search ASNs for. Retrieves ASNs associated with A records for the specified domain and its subdomains in the last 30 days.',
+                                required=True)
+                    ]
+DENSITY_LOOKUP_INPUTS = [
+                InputArgument(name='qtype',
+                            description='Query type.',
+                            required=True),
+                InputArgument(name='query',
+                            description='Value to query.',
+                            required=True),
+                InputArgument(name='scope',
+                            description='Match level (optional).')
+            ]
+SEARCH_DOMAIN_INPUTS = [
+                InputArgument(name='domain', 
+                            description='Name or wildcard pattern of domain names to search for.'),
+                InputArgument(name='domain_regex', 
+                            description='A valid RE2 regex pattern to match domains. Overrides the domain argument.'),
+                InputArgument(name='name_server', 
+                            description='Name server name or wildcard pattern of the name server used by domains.'),
+                InputArgument(name='asnum', 
+                            description='Autonomous System (AS) number to filter domains.'),
+                InputArgument(name='asname', 
+                            description='Search for all AS numbers where the AS Name begins with the specified value.'),
+                InputArgument(name='min_ip_diversity', 
+                            description='Minimum IP diversity limit to filter domains.'),
+                InputArgument(name='registrar', 
+                            description='Name or partial name of the registrar used to register domains.'),
+                InputArgument(name='min_asn_diversity', 
+                            description='Minimum ASN diversity limit to filter domains.'),
+                InputArgument(name='certificate_issuer', 
+                            description='Filter domains that had SSL certificates issued by the specified certificate issuer. Wildcards supported.'),
+                InputArgument(name='whois_date_after', 
+                            description='Filter domains with a WHOIS creation date after this date (YYYY-MM-DD).'),
+                InputArgument(name='skip', 
+                            description='Number of results to skip in the search query.'),
+                InputArgument(name='limit', 
+                            description='Number of results to return. Defaults to the SilentPush API\'s behavior.')
+            ]
+DOMAIN_INFRATAGS_INPUTS = [
+                InputArgument(name='domains', 
+                            description='Comma-separated list of domains.', 
+                            required=True),
+                InputArgument(name='cluster', 
+                            description='Whether to cluster the results.'),
+                InputArgument(name='mode', 
+                            description='Mode for lookup (live/padns). Defaults to "live".', 
+                            default='live'),
+                InputArgument(name='match', 
+                            description='Handling of self-hosted infrastructure. Defaults to "self".', 
+                            default='self')
+            ]
+
+
+
+''' COMMANDS OUTPUTS '''
+
+JOB_STATUS_OUTPUTS = [
+                        OutputArgument(name='get', output_type=str, description='URL to retrieve the job status.'),
+                        OutputArgument(name='job_id', output_type=str, description='Unique identifier for the job.'),
+                        OutputArgument(name='status', output_type=str, description='Current status of the job.')
+                    ]
+
+NAMESERVER_REPUTATION_OUTPUTS = [
+                        OutputArgument(name='date', output_type=int, description='Date of the reputation history entry (in YYYYMMDD format).'),
+                        OutputArgument(name='ns_server', output_type=str, description='Name of the nameserver associated with the reputation history entry.'),
+                        OutputArgument(name='ns_server_reputation', output_type=int, description='Reputation score of the nameserver on the specified date.'),
+                        OutputArgument(name='ns_server_reputation_explain', output_type=dict, description='Explanation of the reputation score, including domain density and listed domains.'),
+                        OutputArgument(name='ns_server_domain_density', output_type=int, description='Number of domains associated with the nameserver.'),
+                        OutputArgument(name='ns_server_domains_listed', output_type=int, description='Number of domains listed in reputation databases.')
+                    ]
+SUBNET_REPUTATION_OUTPUTS = [
+                        OutputArgument(name='date', output_type=int, description='The date of the subnet reputation record.'),
+                        OutputArgument(name='subnet', output_type=str, description='The subnet associated with the reputation record.'),
+                        OutputArgument(name='subnet_reputation', output_type=int, description='The reputation score of the subnet.'),
+                        OutputArgument(name='ips_in_subnet', output_type=int, description='Total number of IPs in the subnet.'),
+                        OutputArgument(name='ips_num_active', output_type=int, description='Number of active IPs in the subnet.'),
+                        OutputArgument(name='ips_num_listed', output_type=int, description='Number of listed IPs in the subnet.')
+                    ]
+ASNS_DOMAIN_OUTPUTS = [
+                        OutputArgument(name='domain', output_type=str, description='The domain name for which ASNs are retrieved.'),
+                        OutputArgument(name='domain_asns', output_type=dict, description='Dictionary of Autonomous System Numbers (ASNs) associated with the domain.')
+                    ]
+DENSITY_LOOKUP_OUTPUTS = [
+                        OutputArgument(name='density', output_type=int, description='The density value associated with the query result.'),
+                        OutputArgument(name='nssrv', output_type=str, description='The name server (NS) for the query result.')
+                    ]
+SEARCH_DOMAIN_OUTPUTS = [
+                        OutputArgument(name='asn_diversity', output_type=int, description='The diversity of Autonomous System Numbers (ASNs) associated with the domain.'),
+                        OutputArgument(name='host', output_type=str, description='The domain name (host) associated with the record.'),
+                        OutputArgument(name='ip_diversity_all', output_type=int, description='The total number of unique IPs associated with the domain.'),
+                        OutputArgument(name='ip_diversity_groups', output_type=int, description='The number of unique IP groups associated with the domain.')
+                    ]
+DOMAIN_INFRATAGS_OUTPUTS = [
+                        OutputArgument(name='infratags.domain', 
+                                    output_type=str, 
+                                    description='The domain associated with the infratag.'),
+                        OutputArgument(name='infratags.mode', 
+                                    output_type=str, 
+                                    description='The mode associated with the domain infratag.'),
+                        OutputArgument(name='infratags.tag', 
+                                    output_type=str, 
+                                    description='The tag associated with the domain infratag.'),
+                        
+                        OutputArgument(name='tag_clusters.25.domains', 
+                                    output_type=list, 
+                                    description='List of domains in the tag cluster with score 25.'),
+                        OutputArgument(name='tag_clusters.25.match', 
+                                    output_type=str, 
+                                    description='The match string associated with the domains in the tag cluster with score 25.'),
+                        
+                        OutputArgument(name='tag_clusters.50.domains', 
+                                    output_type=list, 
+                                    description='List of domains in the tag cluster with score 50.'),
+                        OutputArgument(name='tag_clusters.50.match', 
+                                    output_type=str, 
+                                    description='The match string associated with the domains in the tag cluster with score 50.'),
+                        
+                        OutputArgument(name='tag_clusters.75.domains', 
+                                    output_type=list, 
+                                    description='List of domains in the tag cluster with score 75.'),
+                        OutputArgument(name='tag_clusters.75.match', 
+                                    output_type=str, 
+                                    description='The match string associated with the domains in the tag cluster with score 75.'),
+                        
+                        OutputArgument(name='tag_clusters.100.domains', 
+                                    output_type=list, 
+                                    description='List of domains in the tag cluster with score 100.'),
+                        OutputArgument(name='tag_clusters.100.match', 
+                                    output_type=str, 
+                                    description='The match string associated with the domains in the tag cluster with score 100.')
+                    ]
+
+
+
+
+metadata_collector = YMLMetadataCollector(
+    integration_name="SilentPush",
+    description=(
+        "The Silent Push Platform uses first-party data and a proprietary scanning engine to enrich global DNS data "
+        "with risk and reputation scoring, giving security teams the ability to join the dots across the entire IPv4 and IPv6 range, "
+        "and identify adversary infrastructure before an attack is launched. The content pack integrates with the Silent Push system "
+        "to gain insights into domain/IP information, reputations, enrichment, and infratag-related details. It also provides "
+        "functionality to live-scan URLs and take screenshots of them. Additionally, it allows fetching future attack feeds "
+        "from the Silent Push system."
+    ),
+    display="SilentPush",
+    category="Data Enrichment & Threat Intelligence",
+    docker_image="demisto/python3:3.11.10.116949",
+    is_fetch=False,
+    long_running=False,
+    long_running_port=False,
+    is_runonce=False,
+    integration_subtype="python3",
+    integration_type="python",
+    fromversion="5.0.0",
+    conf=[
+        ConfKey(
+            name="url",
+            display="Base URL",
+            required=True,
+            default_value="https://api.silentpush.com"
+        ),
+        ConfKey(
+            name="credentials",
+            display="API Key",
+            required=False,
+            key_type=ParameterTypes.AUTH,
+        ),
+        ConfKey(
+            name="insecure",
+            display="Trust any certificate (not secure)",
+            required=False,
+            key_type=ParameterTypes.BOOLEAN
+        ),
+        ConfKey(
+            name="proxy",
+            display="Use system proxy settings",
+            required=False,
+            key_type=ParameterTypes.BOOLEAN
+        )
+    ]
+)
+
 
 ''' CLIENT CLASS '''
-
 
 class Client(BaseClient):
     """Client class to interact with the SilentPush API
@@ -44,7 +261,7 @@ class Client(BaseClient):
     def __init__(self, base_url: str, api_key: str, verify: bool = True, proxy: bool = False):
         """
         Initializes the client with the necessary parameters.
-        
+
         Args:
             base_url (str): The base URL for the SilentPush API.
             api_key (str): The API key for authentication.
@@ -59,32 +276,25 @@ class Client(BaseClient):
             'X-API-Key': api_key,
             'Content-Type': 'application/json'
         }
-        demisto.debug(f'Initialized client with base URL: {self.base_url}')
 
     def _http_request(self, method: str, url_suffix: str, params: dict = None, data: dict = None) -> Any:
         """
-        Handles the HTTP requests to the SilentPush API.
-        
-        This function builds the request URL, adds the necessary headers, and sends a request
-        to the API. It returns the response in JSON format.
-        
+        Perform an HTTP request to the SilentPush API.
+
         Args:
-            method (str): The HTTP method (GET, POST, etc.).
-            url_suffix (str): The specific endpoint to be appended to the base URL.
-            params (dict, optional): The URL parameters to be sent with the request.
-            data (dict, optional): The data to be sent with the request.
-        
+            method (str): The HTTP method to use (e.g., 'GET', 'POST').
+            url_suffix (str): The endpoint suffix to append to the base URL.
+            params (dict, optional): Query parameters to include in the request. Defaults to None.
+            data (dict, optional): JSON data to send in the request body. Defaults to None.
+
         Returns:
-            Any: The JSON response from the API.
-        
+            Any: The JSON response from the API or text response if not JSON.
+
         Raises:
-            DemistoException: If there is an error in the API response.
+            DemistoException: If there's an error during the API call.
         """
-        full_url = f'{self.base_url}{url_suffix}'
-        masked_headers = {k: v if k != 'X-API-Key' else '****' for k, v in self._headers.items()}
-        demisto.debug(f'Headers: {masked_headers}')
-        demisto.debug(f'Params: {params}')
-        demisto.debug(f'Data: {data}')
+        base_url = demisto.params().get('url', 'https://api.silentpush.com') if url_suffix.startswith("/api/v2/") else self.base_url
+        full_url = f'{base_url}{url_suffix}'
 
         try:
             response = requests.request(
@@ -95,83 +305,671 @@ class Client(BaseClient):
                 params=params,
                 json=data
             )
-            demisto.debug(f'Response status code: {response.status_code}')
-            demisto.debug(f'Response body: {response.text}')
-
-            if response.status_code not in {200, 201}:
-                raise DemistoException(f'Error in API call [{response.status_code}] - {response.text}')
-            return response.json()
+            if response.headers.get('Content-Type', '').startswith('application/json'):
+                return response.json()
+            else:
+                return response.text
         except Exception as e:
-            demisto.error(f'Error in API call: {str(e)}')
-            raise
+            raise DemistoException(f'Error in API call: {str(e)}')
 
-    def list_domain_information(self, domain: str) -> dict:
+
+    def get_job_status(self, job_id: str, max_wait: Optional[int] = None, result_type: Optional[str] = None) -> Dict[str, Any]:
         """
-        Fetches domain information such as WHOIS data, domain age, and risk scores.
+            Retrieve the status of a specific job.
+
+            Args:
+                job_id (str): The unique identifier of the job to check.
+                max_wait (int, optional): Maximum wait time in seconds. Must be between 0 and 25. Defaults to None.
+                result_type (str, optional): Type of result to retrieve. Defaults to None.
+
+            Returns:
+                Dict[str, Any]: Job status information.
+
+            Raises:
+                ValueError: If max_wait is invalid or result_type is not in allowed values.
+            """
+        url_suffix = f"{JOB_STATUS}/{job_id}"
+        params = {}
+
+        if max_wait is not None:
+            if not (0 <= max_wait <= 25):
+                raise ValueError("max_wait must be an integer between 0 and 25")
+        params['max_wait'] = max_wait
+
+        valid_result_types = {'Status', 'Include Metadata', 'Exclude Metadata'}
+        if result_type and result_type not in valid_result_types:
+            raise ValueError(f"result_type must be one of {valid_result_types}")
         
+        if result_type:
+            params['result_type'] = result_type
+
+        return self._http_request(method="GET", url_suffix=url_suffix, params=params)
+
+    def get_nameserver_reputation(self, nameserver: str, explain: bool = False, limit: int = None):
+        """
+        Retrieve historical reputation data for the specified nameserver.
+
         Args:
-            domain (str): The domain to fetch information for.
-        
+            nameserver (str): The nameserver for which the reputation data is to be fetched.
+            explain (bool): Whether to include detailed calculation explanations.
+            limit (int): Maximum number of reputation entries to return.
+
         Returns:
-            dict: A dictionary containing domain information fetched from the API.
+            dict: Reputation history for the given nameserver.
         """
-        demisto.debug(f'Fetching domain information for domain: {domain}')
-        url_suffix = f'explore/domain/domaininfo/{domain}'
-        return self._http_request('GET', url_suffix)
+
+        url_suffix = f"{NAMESERVER_REPUTATION}/{nameserver}"
+
+        params = filter_none_values({'explain': explain, 'limit': limit})
+
+        response = self._http_request(method="GET", url_suffix=url_suffix, params=params)
+
+        # Return the reputation history, or an empty list if not found
+        return response.get('response', {}).get('ns_server_reputation', [])
+
+    def get_subnet_reputation(self, subnet: str, explain: bool = False, limit: Optional[int] = None) -> Dict[str, Any]:
+        """
+        Retrieve reputation history for a specific subnet.
+
+        Args:
+            subnet (str): The subnet to query.
+            explain (bool, optional): Whether to include detailed explanations. Defaults to False.
+            limit (int, optional): Maximum number of results to return. Defaults to None.
+
+        Returns:
+            Dict[str, Any]: Subnet reputation history information.
+        """
+        url_suffix = f"{SUBNET_REPUTATION}/{subnet}"
+
+        params = {
+            "explain": str(explain).lower() if explain else None,
+            "limit": limit
+        }
+
+        params = filter_none_values(params)
+
+        return self._http_request(method="GET", url_suffix=url_suffix, params=params)
+
+    def get_asns_for_domain(self, domain: str) -> Dict[str, Any]:
+        """
+        Retrieve Autonomous System Numbers (ASNs) associated with the specified domain.
+
+        Args:
+            domain (str): The domain to retrieve ASNs for.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing the ASN information for the domain.
+        """
+        url_suffix = f"{ASNS_DOMAIN}/{domain}"
+
+        # Send the request and return the response directly
+        return self._http_request(method="GET", url_suffix=url_suffix)
+
+    def density_lookup(self, qtype: str, query: str, **kwargs) -> Dict[str, Any]:
+        """
+        Perform a density lookup based on various query types and optional parameters.
+
+        Args:
+            qtype (str): Query type to perform the lookup. Options include: nssrv, mxsrv, nshash, mxhash, ipv4, ipv6, asn, chv.
+            query (str): The value to look up.
+            **kwargs: Optional parameters (e.g., filters) for scoping the lookup.
+
+        Returns:
+            Dict[str, Any]: The results of the density lookup, containing relevant information based on the query.
+        """
+        url_suffix = f"{DENSITY_LOOKUP}/{qtype}/{query}"
+
+        params = filter_none_values(kwargs)
+
+        return self._http_request(
+            method="GET",
+            url_suffix=url_suffix,
+            params=params
+        )
+
+    def search_domains(self, query: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None,
+                    risk_score_min: Optional[int] = None, risk_score_max: Optional[int] = None, limit: int = 100, 
+                    domain_regex: Optional[str] = None, name_server: Optional[str] = None, asnum: Optional[int] = None, 
+                    asname: Optional[str] = None, min_ip_diversity: Optional[int] = None, registrar: Optional[str] = None, 
+                    min_asn_diversity: Optional[int] = None, certificate_issuer: Optional[str] = None, 
+                    whois_date_after: Optional[str] = None, skip: Optional[int] = None) -> dict:
+        """
+        Search for domains based on various filtering criteria.
+
+        Args:
+            query (str, optional): Domain search query.
+            start_date (str, optional): Start date for domain search (YYYY-MM-DD).
+            end_date (str, optional): End date for domain search (YYYY-MM-DD).
+            risk_score_min (int, optional): Minimum risk score filter.
+            risk_score_max (int, optional): Maximum risk score filter.
+            limit (int, optional): Maximum number of results to return (defaults to 100).
+            domain_regex (str, optional): Regular expression to filter domains.
+            name_server (str, optional): Name server filter.
+            asnum (int, optional): Autonomous System Number (ASN) filter.
+            asname (str, optional): ASN Name filter.
+            min_ip_diversity (int, optional): Minimum IP diversity filter.
+            registrar (str, optional): Domain registrar filter.
+            min_asn_diversity (int, optional): Minimum ASN diversity filter.
+            certificate_issuer (str, optional): Filter domains by certificate issuer.
+            whois_date_after (str, optional): Filter domains based on WHOIS date (YYYY-MM-DD).
+            skip (int, optional): Number of results to skip.
+
+        Returns:
+            dict: Search results matching the specified criteria.
+        """
+        url_suffix = SEARCH_DOMAIN
+
+        # Prepare parameters and filter out None values using filter_none_values helper function
+        params = filter_none_values({
+            'domain': query,
+            'start_date': start_date,
+            'end_date': end_date,
+            'risk_score_min': risk_score_min,
+            'risk_score_max': risk_score_max,
+            'limit': limit,
+            'domain_regex': domain_regex,
+            'name_server': name_server,
+            'asnum': asnum,
+            'asname': asname,
+            'min_ip_diversity': min_ip_diversity,
+            'registrar': registrar,
+            'min_asn_diversity': min_asn_diversity,
+            'certificate_issuer': certificate_issuer,
+            'whois_date_after': whois_date_after,
+            'skip': skip,
+        })
+
+        # Make the request with the filtered parameters
+        return self._http_request('GET', url_suffix, params=params)
+
+    def list_domain_infratags(
+        self,
+        domains: list,
+        cluster: bool = False,
+        mode: str = 'live',
+        match: str = 'self',
+        as_of: Optional[str] = None,
+        origin_uid: Optional[str] = None,
+        use_get: bool = False
+    ) -> dict:
+        """
+        Retrieve infrastructure tags for specified domains, supporting both GET and POST methods.
+
+        Args:
+            domains (list): List of domains to fetch infrastructure tags for.
+            cluster (bool): Whether to include cluster information (default: False).
+            mode (str): Tag retrieval mode (default: 'live').
+            match (str): Matching criteria (default: 'self').
+            as_of (Optional[str]): Specific timestamp for tag retrieval.
+            origin_uid (Optional[str]): Unique identifier for the API user.
+            use_get (bool): Use GET method instead of POST (default: False).
+
+        Returns:
+            dict: API response containing infratags and optional tag clusters.
+        """
+        url_suffix = DOMAIN_INFRATAGS
+
+        # Construct the params dictionary
+        params = {
+            'mode': mode,
+            'match': match,
+            'clusters': int(cluster),
+            'as_of': as_of,
+            'origin_uid': origin_uid
+        }
+
+        # Remove any None values from params using filter_none_values helper function
+        params = filter_none_values(params)
+
+        if use_get:
+            # Use GET method
+            response = self._http_request(
+                method='GET',
+                url_suffix=url_suffix,
+                params=params
+            )
+        else:
+            # Use POST method
+            payload = {'domains': domains}
+            response = self._http_request(
+                method='POST',
+                url_suffix=url_suffix,
+                params=params,
+                data=payload
+            )
+
+        return response
 
 
-def test_module(client: Client) -> str:
-    """
-    Tests connectivity to the SilentPush API and checks the authentication status.
-    
-    This function will validate the API key and ensure that the client can successfully connect 
-    to the API. It is called when running the 'Test' button in XSOAR.
-    
-    Args:
-        client (Client): The client instance to use for the connection test.
-    
-    Returns:
-        str: 'ok' if the connection is successful, otherwise returns an error message.
-    """
-    demisto.debug('Running test module...')
-    try:
-        client.list_domain_information('silentpush.com')
-        demisto.debug('Test module completed successfully')
-        return 'ok'
-    except DemistoException as e:
-        demisto.debug(f'Test module failed: {str(e)}')
-        if 'Forbidden' in str(e) or 'Authorization' in str(e):
-            return 'Authorization Error: make sure API Key is correctly set'
-        raise e
-    
-    
+
+''' HELPER FUNCTIONS '''
+def filter_none_values(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Removes None values from a dictionary."""
+    return {k: v for k, v in params.items() if v is not None}
+
+
 ''' COMMAND FUNCTIONS '''
 
 
-def list_domain_information_command(client: Client, args: dict) -> CommandResults:
+def test_module(client: Client, first_fetch_time: int) -> str:
+    """Tests API connectivity and authentication'
+
+    Returning 'ok' indicates that the integration works like it is supposed to.
+    Connection to the service is successful.
+    Raises exceptions if something goes wrong.
+
+    :type client: ``Client``
+    :param Client: SilentPush client to use
+
+    :type name: ``str``
+    :param name: name to append to the 'Hello' string
+
+    :return: 'ok' if test passed, anything else will fail the test.
+    :rtype: ``str``
     """
-    Command handler for fetching domain information.
-    
-    This function processes the command for 'silentpush-list-domain-information', retrieves the
-    domain information using the client, and formats it for XSOAR output.
-    
+
+    # INTEGRATION DEVELOPER TIP
+    # Client class should raise the exceptions, but if the test fails
+    # the exception text is printed to the Cortex XSOAR UI.
+    # If you have some specific errors you want to capture (i.e., auth failure)
+    # you should catch the exception here and return a string with a more
+    # readable output (for example return 'Authentication Error, API Key
+    # invalid').
+    # Cortex XSOAR will print everything you return that is different than 'ok' as
+    # an error.
+    try:
+        resp = client.search_domains("job_id", "max_wait", "result_type")
+        if resp.get("status_code") != 200:
+            return f"Connection failed :- {resp.get('errors')}"
+        return 'ok'
+    except DemistoException as e:
+        if 'Forbidden' in str(e) or 'Authorization' in str(e):
+            return 'Authorization Error: make sure API Key is correctly set'
+        raise e
+
+
+@metadata_collector.command(
+    command_name="silentpush-get-job-status",
+    inputs_list=JOB_STATUS_INPUTS,
+    outputs_prefix="SilentPush.JobStatus",
+    outputs_list=JOB_STATUS_OUTPUTS,
+    description="This command retrieve status of running job or results from completed job.",
+)
+def get_job_status_command(client: Client, args: dict) -> CommandResults:
+    """
+    Retrieves the status of a job based on the provided job ID and other optional parameters.
+
     Args:
-        client (Client): The client instance to fetch the data.
-        args (dict): The arguments passed to the command, including the domain.
-    
+        client (Client): The client instance that interacts with the service to fetch job status.
+        args (dict): A dictionary of arguments, which should include:
+            - 'job_id' (str): The unique identifier of the job for which status is being retrieved.
+            - 'max_wait' (Optional[int]): The maximum wait time in seconds (default is None).
+            - 'result_type' (Optional[str]): Type of result to retrieve. Valid options are 'Status', 
+                                              'Include Metadata', or 'Exclude Metadata' (default is None).
+
     Returns:
-        CommandResults: The command results containing readable output and the raw response.
+        CommandResults: The command results containing:
+            - 'outputs_prefix' (str): The prefix for the output context.
+            - 'outputs_key_field' (str): The field used as the key in the outputs.
+            - 'outputs' (dict): A dictionary with job ID and job status information.
+            - 'readable_output' (str): A formatted string that represents the job status in a human-readable format.
+            - 'raw_response' (dict): The raw response received from the service.
+
+    Raises:
+        DemistoException: If the 'job_id' parameter is missing or if no job status is found for the given job ID.
     """
-    domain = args.get('domain', 'silentpush.com')
-    demisto.debug(f'Processing domain: {domain}')
+    job_id = args.get('job_id')
+    max_wait = arg_to_number(args.get('max_wait'))
+    result_type = args.get('result_type')
 
-    raw_response = client.list_domain_information(domain)
-    demisto.debug(f'Response from API: {raw_response}')
+    if not job_id:
+        raise DemistoException("job_id is a required parameter")
 
-    readable_output = tableToMarkdown('Domain Information', raw_response)
+    raw_response = client.get_job_status(job_id, max_wait, result_type)
+    job_status = raw_response.get('response', {})
+
+    if not job_status:
+        raise DemistoException(f"No job status found for Job ID: {job_id}")
+
+    readable_output = tableToMarkdown(
+        f"Job Status for Job ID: {job_id}",
+        [job_status],
+        headers=list(job_status.keys()),
+        removeNull=True
+    )
+    return CommandResults(
+        outputs_prefix='SilentPush.JobStatus',
+        outputs_key_field='job_id',
+        outputs={'job_id': job_id, **job_status},
+        readable_output=readable_output,
+        raw_response=raw_response
+    )
+
+
+@metadata_collector.command(
+    command_name="silentpush-get-nameserver-reputation",
+    inputs_list=NAMESERVER_REPUTATION_INPUTS,
+    outputs_prefix="SilentPush.SubnetReputation",
+    outputs_list=NAMESERVER_REPUTATION_OUTPUTS,
+    description="This command retrieve historical reputation data for a specified nameserver, including reputation scores and optional detailed calculation information.",
+)
+def get_nameserver_reputation_command(client: Client, args: dict) -> CommandResults:
+    """
+    Command handler for retrieving nameserver reputation.
+
+    Args:
+        client (Client): The API client instance.
+        args (dict): Command arguments.
+
+    Returns:
+        CommandResults: The command results containing nameserver reputation data.
+    """
+    nameserver = args.get("nameserver")
+    explain = argToBoolean(args.get("explain", False))
+    limit = arg_to_number(args.get("limit"))
+
+    if not nameserver:
+        raise ValueError("Nameserver is required.")
+
+    # Fetch reputation data
+    reputation_data = client.get_nameserver_reputation(nameserver, explain, limit)
+
+    # Prepare the readable output
+    if reputation_data:
+        readable_output = tableToMarkdown(
+            f"Nameserver Reputation for {nameserver}",
+            reputation_data,
+            headers=list(reputation_data[0].keys()),
+            removeNull=True
+        )
+    else:
+        readable_output = f"No reputation history found for nameserver: {nameserver}"
+
+    # Return command results
+    return CommandResults(
+        outputs_prefix="SilentPush.NameserverReputation",
+        outputs_key_field="ns_server",
+        outputs={"nameserver": nameserver, "reputation_data": reputation_data},
+        readable_output=readable_output,
+        raw_response=reputation_data
+    )
+
+@metadata_collector.command(
+    command_name="silentpush-get-subnet-reputation",
+    inputs_list=SUBNET_REPUTATION_INPUTS,
+    outputs_prefix="SilentPush.NameserverReputation",
+    outputs_list=SUBNET_REPUTATION_OUTPUTS,
+    description="This command retrieves the reputation history for a specific subnet."
+)
+def get_subnet_reputation_command(client: Client, args: dict) -> CommandResults:
+    """
+    Retrieves the reputation history of a given subnet.
+
+    Args:
+        client (Client): The API client instance.
+        args (dict): Command arguments containing:
+            - subnet (str): The subnet to query.
+            - explain (bool, optional): Whether to include an explanation.
+            - limit (int, optional): Limit the number of reputation records.
+
+    Returns:
+        CommandResults: The command result containing the subnet reputation data.
+    """
+    subnet = args.get('subnet')
+    if not subnet:
+        raise DemistoException("Subnet is a required parameter.")
+
+    explain = argToBoolean(args.get('explain', False))
+    limit = arg_to_number(args.get('limit'))
+
+    raw_response = client.get_subnet_reputation(subnet, explain, limit)
+    subnet_reputation = raw_response.get('response', {}).get('subnet_reputation_history', [])
+
+    readable_output = (
+        f"No reputation history found for subnet: {subnet}"
+        if not subnet_reputation
+        else tableToMarkdown(f"Subnet Reputation for {subnet}", subnet_reputation, removeNull=True)
+    )
+
+    return CommandResults(
+        outputs_prefix='SilentPush.SubnetReputation',
+        outputs_key_field='subnet',
+        outputs={'subnet': subnet, 'reputation_history': subnet_reputation},
+        readable_output=readable_output,
+        raw_response=raw_response
+    )
+
+
+@metadata_collector.command(
+    command_name="silentpush-get-asns-for-domain",
+    inputs_list=ASNS_DOMAIN_INPUTS,
+    outputs_prefix="SilentPush.DomainASNs",
+    outputs_list=ASNS_DOMAIN_OUTPUTS,
+    description="This command retrieves Autonomous System Numbers (ASNs) associated with a domain."
+)
+def get_asns_for_domain_command(client: Client, args: dict) -> CommandResults:
+    """
+    Retrieves Autonomous System Numbers (ASNs) for the specified domain.
+
+    Args:
+        client (Client): The client object used to interact with the service.
+        args (dict): Arguments passed to the command, including the domain.
+
+    Returns:
+        CommandResults: The results containing ASNs for the domain or an error message.
+    """
+    domain = args.get('domain')
+
+    if not domain:
+        raise DemistoException("Domain is a required parameter.")
+
+    raw_response = client.get_asns_for_domain(domain)
+    records = raw_response.get('response', {}).get('records', [])
+
+    if not records or 'domain_asns' not in records[0]:
+        readable_output = f"No ASNs found for domain: {domain}"
+        asns = []
+    else:
+        domain_asns = records[0]['domain_asns']
+        asns = [{'ASN': asn, 'Description': description}
+                for asn, description in domain_asns.items()]
+
+        readable_output = tableToMarkdown(
+            f"ASNs for Domain: {domain}",
+            asns,
+            headers=['ASN', 'Description']
+        )
+
+    return CommandResults(
+        outputs_prefix='SilentPush.DomainASNs',
+        outputs_key_field='domain',
+        outputs={
+            'domain': domain,
+            'asns': asns
+        },
+        readable_output=readable_output,
+        raw_response=raw_response
+    )
+
+@metadata_collector.command(
+    command_name="silentpush-density-lookup",
+    inputs_list=DENSITY_LOOKUP_INPUTS,
+    outputs_prefix="SilentPush.DensityLookup",
+    outputs_list=DENSITY_LOOKUP_OUTPUTS,
+    description="This command query granular DNS/IP parameters (e.g., NS servers, MX servers, IPaddresses, ASNs) for density information."
+)
+def density_lookup_command(client: Client, args: dict) -> CommandResults:
+    """
+    Command function to perform a density lookup on the SilentPush API.
+
+    Args:
+        client (Client): SilentPush API client.
+        args (dict): Command arguments containing 'qtype' and 'query', and optionally 'scope'.
+
+    Returns:
+        CommandResults: Formatted results of the density lookup, including either the density records or an error message.
+    """
+    qtype = args.get('qtype')
+    query = args.get('query')
+
+    if not qtype or not query:
+        raise DemistoException("Both 'qtype' and 'query' are required parameters.")
+
+    scope = args.get('scope')
+
+    raw_response = client.density_lookup(qtype=qtype, query=query, scope=scope)
+
+    records = raw_response.get('response', {}).get('records', [])
+
+    readable_output = (
+        f"No density records found for {qtype} {query}"
+        if not records
+        else tableToMarkdown(f"Density Lookup Results for {qtype} {query}", records, removeNull=True)
+    )
+
+    return CommandResults(
+        outputs_prefix='SilentPush.DensityLookup',
+        outputs_key_field='query',
+        outputs={'qtype': qtype, 'query': query, 'records': records},
+        readable_output=readable_output,
+        raw_response=raw_response
+    )
+
+@metadata_collector.command(
+    command_name="silentpush-search-domains",
+    inputs_list=SEARCH_DOMAIN_INPUTS,
+    outputs_prefix="SilentPush.Domain",
+    outputs_list=SEARCH_DOMAIN_OUTPUTS,
+    description="This command search for domains with optional filters."
+)
+def search_domains_command(client: Client, args: dict) -> CommandResults:
+    """
+    Command to search for domains based on various filter parameters.
+
+    Args:
+        client (Client): The client instance to interact with the external service.
+        args (dict): Arguments containing filter parameters for domain search.
+
+    Returns:
+        CommandResults: The results of the domain search, including readable output and raw response.
+    """
+    # Extract arguments
+    query = args.get('query')
+    start_date = args.get('start_date')
+    end_date = args.get('end_date')
+    risk_score_min = arg_to_number(args.get('risk_score_min'))
+    risk_score_max = arg_to_number(args.get('risk_score_max'))
+    limit = arg_to_number(args.get('limit', 100))
+    domain_regex = args.get('domain_regex')
+    name_server = args.get('name_server')
+    asnum = arg_to_number(args.get('asnum'))
+    asname = args.get('asname')
+    min_ip_diversity = arg_to_number(args.get('min_ip_diversity'))
+    registrar = args.get('registrar')
+    min_asn_diversity = arg_to_number(args.get('min_asn_diversity'))
+    certificate_issuer = args.get('certificate_issuer')
+    whois_date_after = args.get('whois_date_after')
+    skip = arg_to_number(args.get('skip'))
+
+    # Call the client method to search domains
+    raw_response = client.search_domains(
+        query=query,
+        start_date=start_date,
+        end_date=end_date,
+        risk_score_min=risk_score_min,
+        risk_score_max=risk_score_max,
+        limit=limit,
+        domain_regex=domain_regex,
+        name_server=name_server,
+        asnum=asnum,
+        asname=asname,
+        min_ip_diversity=min_ip_diversity,
+        registrar=registrar,
+        min_asn_diversity=min_asn_diversity,
+        certificate_issuer=certificate_issuer,
+        whois_date_after=whois_date_after,
+        skip=skip
+    )
+
+    records = raw_response.get('response', {}).get('records', [])
+
+    if not records:
+        return CommandResults(
+            readable_output="No domains found.",
+            raw_response=raw_response,
+            outputs_prefix='SilentPush.Domain',
+            outputs_key_field='domain',
+            outputs=records
+        )
+
+    readable_output = tableToMarkdown('Domain Search Results', records)
 
     return CommandResults(
         outputs_prefix='SilentPush.Domain',
+        outputs_key_field='domain',
+        outputs=records,
+        readable_output=readable_output,
+        raw_response=raw_response
+    )
+
+
+def format_tag_clusters(tag_clusters: list) -> str:
+    """
+    Helper function to format the tag clusters output.
+
+    Args:
+        tag_clusters (list): List of domain tag clusters.
+
+    Returns:
+        str: Formatted table output for tag clusters.
+    """
+    if not tag_clusters:
+        return "\n\n**No tag cluster data returned by the API.**"
+
+    cluster_details = [{'Cluster Level': key, 'Details': value} for cluster in tag_clusters for key, value in cluster.items()]
+    return tableToMarkdown('Domain Tag Clusters', cluster_details)
+
+@metadata_collector.command(
+    command_name="silentpush-list-domain-infratags",
+    inputs_list=DOMAIN_INFRATAGS_INPUTS,
+    outputs_prefix="SilentPush.InfraTags",
+    outputs_list=DOMAIN_INFRATAGS_OUTPUTS,
+    description="This command get infratags for multiple domains with optional clustering."
+)
+def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
+    """
+    Command function to retrieve domain infratags with optional cluster details.
+
+    Args:
+        client (Client): SilentPush API client.
+        args (dict): Command arguments.
+
+    Returns:
+        CommandResults: Formatted results of the infratags lookup.
+    """
+    domains = argToList(args.get('domains', ''))
+    cluster = argToBoolean(args.get('cluster', False))
+    mode = args.get('mode', 'live')
+    match = args.get('match', 'self')
+    as_of = args.get('as_of', None)
+    origin_uid = args.get('origin_uid', None)
+    use_get = argToBoolean(args.get('use_get', False))
+
+    if not domains and not use_get:
+        raise ValueError('"domains" argument is required when using POST.')
+
+
+    raw_response = client.list_domain_infratags(domains, cluster, mode, match, as_of, origin_uid, use_get)
+    infratags = raw_response.get('response', {}).get('infratags', [])
+    tag_clusters = raw_response.get('response', {}).get('tag_clusters', [])
+
+    readable_output = tableToMarkdown('Domain Infratags', infratags)
+    
+    if cluster:
+        readable_output += format_tag_clusters(tag_clusters)
+    
+    return CommandResults(
+        outputs_prefix='SilentPush.InfraTags',
         outputs_key_field='domain',
         outputs=raw_response,
         readable_output=readable_output,
@@ -182,26 +980,19 @@ def list_domain_information_command(client: Client, args: dict) -> CommandResult
 ''' MAIN FUNCTION '''
 
 
-def main():
+def main() -> None:
+    """main function, parses params and runs command functions
+
+    :return:
+    :rtype:
     """
-    Main function to initialize the client and process the commands.
-    
-    This function parses the parameters, sets up the client, and routes the command to 
-    the appropriate function.
-    
-    It handles the setup of authentication, base URL, SSL verification, and proxy configuration.
-    Also, it routes the `test-module` and `silentpush-list-domain-information` commands to the
-    corresponding functions.
-    """
+
     try:
         params = demisto.params()
         api_key = params.get('credentials', {}).get('password')
         base_url = params.get('url', 'https://api.silentpush.com')
         verify_ssl = not params.get('insecure', False)
         proxy = params.get('proxy', False)
-
-        demisto.debug(f'Base URL: {base_url}')
-        demisto.debug('Initializing client...')
 
         client = Client(
             base_url=base_url,
@@ -210,26 +1001,37 @@ def main():
             proxy=proxy
         )
 
-        command = demisto.command()
-        demisto.debug(f'Command being called is {command}')
-
-        if command == 'test-module':
-            result = test_module(client)
+        if demisto.command() == 'test-module':
+            result = test_module(client, demisto.args())
             return_results(result)
+
+        elif demisto.command() == 'silentpush-get-job-status':
+            return_results(get_job_status_command(client, demisto.args()))
+
+        elif demisto.command() == 'silentpush-get-nameserver-reputation':
+            return_results(get_nameserver_reputation_command(client, demisto.args()))
+
+        elif demisto.command() == 'silentpush-get-subnet-reputation':
+            return_results(get_subnet_reputation_command(client, demisto.args()))
+
+        elif demisto.command() == 'silentpush-get-asns-for-domain':
+            return_results(get_asns_for_domain_command(client, demisto.args()))
         
-        elif command == 'silentpush-list-domain-information':
-            return_results(list_domain_information_command(client, demisto.args()))
+        elif demisto.command() == 'silentpush-density-lookup':
+            return_results(density_lookup_command(client, demisto.args()))
+
+        elif demisto.command() == 'silentpush-search-domains':
+            return_results(search_domains_command(client, demisto.args()))
         
-        else:
-            raise DemistoException(f'Unsupported command: {command}')
+        elif demisto.command() == 'silentpush-list-domain-infratags':
+            return_results(list_domain_infratags_command(client, demisto.args()))
 
     except Exception as e:
-        demisto.error(f'Failed to execute {demisto.command()} command. Error: {str(e)}')
-        return_error(f'Failed to execute {demisto.command()} command. Error: {str(e)}')
+        demisto.error(traceback.format_exc())  # print the traceback
+        return_error(f'Failed to execute {demisto.command()} command.\nError:\n{str(e)}')
 
 
 ''' ENTRY POINT '''
-
 
 if __name__ in ('__main__', '__builtin__', 'builtins'):
     main()
