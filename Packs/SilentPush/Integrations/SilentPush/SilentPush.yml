@@ -1,109 +1,845 @@
+category: Data Enrichment & Threat Intelligence
+description: The Silent Push Platform uses first-party data and a proprietary scanning engine to enrich global DNS data with risk and reputation scoring, giving security teams the ability to join the dots across the entire IPv4 and IPv6 range, and identify adversary infrastructure before an attack is launched. The content pack integrates with the Silent Push system to gain insights into domain/IP information, reputations, enrichment, and infratag-related details. It also provides functionality to live-scan URLs and take screenshots of them. Additionally, it allows fetching future attack feeds from the Silent Push system.
 commonfields:
   id: SilentPush
   version: -1
-  name: SilentPush
+name: SilentPush
+display: SilentPush
+configuration:
+- display: Base URL
+  name: url
+  type: 0
+  required: true
+  defaultvalue: https://api.silentpush.com
+- display: API Key
+  name: credentials
+  type: 9
+  required: false
+- display: Trust any certificate (not secure)
+  name: insecure
+  type: 8
+  required: false
+- display: Use system proxy settings
+  name: proxy
+  type: 8
+  required: false
+script:
+  commands:
+  - deprecated: false
+    description: This command queries granular DNS/IP parameters (e.g., NS servers, MX servers, IPaddresses, ASNs) for density information.
+    name: silentpush-density-lookup
+    arguments:
+    - name: qtype
+      isArray: false
+      description: Query type.
+      required: true
+      secret: false
+      default: false
+    - name: query
+      isArray: false
+      description: Value to query.
+      required: true
+      secret: false
+      default: false
+    - name: scope
+      isArray: false
+      description: Match level (optional).
+      required: false
+      secret: false
+      default: false
+    outputs:
+    - contextPath: SilentPush.DensityLookup.density
+      description: The density value associated with the query result.
+      type: Number
+    - contextPath: SilentPush.DensityLookup.nssrv
+      description: The name server (NS) for the query result.
+      type: String
+  - deprecated: false
+    description: This command retrieve the reputation information for an IPv4.
+    name: silentpush-get-asn-reputation
+    arguments:
+    - name: asn
+      isArray: false
+      description: The ASN to lookup.
+      required: true
+      secret: false
+      default: false
+    - name: explain
+      isArray: false
+      description: Show the information used to calculate the reputation score.
+      required: false
+      secret: false
+      default: false
+    - name: limit
+      isArray: false
+      description: The maximum number of reputation history records to retrieve.
+      required: false
+      secret: false
+      default: false
+    outputs:
+    - contextPath: SilentPush.ASNReputation.asn
+      description: The Autonomous System Number (ASN).
+      type: String
+    - contextPath: SilentPush.ASNReputation.reputation_data.asn_reputation
+      description: Reputation score of the ASN.
+      type: Number
+    - contextPath: SilentPush.ASNReputation.reputation_data.asname
+      description: Name of the Autonomous System (AS).
+      type: String
+    - contextPath: SilentPush.ASNReputation.reputation_data.date
+      description: Date the reputation data was recorded (YYYYMMDD).
+      type: Number
+  - deprecated: false
+    description: This command retrieves Autonomous System Numbers (ASNs) associated with a domain.
+    name: silentpush-get-asns-for-domain
+    arguments:
+    - name: domain
+      isArray: false
+      description: Domain name to search ASNs for. Retrieves ASNs associated with a records for the specified domain and its subdomains in the last 30 days.
+      required: true
+      secret: false
+      default: false
+    outputs:
+    - contextPath: SilentPush.DomainASNs.domain
+      description: The domain name for which ASNs are retrieved.
+      type: String
+    - contextPath: SilentPush.DomainASNs.domain_asns
+      description: Dictionary of Autonomous System Numbers (ASNs) associated with the domain.
+      type: Unknown
+  - deprecated: false
+    description: This command get certificate data collected from domain scanning.
+    name: silentpush-get-domain-certificates
+    arguments:
+    - name: domains
+      isArray: false
+      description: Comma-separated list of domains to query.
+      required: true
+      secret: false
+      default: false
+    - name: fetch_risk_score
+      isArray: false
+      description: Whether to fetch risk scores for the domains.
+      required: false
+      secret: false
+      default: false
+    - name: fetch_whois_info
+      isArray: false
+      description: Whether to fetch WHOIS information for the domains.
+      required: false
+      secret: false
+      default: false
+    outputs:
+    - contextPath: SilentPush.Certificate.domain
+      description: The domain name queried.
+      type: String
+    - contextPath: SilentPush.Certificate.last_seen
+      description: The last seen date of the domain in YYYYMMDD format.
+      type: Number
+    - contextPath: SilentPush.Certificate.query
+      description: The domain name used for the query.
+      type: String
+    - contextPath: SilentPush.Certificate.whois_age
+      description: The age of the domain in days based on WHOIS creation date.
+      type: Number
+    - contextPath: SilentPush.Certificate.first_seen
+      description: The first seen date of the domain in YYYYMMDD format.
+      type: Number
+    - contextPath: SilentPush.Certificate.is_new
+      description: Indicates whether the domain is newly observed.
+      type: Boolean
+    - contextPath: SilentPush.Certificate.zone
+      description: The top-level domain (TLD) or zone of the queried domain.
+      type: String
+    - contextPath: SilentPush.Certificate.registrar
+      description: The registrar responsible for the domain registration.
+      type: String
+    - contextPath: SilentPush.Certificate.age_score
+      description: A risk score based on the domain's age.
+      type: Number
+    - contextPath: SilentPush.Certificate.whois_created_date
+      description: The WHOIS creation date of the domain in YYYY-MM-DD HH:MM:SS format.
+      type: String
+    - contextPath: SilentPush.Certificate.is_new_score
+      description: A risk score indicating how new the domain is.
+      type: Number
+    - contextPath: SilentPush.Certificate.age
+      description: The age of the domain in days.
+      type: Number
+  - deprecated: false
+    description: This command retrieves comprehensive enrichment information for a given resource (domain, IPv4, or IPv6).
+    name: silentpush-get-enrichment-data
+    arguments:
+    - name: resource
+      isArray: false
+      description: The resource to query (domain/IP).
+      required: true
+      secret: false
+      default: false
+    - name: value
+      isArray: false
+      description: Type of resource (domain/ipv4/ipv6).
+      required: true
+      secret: false
+      default: false
+    - name: explain
+      isArray: false
+      description: Include explanation of data calculations.
+      required: false
+      secret: false
+      default: false
+    - name: scan_data
+      isArray: false
+      description: Include scan data (IPv4 only).
+      required: false
+      secret: false
+      default: false
+    outputs:
+    - contextPath: SilentPush.Enrichment.ip_is_dsl_dynamic
+      description: Indicates if the IP is DSL dynamic.
+      type: Boolean
+    - contextPath: SilentPush.Enrichment.ip_has_expired_certificate
+      description: Indicates if the IP has an expired certificate.
+      type: Boolean
+    - contextPath: SilentPush.Enrichment.subnet_allocation_age
+      description: Age of the subnet allocation.
+      type: String
+    - contextPath: SilentPush.Enrichment.asn_rank_score
+      description: Score of the ASN rank.
+      type: Number
+    - contextPath: SilentPush.Enrichment.asn_allocation_age
+      description: Age of the ASN allocation.
+      type: Number
+    - contextPath: SilentPush.Enrichment.sp_risk_score
+      description: Risk score for the service provider.
+      type: Number
+    - contextPath: SilentPush.Enrichment.ip_reputation_score
+      description: Reputation score of the IP.
+      type: Number
+    - contextPath: SilentPush.Enrichment.ip
+      description: The IP address.
+      type: String
+    - contextPath: SilentPush.Enrichment.density
+      description: Density value for the IP address.
+      type: Number
+    - contextPath: SilentPush.Enrichment.benign_info.actor
+      description: Actor associated with the benign information.
+      type: String
+    - contextPath: SilentPush.Enrichment.benign_info.known_benign
+      description: Indicates if the resource is known to be benign.
+      type: Boolean
+    - contextPath: SilentPush.Enrichment.benign_info.tags
+      description: Tags associated with the benign information.
+      type: Unknown
+    - contextPath: SilentPush.Enrichment.asn_allocation_date
+      description: Date of ASN allocation in YYYYMMDD format.
+      type: Number
+    - contextPath: SilentPush.Enrichment.subnet_allocation_date
+      description: Date of subnet allocation or UNKNOWN if unavailable.
+      type: String
+    - contextPath: SilentPush.Enrichment.asn_takedown_reputation
+      description: Reputation score for ASN takedown.
+      type: Number
+    - contextPath: SilentPush.Enrichment.ip_location.continent_code
+      description: Continent code where the IP is located.
+      type: String
+    - contextPath: SilentPush.Enrichment.ip_location.continent_name
+      description: Continent name where the IP is located.
+      type: String
+    - contextPath: SilentPush.Enrichment.ip_location.country_code
+      description: Country code of the IP location.
+      type: String
+    - contextPath: SilentPush.Enrichment.ip_location.country_is_in_european_union
+      description: Indicates if the country is in the European Union.
+      type: Boolean
+    - contextPath: SilentPush.Enrichment.ip_location.country_name
+      description: Country name where the IP is located.
+      type: String
+    - contextPath: SilentPush.Enrichment.date
+      description: Date of the record in YYYYMMDD format.
+      type: Number
+    - contextPath: SilentPush.Enrichment.subnet_reputation_score
+      description: Reputation score of the subnet.
+      type: Number
+    - contextPath: SilentPush.Enrichment.asn_rank
+      description: Rank of the ASN.
+      type: Number
+    - contextPath: SilentPush.Enrichment.asn_reputation_score
+      description: Reputation score of the ASN.
+      type: Number
+    - contextPath: SilentPush.Enrichment.ip_is_ipfs_node
+      description: Indicates if the IP is an IPFS node.
+      type: Boolean
+    - contextPath: SilentPush.Enrichment.value
+      description: The value associated with the IP or subnet.
+      type: String
+    - contextPath: SilentPush.Enrichment.ip_reputation
+      description: Reputation score of the IP address.
+      type: Number
+    - contextPath: SilentPush.Enrichment.ip_is_dsl_dynamic_score
+      description: Score indicating if the IP is DSL dynamic.
+      type: Number
+    - contextPath: SilentPush.Enrichment.ip_has_open_directory
+      description: Indicates if the IP has an open directory.
+      type: Boolean
+    - contextPath: SilentPush.Enrichment.ip_ptr
+      description: Pointer record (PTR) of the IP address.
+      type: String
+    - contextPath: SilentPush.Enrichment.listing_score
+      description: Listing score of the IP address or resource.
+      type: Number
+    - contextPath: SilentPush.Enrichment.malscore
+      description: Malware score for the IP address.
+      type: Number
+    - contextPath: SilentPush.Enrichment.sinkhole_info.known_sinkhole_ip
+      description: Indicates if the IP is associated with a known sinkhole.
+      type: Boolean
+    - contextPath: SilentPush.Enrichment.sinkhole_info.tags
+      description: Tags associated with the sinkhole information.
+      type: Unknown
+    - contextPath: SilentPush.Enrichment.subnet_reputation
+      description: Reputation score of the subnet.
+      type: Number
+    - contextPath: SilentPush.Enrichment.asn_reputation
+      description: Reputation score of the ASN.
+      type: Number
+    - contextPath: SilentPush.Enrichment.asn
+      description: Autonomous System Number (ASN) of the IP or subnet.
+      type: Number
+    - contextPath: SilentPush.Enrichment.asname
+      description: Name of the ASN associated with the IP or subnet.
+      type: String
+    - contextPath: SilentPush.Enrichment.subnet
+      description: Subnet associated with the IP address.
+      type: String
+    - contextPath: SilentPush.Enrichment.ip_is_tor_exit_node
+      description: Indicates if the IP is a TOR exit node.
+      type: Boolean
+    - contextPath: SilentPush.Enrichment.asn_takedown_reputation_score
+      description: Reputation score for ASN takedown.
+      type: Number
+  - deprecated: false
+    description: This command retrieve status of running job or results from completed job.
+    name: silentpush-get-job-status
+    arguments:
+    - name: job_id
+      isArray: false
+      description: ID of the job returned by Silent Push actions.
+      required: true
+      secret: false
+      default: false
+    - name: max_wait
+      isArray: false
+      description: Number of seconds to wait for results (0-25 seconds).
+      required: false
+      secret: false
+      default: false
+    - name: result_type
+      isArray: false
+      description: Type of result to include in the response.
+      required: false
+      secret: false
+      default: false
+    outputs:
+    - contextPath: SilentPush.JobStatus.get
+      description: URL to retrieve the job status.
+      type: String
+    - contextPath: SilentPush.JobStatus.job_id
+      description: Unique identifier for the job.
+      type: String
+    - contextPath: SilentPush.JobStatus.status
+      description: Current status of the job.
+      type: String
+  - deprecated: false
+    description: This command retrieve historical reputation data for a specified nameserver, including reputation scores and optional detailed calculation information.
+    name: silentpush-get-nameserver-reputation
+    arguments:
+    - name: nameserver
+      isArray: false
+      description: Nameserver name for which information needs to be retrieved
+      required: true
+      secret: false
+      default: false
+    - name: explain
+      isArray: false
+      description: Show the information used to calculate the reputation score
+      required: false
+      secret: false
+      default: false
+    - name: limit
+      isArray: false
+      description: The maximum number of reputation history to retrieve
+      required: false
+      secret: false
+      default: false
+    outputs:
+    - contextPath: SilentPush.SubnetReputation.date
+      description: Date of the reputation history entry (in YYYYMMDD format).
+      type: Number
+    - contextPath: SilentPush.SubnetReputation.ns_server
+      description: Name of the nameserver associated with the reputation history entry.
+      type: String
+    - contextPath: SilentPush.SubnetReputation.ns_server_reputation
+      description: Reputation score of the nameserver on the specified date.
+      type: Number
+    - contextPath: SilentPush.SubnetReputation.ns_server_reputation_explain
+      description: Explanation of the reputation score, including domain density and listed domains.
+      type: Unknown
+    - contextPath: SilentPush.SubnetReputation.ns_server_domain_density
+      description: Number of domains associated with the nameserver.
+      type: Number
+    - contextPath: SilentPush.SubnetReputation.ns_server_domains_listed
+      description: Number of domains listed in reputation databases.
+      type: Number
+  - deprecated: false
+    description: This command retrieves the reputation history for a specific subnet.
+    name: silentpush-get-subnet-reputation
+    arguments:
+    - name: subnet
+      isArray: false
+      description: IPv4 subnet for which reputation information needs to be retrieved.
+      required: true
+      secret: false
+      default: false
+    - name: explain
+      isArray: false
+      description: Show the detailed information used to calculate the reputation score.
+      required: false
+      secret: false
+      default: false
+    - name: limit
+      isArray: false
+      description: Maximum number of reputation history entries to retrieve.
+      required: false
+      secret: false
+      default: false
+    outputs:
+    - contextPath: SilentPush.SubnetReputation.date
+      description: The date of the subnet reputation record.
+      type: Number
+    - contextPath: SilentPush.SubnetReputation.subnet
+      description: The subnet associated with the reputation record.
+      type: String
+    - contextPath: SilentPush.SubnetReputation.subnet_reputation
+      description: The reputation score of the subnet.
+      type: Number
+    - contextPath: SilentPush.SubnetReputation.ips_in_subnet
+      description: Total number of IPs in the subnet.
+      type: Number
+    - contextPath: SilentPush.SubnetReputation.ips_num_active
+      description: Number of active IPs in the subnet.
+      type: Number
+    - contextPath: SilentPush.SubnetReputation.ips_num_listed
+      description: Number of listed IPs in the subnet.
+      type: Number
+  - deprecated: false
+    description: This command get domain information along with Silent Push risk score and live whois information for multiple domains.
+    name: silentpush-list-domain-information
+    arguments:
+    - name: domains
+      isArray: false
+      description: Comma-separated list of domains to query.
+      required: true
+      secret: false
+      default: false
+    - name: fetch_risk_score
+      isArray: false
+      description: Whether to fetch risk scores for the domains.
+      required: false
+      secret: false
+      default: false
+    - name: fetch_whois_info
+      isArray: false
+      description: Whether to fetch WHOIS information for the domains.
+      required: false
+      secret: false
+      default: false
+    outputs:
+    - contextPath: SilentPush.Domain.domain
+      description: The domain name queried.
+      type: String
+    - contextPath: SilentPush.Domain.last_seen
+      description: The last seen date of the domain in YYYYMMDD format.
+      type: Number
+    - contextPath: SilentPush.Domain.query
+      description: The domain name used for the query.
+      type: String
+    - contextPath: SilentPush.Domain.whois_age
+      description: The age of the domain in days based on WHOIS creation date.
+      type: Number
+    - contextPath: SilentPush.Domain.first_seen
+      description: The first seen date of the domain in YYYYMMDD format.
+      type: Number
+    - contextPath: SilentPush.Domain.is_new
+      description: Indicates whether the domain is newly observed.
+      type: Boolean
+    - contextPath: SilentPush.Domain.zone
+      description: The top-level domain (TLD) or zone of the queried domain.
+      type: String
+    - contextPath: SilentPush.Domain.registrar
+      description: The registrar responsible for the domain registration.
+      type: String
+    - contextPath: SilentPush.Domain.age_score
+      description: A risk score based on the domain's age.
+      type: Number
+    - contextPath: SilentPush.Domain.whois_created_date
+      description: The WHOIS creation date of the domain in YYYY-MM-DD HH:MM:SS format.
+      type: String
+    - contextPath: SilentPush.Domain.is_new_score
+      description: A risk score indicating how new the domain is.
+      type: Number
+    - contextPath: SilentPush.Domain.age
+      description: The age of the domain in days.
+      type: Number
+  - deprecated: false
+    description: This command get infratags for multiple domains with optional clustering.
+    name: silentpush-list-domain-infratags
+    arguments:
+    - name: domains
+      isArray: false
+      description: Comma-separated list of domains.
+      required: true
+      secret: false
+      default: false
+    - name: cluster
+      isArray: false
+      description: Whether to cluster the results.
+      required: false
+      secret: false
+      default: false
+    - name: mode
+      isArray: false
+      description: Mode for lookup (live/padns). Defaults to "live".
+      required: false
+      secret: false
+      default: false
+      defaultValue: live
+    - name: match
+      isArray: false
+      description: Handling of self-hosted infrastructure. Defaults to "self".
+      required: false
+      secret: false
+      default: false
+      defaultValue: self
+    outputs:
+    - contextPath: SilentPush.InfraTags.infratags.domain
+      description: The domain associated with the infratag.
+      type: String
+    - contextPath: SilentPush.InfraTags.infratags.mode
+      description: The mode associated with the domain infratag.
+      type: String
+    - contextPath: SilentPush.InfraTags.infratags.tag
+      description: The tag associated with the domain infratag.
+      type: String
+    - contextPath: SilentPush.InfraTags.tag_clusters.25.domains
+      description: List of domains in the tag cluster with score 25.
+      type: Unknown
+    - contextPath: SilentPush.InfraTags.tag_clusters.25.match
+      description: The match string associated with the domains in the tag cluster with score 25.
+      type: String
+    - contextPath: SilentPush.InfraTags.tag_clusters.50.domains
+      description: List of domains in the tag cluster with score 50.
+      type: Unknown
+    - contextPath: SilentPush.InfraTags.tag_clusters.50.match
+      description: The match string associated with the domains in the tag cluster with score 50.
+      type: String
+    - contextPath: SilentPush.InfraTags.tag_clusters.75.domains
+      description: List of domains in the tag cluster with score 75.
+      type: Unknown
+    - contextPath: SilentPush.InfraTags.tag_clusters.75.match
+      description: The match string associated with the domains in the tag cluster with score 75.
+      type: String
+    - contextPath: SilentPush.InfraTags.tag_clusters.100.domains
+      description: List of domains in the tag cluster with score 100.
+      type: Unknown
+    - contextPath: SilentPush.InfraTags.tag_clusters.100.match
+      description: The match string associated with the domains in the tag cluster with score 100.
+      type: String
+  - deprecated: false
+    description: This command get IP information for multiple IPv4s and IPv6s.
+    name: silentpush-list-ip-information
+    arguments:
+    - name: ips
+      isArray: false
+      description: Comma-separated list of IP addresses.
+      required: true
+      secret: false
+      default: false
+    - name: explain
+      isArray: false
+      description: Include explanation of calculations.
+      required: false
+      secret: false
+      default: false
+    - name: scan_data
+      isArray: false
+      description: Include scan data (IPv4 only).
+      required: false
+      secret: false
+      default: false
+    - name: sparse
+      isArray: false
+      description: Specific data to return (asn/asname/sp_risk_score).
+      required: false
+      secret: false
+      default: false
+    outputs:
+    - contextPath: SilentPush.IPInformation.ip_is_dsl_dynamic
+      description: Indicates if the IP is a DSL dynamic IP.
+      type: Boolean
+    - contextPath: SilentPush.IPInformation.ip_has_expired_certificate
+      description: Indicates if the IP has an expired certificate.
+      type: Boolean
+    - contextPath: SilentPush.IPInformation.subnet_allocation_age
+      description: Age of the subnet allocation.
+      type: String
+    - contextPath: SilentPush.IPInformation.asn_rank_score
+      description: Rank score of the ASN.
+      type: Number
+    - contextPath: SilentPush.IPInformation.asn_allocation_age
+      description: Age of the ASN allocation in days.
+      type: Number
+    - contextPath: SilentPush.IPInformation.sp_risk_score
+      description: Risk score of the service provider (SP).
+      type: Number
+    - contextPath: SilentPush.IPInformation.asn_takedown_reputation_explain.ips_active
+      description: Number of active IPs in the ASN takedown reputation.
+      type: Number
+    - contextPath: SilentPush.IPInformation.asn_takedown_reputation_explain.ips_in_asn
+      description: Total number of IPs in the ASN.
+      type: Number
+    - contextPath: SilentPush.IPInformation.asn_takedown_reputation_explain.ips_num_listed
+      description: Number of IPs listed in the ASN takedown reputation.
+      type: Number
+    - contextPath: SilentPush.IPInformation.asn_takedown_reputation_explain.items_num_listed
+      description: Number of items listed in the ASN takedown reputation.
+      type: Number
+    - contextPath: SilentPush.IPInformation.asn_takedown_reputation_explain.lifetime_avg
+      description: Average lifetime of items in the ASN takedown reputation.
+      type: Number
+    - contextPath: SilentPush.IPInformation.asn_takedown_reputation_explain.lifetime_max
+      description: Maximum lifetime of items in the ASN takedown reputation.
+      type: Number
+    - contextPath: SilentPush.IPInformation.asn_takedown_reputation_explain.lifetime_total
+      description: Total lifetime of items in the ASN takedown reputation.
+      type: Number
+    - contextPath: SilentPush.IPInformation.ip_reputation_score
+      description: Reputation score of the IP.
+      type: Number
+    - contextPath: SilentPush.IPInformation.listing_score_feeds_explain
+      description: Explanation of the listing score feeds.
+      type: String
+    - contextPath: SilentPush.IPInformation.ip
+      description: The IP address being evaluated.
+      type: String
+    - contextPath: SilentPush.IPInformation.density
+      description: Density score of the IP.
+      type: Number
+    - contextPath: SilentPush.IPInformation.benign_info.actor
+      description: Actor associated with the benign info.
+      type: String
+    - contextPath: SilentPush.IPInformation.benign_info.known_benign
+      description: Indicates if the IP is known benign.
+      type: Boolean
+    - contextPath: SilentPush.IPInformation.benign_info.tags
+      description: Tags associated with the benign info.
+      type: String
+    - contextPath: SilentPush.IPInformation.ip_reputation_explain
+      description: Explanation of the IP reputation.
+      type: String
+    - contextPath: SilentPush.IPInformation.asn_allocation_date
+      description: The ASN allocation date.
+      type: Number
+    - contextPath: SilentPush.IPInformation.subnet_allocation_date
+      description: The subnet allocation date.
+      type: String
+    - contextPath: SilentPush.IPInformation.asn_takedown_reputation
+      description: Reputation score of ASN takedown.
+      type: Number
+    - contextPath: SilentPush.IPInformation.ip_location.continent_code
+      description: Continent code of the IP location.
+      type: String
+    - contextPath: SilentPush.IPInformation.ip_location.continent_name
+      description: Continent name of the IP location.
+      type: String
+    - contextPath: SilentPush.IPInformation.ip_location.country_code
+      description: Country code of the IP location.
+      type: String
+    - contextPath: SilentPush.IPInformation.ip_location.country_is_in_european_union
+      description: Indicates if the country is in the European Union.
+      type: Boolean
+    - contextPath: SilentPush.IPInformation.ip_location.country_name
+      description: Country name of the IP location.
+      type: String
+    - contextPath: SilentPush.IPInformation.date
+      description: Date associated with the IP data.
+      type: Number
+    - contextPath: SilentPush.IPInformation.subnet_reputation_score
+      description: Reputation score of the subnet.
+      type: Number
+    - contextPath: SilentPush.IPInformation.asn_rank
+      description: Rank of the ASN.
+      type: Number
+    - contextPath: SilentPush.IPInformation.listing_score_explain
+      description: Explanation of the listing score.
+      type: String
+    - contextPath: SilentPush.IPInformation.asn_reputation_score
+      description: Reputation score of the ASN.
+      type: Number
+    - contextPath: SilentPush.IPInformation.ip_is_ipfs_node
+      description: Indicates if the IP is an IPFS node.
+      type: Boolean
+    - contextPath: SilentPush.IPInformation.ip_reputation
+      description: Reputation score of the IP.
+      type: Number
+    - contextPath: SilentPush.IPInformation.subnet_reputation_explain
+      description: Explanation of the subnet reputation.
+      type: String
+    - contextPath: SilentPush.IPInformation.ip_is_dsl_dynamic_score
+      description: Score indicating if the IP is a DSL dynamic IP.
+      type: Number
+    - contextPath: SilentPush.IPInformation.asn_reputation_explain
+      description: Explanation of the ASN reputation.
+      type: String
+    - contextPath: SilentPush.IPInformation.ip_has_open_directory
+      description: Indicates if the IP has an open directory.
+      type: Boolean
+    - contextPath: SilentPush.IPInformation.ip_ptr
+      description: Pointer (PTR) record for the IP.
+      type: String
+    - contextPath: SilentPush.IPInformation.listing_score
+      description: Listing score of the IP.
+      type: Number
+    - contextPath: SilentPush.IPInformation.malscore
+      description: Malware score associated with the IP.
+      type: Number
+    - contextPath: SilentPush.IPInformation.sinkhole_info.known_sinkhole_ip
+      description: Indicates if the IP is a known sinkhole IP.
+      type: Boolean
+    - contextPath: SilentPush.IPInformation.sinkhole_info.tags
+      description: Tags associated with the sinkhole information.
+      type: String
+    - contextPath: SilentPush.IPInformation.subnet_reputation
+      description: Reputation score of the subnet.
+      type: Number
+    - contextPath: SilentPush.IPInformation.asn_reputation
+      description: Reputation score of the ASN.
+      type: Number
+    - contextPath: SilentPush.IPInformation.asn
+      description: Autonomous System Number (ASN) of the IP.
+      type: Number
+    - contextPath: SilentPush.IPInformation.sp_risk_score_explain.sp_risk_score_decider
+      description: Decider for the service provider risk score.
+      type: String
+    - contextPath: SilentPush.IPInformation.asname
+      description: Name of the ASN.
+      type: String
+    - contextPath: SilentPush.IPInformation.subnet
+      description: The subnet the IP belongs to.
+      type: String
+    - contextPath: SilentPush.IPInformation.ip_is_tor_exit_node
+      description: Indicates if the IP is a TOR exit node.
+      type: Boolean
+    - contextPath: SilentPush.IPInformation.asn_takedown_reputation_score
+      description: Reputation score of ASN takedown.
+      type: Number
+  - deprecated: false
+    description: This command search for domains with optional filters.
+    name: silentpush-search-domains
+    arguments:
+    - name: domain
+      isArray: false
+      description: Name or wildcard pattern of domain names to search for.
+      required: false
+      secret: false
+      default: false
+    - name: domain_regex
+      isArray: false
+      description: A valid RE2 regex pattern to match domains. Overrides the domain argument.
+      required: false
+      secret: false
+      default: false
+    - name: name_server
+      isArray: false
+      description: Name server name or wildcard pattern of the name server used by domains.
+      required: false
+      secret: false
+      default: false
+    - name: asnum
+      isArray: false
+      description: Autonomous System (AS) number to filter domains.
+      required: false
+      secret: false
+      default: false
+    - name: asname
+      isArray: false
+      description: Search for all AS numbers where the AS Name begins with the specified value.
+      required: false
+      secret: false
+      default: false
+    - name: min_ip_diversity
+      isArray: false
+      description: Minimum IP diversity limit to filter domains.
+      required: false
+      secret: false
+      default: false
+    - name: registrar
+      isArray: false
+      description: Name or partial name of the registrar used to register domains.
+      required: false
+      secret: false
+      default: false
+    - name: min_asn_diversity
+      isArray: false
+      description: Minimum ASN diversity limit to filter domains.
+      required: false
+      secret: false
+      default: false
+    - name: certificate_issuer
+      isArray: false
+      description: Filter domains that had SSL certificates issued by the specified certificate issuer. Wildcards supported.
+      required: false
+      secret: false
+      default: false
+    - name: whois_date_after
+      isArray: false
+      description: Filter domains with a WHOIS creation date after this date (YYYY-MM-DD).
+      required: false
+      secret: false
+      default: false
+    - name: skip
+      isArray: false
+      description: Number of results to skip in the search query.
+      required: false
+      secret: false
+      default: false
+    - name: limit
+      isArray: false
+      description: Number of results to return. Defaults to the SilentPush API's behavior.
+      required: false
+      secret: false
+      default: false
+    outputs:
+    - contextPath: SilentPush.Domain.asn_diversity
+      description: The diversity of Autonomous System Numbers (ASNs) associated with the domain.
+      type: Number
+    - contextPath: SilentPush.Domain.host
+      description: The domain name (host) associated with the record.
+      type: String
+    - contextPath: SilentPush.Domain.ip_diversity_all
+      description: The total number of unique IPs associated with the domain.
+      type: Number
+    - contextPath: SilentPush.Domain.ip_diversity_groups
+      description: The number of unique IP groups associated with the domain.
+      type: Number
+  script: '-'
   type: python
-  subType: python3
-  description: |
-    This integration allows fetching domain information from the SilentPush API. It includes commands to get domain-related information such as WHOIS data, domain age, and risk scores.
-  tags: []
-  enabled: true
-  manufacturer: SilentPush
-  comment: ''
-  minVersion: -1
-  dependencies:
-    - CommonServerPython
-    - CommonServerUserPython
-
-scripts:
-  - path: SilentPush.py
-    comment: |
-      Integration for SilentPush that enables fetching domain information, including WHOIS data, domain age, and risk scores.
-
-commands:
-  - name: test-module
-    description: |
-      Tests the connectivity to the SilentPush API and checks the authentication status.
-    isArray: false
-    argContext:
-      - id: base_url
-        type: string
-        description: The base URL for the SilentPush API.
-      - id: api_key
-        type: string
-        description: The API key used to authenticate requests.
-      - id: verify_ssl
-        type: boolean
-        description: Flag to determine whether SSL verification is enabled.
-    examples: |
-      !test-module
-
-  - name: silentpush-list-domain-information
-    description: |
-      Fetches domain information, such as WHOIS data, domain age, and risk scores.
-    isArray: false
-    argContext:
-      - id: domain
-        type: string
-        description: The domain name to fetch information for.
-    examples: |
-      !silentpush-list-domain-information domain=example.com
-
-args:
-  - id: domain
-    isArray: false
-    description: |
-      The domain to fetch information for.
-    type: string
-
-outputs:
-  - id: SilentPush.Domain
-    type: complex
-    description: |
-      The domain information fetched from SilentPush API, including WHOIS data, domain age, and risk scores.
-    contents:
-      - name: domain
-        type: string
-      - name: whois_data
-        type: string
-      - name: domain_age
-        type: integer
-      - name: risk_score
-        type: float
-
+  subtype: python3
+  dockerimage: demisto/python3:3.11.10.116949
+  feed: false
+  isfetch: false
+  runonce: false
+  longRunning: false
+  longRunningPort: false
+fromversion: 5.0.0
 tests:
-  - name: Test SilentPush Integration
-    description: Test the integration with the SilentPush API.
-    steps:
-      - script: test-module
-        name: Test SilentPush API Connectivity
-        args:
-          base_url: https://api.silentpush.com
-          api_key: 'your_api_key'
-
-# Optional: Adding the configuration section for any configuration-related parameters
-configurations:
-  - default: true
-    isArray: false
-    description: The configuration parameters required for connecting to SilentPush API.
-    context:
-      - id: base_url
-        type: string
-        description: The base URL for the SilentPush API.
-      - id: api_key
-        type: string
-        description: The API key used to authenticate requests.
-      - id: verify_ssl
-        type: boolean
-        description: Flag to determine whether SSL verification is enabled.
-      - id: proxy
-        type: boolean
-        description: Flag to determine whether to use a proxy.
-
-errorHandling:
-  - errorCode: 403
-    description: |
-      If an authorization error is encountered, it could indicate an incorrect or expired API key.
-  - errorCode: 400
-    description: |
-      Bad Request error, likely due to incorrect input format or invalid parameters in the request.
+- No tests
