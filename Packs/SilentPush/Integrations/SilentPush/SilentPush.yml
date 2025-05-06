@@ -16,6 +16,8 @@ configuration:
   defaultvalue: https://api.silentpush.com
   section: Connect
 - display: API Key
+  displaypassword: API Key
+  hiddenusername: true
   name: credentials
   type: 9
   required: true
