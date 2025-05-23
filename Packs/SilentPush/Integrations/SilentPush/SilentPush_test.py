@@ -97,39 +97,63 @@ def test_get_nameserver_reputation_command_success(mock_client, mocker):
     args = {"nameserver": "example.com", "explain": "true", "limit": "10"}
 
     # Mock response from client
-    mock_response = [{"ns_server": "example.com", "reputation": "good", "details": "No issues found"}]
-    mock_client.get_nameserver_reputation.return_value = mock_response
+    mock_response = {
+        "response": {
+            "ns_server_reputation_history": [
+                {
+                    "ns_server": "example.com",
+                    "reputation": "good",
+                    "details": "No issues found",
+                    "date": 20240101
+                }
+            ]
+        }
+    }
+    mock_client.get_nameserver_reputation.return_value = mock_response["response"]["ns_server_reputation_history"]
 
     # Mock tableToMarkdown
-    mocker.patch("SilentPush.tableToMarkdown", return_value="Mocked Markdown Table")
+    mocker.patch("CommonServerPython.tableToMarkdown", return_value="Mocked Markdown Table")
 
     # Call the function
     result = get_nameserver_reputation_command(mock_client, args)
+
+    # Verify client call
+    mock_client.get_nameserver_reputation.assert_called_once_with(
+        "example.com",
+        explain=True,
+        limit=10
+    )
 
     # Assertions
     assert isinstance(result, CommandResults)
     assert result.outputs_prefix == "SilentPush.NameserverReputation"
     assert result.outputs_key_field == "ns_server"
     assert result.outputs["nameserver"] == "example.com"
-    assert result.outputs["reputation_data"] == mock_response
+    assert result.outputs["reputation_data"][0]["date"] == "2024-01-01"
     assert result.readable_output == "Mocked Markdown Table"
-
 
 def test_get_nameserver_reputation_command_no_nameserver(mock_client):
     # Mock arguments without nameserver
-    args = {}
+    args = {"explain": "true"}
 
     # Call the function and expect ValueError
     with pytest.raises(ValueError, match="Nameserver is required."):
         get_nameserver_reputation_command(mock_client, args)
 
+def test_get_nameserver_reputation_command_invalid_json(mock_client):
+    args = {"nameserver": "example.com"}
+    mock_client.get_nameserver_reputation.return_value = "invalid json"
 
-def test_get_nameserver_reputation_command_no_data(mock_client, mocker):
+    with pytest.raises(ValueError, match="Unable to parse JSON from response"):
+        get_nameserver_reputation_command(mock_client, args)
+
+def test_get_nameserver_reputation_command_no_data(mock_client):
     # Mock arguments
-    args = {"nameserver": "example.com", "explain": "false", "limit": "5"}
+    args = {"nameserver": "example.com"}
 
-    # Mock response from client
-    mock_client.get_nameserver_reputation.return_value = []
+    # Mock empty response
+    mock_response = {"response": {"ns_server_reputation_history": []}}
+    mock_client.get_nameserver_reputation.return_value = mock_response["response"]["ns_server_reputation_history"]
 
     # Call the function
     result = get_nameserver_reputation_command(mock_client, args)
@@ -140,7 +164,24 @@ def test_get_nameserver_reputation_command_no_data(mock_client, mocker):
     assert result.outputs_key_field == "ns_server"
     assert result.outputs["nameserver"] == "example.com"
     assert result.outputs["reputation_data"] == []
-    assert result.readable_output == "No reputation history found for nameserver: example.com"
+    assert result.readable_output == "No valid reputation history found for nameserver: example.com"
+
+def test_get_nameserver_reputation_command_date_formatting(mock_client, mocker):
+    args = {"nameserver": "example.com"}
+    mock_response = {
+        "response": {
+            "ns_server_reputation_history": [
+                {"ns_server": "example.com", "date": 20240215},
+                {"ns_server": "example.com", "date": "not_a_date"}
+            ]
+        }
+    }
+    mock_client.get_nameserver_reputation.return_value = mock_response["response"]["ns_server_reputation_history"]
+    mocker.patch("CommonServerPython.tableToMarkdown", return_value="Mocked Table")
+
+    result = get_nameserver_reputation_command(mock_client, args)
+    assert result.outputs["reputation_data"][0]["date"] == "2024-02-15"
+    assert result.outputs["reputation_data"][1]["date"] == "not_a_date"
 
 
 def test_get_subnet_reputation_command_success(mock_client, mocker):
@@ -266,61 +307,99 @@ def test_list_domain_infratags_command_success(mock_client, mocker):
         "mode": "live",
         "match": "self",
         "as_of": "2023-01-01",
-        "origin_uid": "12345",
-        "use_get": "false",
+        "origin_uid": "12345"
     }
 
     # Mock response from client
     mock_response = {
         "response": {
-            "infratags": [{"domain": "example.com", "tag": "tag1"}, {"domain": "example.org", "tag": "tag2"}],
-            "tag_clusters": [{"cluster_name": "Cluster1", "tags": ["tag1", "tag2"]}],
+            "mode": "live",
+            "infratags": [
+                {"domain": "example.com", "tags": ["tag1", "tag2"]},
+                {"domain": "example.org", "tags": ["tag3", "tag4"]}
+            ],
+            "tag_clusters": [
+                {"cluster_name": "Cluster1", "tags": ["tag1", "tag2"]},
+                {"cluster_name": "Cluster2", "tags": ["tag3", "tag4"]}
+            ]
         }
     }
     mock_client.list_domain_infratags.return_value = mock_response
 
-    # Mock tableToMarkdown and format_tag_clusters
-    mocker.patch("SilentPush.tableToMarkdown", return_value="Mocked Markdown Table")
-    mocker.patch("SilentPush.format_tag_clusters", return_value="\nMocked Cluster Details")
+    # Mock tableToMarkdown
+    mocker.patch("CommonServerPython.tableToMarkdown", return_value="Mocked Table")
 
     # Call the function
     result = list_domain_infratags_command(mock_client, args)
+
+    # Verify client call
+    mock_client.list_domain_infratags.assert_called_once_with(
+        domains=["example.com", "example.org"],
+        cluster=True,
+        mode="live",
+        match="self",
+        as_of="2023-01-01",
+        origin_uid="12345"
+    )
 
     # Assertions
     assert isinstance(result, CommandResults)
     assert result.outputs_prefix == "SilentPush.InfraTags"
     assert result.outputs_key_field == "domain"
     assert result.outputs == mock_response
-    assert "Mocked Markdown Table" in result.readable_output
-    assert "Mocked Cluster Details" in result.readable_output
+    assert "Mocked Table" in result.readable_output
 
+def test_list_domain_infratags_command_non_live_mode(mock_client):
+    # Test with non-live mode in response
+    args = {"domains": "example.com", "mode": "historical"}
+    mock_response = {"response": {"mode": "historical"}}
+    mock_client.list_domain_infratags.return_value = mock_response
 
-def test_list_domain_infratags_command_no_domains(mock_client):
-    # Mock arguments without domains
-    args = {"use_get": "false"}
+    with pytest.raises(ValueError, match="Expected live mode but got historical"):
+        list_domain_infratags_command(mock_client, args)
 
-    # Call the function and expect ValueError
+def test_list_domain_infratags_command_empty_domains(mock_client):
+    # Test with empty domains and use_get=False
+    args = {"domains": "", "use_get": "false"}
+    
     with pytest.raises(ValueError, match='"domains" argument is required when using POST.'):
         list_domain_infratags_command(mock_client, args)
 
+def test_list_domain_infratags_command_use_get(mock_client, mocker):
+    # Test with use_get=True and no domains
+    args = {"use_get": "true"}
+    mock_response = {
+        "response": {
+            "mode": "live",
+            "infratags": []
+        }
+    }
+    mock_client.list_domain_infratags.return_value = mock_response
+    mocker.patch("CommonServerPython.tableToMarkdown", return_value="Empty Table")
 
-def test_list_domain_infratags_command_no_data(mock_client, mocker):
-    # Mock arguments
-    args = {"domains": "example.com", "cluster": "false", "use_get": "true"}
+    result = list_domain_infratags_command(mock_client, args)
+    assert isinstance(result, CommandResults)
+    assert result.outputs == mock_response
 
-    # Mock response from client
-    mock_response = {"response": {"infratags": [], "tag_clusters": []}}
+def test_list_domain_infratags_command_empty_response(mock_client, mocker):
+    # Test with empty response
+    args = {"domains": "example.com"}
+    mock_response = {"response": {"mode": "live", "infratags": []}}
     mock_client.list_domain_infratags.return_value = mock_response
 
-    # Call the function
     result = list_domain_infratags_command(mock_client, args)
-
-    # Assertions
     assert isinstance(result, CommandResults)
-    assert result.outputs_prefix == "SilentPush.InfraTags"
-    assert result.outputs_key_field == "domain"
-    assert result.outputs == mock_response
-    assert result.readable_output.strip() == "### Domain Infratags\n**No entries.**"
+    assert not result.outputs.get("response", {}).get("infratags")
+
+def test_list_domain_infratags_command_invalid_response(mock_client):
+    # Test with invalid response structure
+    args = {"domains": "example.com"}
+    mock_response = {"invalid": "response"}
+    mock_client.list_domain_infratags.return_value = mock_response
+
+    result = list_domain_infratags_command(mock_client, args)
+    assert isinstance(result, CommandResults)
+    assert not result.outputs.get("response", {}).get("infratags")
 
 
 def test_list_domain_information_command_success(mock_client, mocker):
@@ -509,57 +588,82 @@ def test_list_ip_information_command_no_data(mock_client, mocker):
     assert result.readable_output == "No information found for IPs: 192.168.1.1"
 
 
-def test_get_ipv4_reputation_command_success_second(mock_client, mocker):
+def test_get_ipv4_reputation_command_success(mock_client, mocker):
     # Mock arguments
-    args = {"ipv4": "192.168.1.1", "explain": "true", "limit": "1"}
+    args = {"ipv4": "192.168.1.1", "explain": "true", "limit": "10"}
 
     # Mock validate_ip
-    mocker.patch("SilentPush.validate_ip", return_value=True)
+    mocker.patch("CommonServerPython.validate_ip", return_value=True)
 
-    # Mock response from client
+    # Mock response from client with list history
     mock_response = {
         "response": {
-            "ip_reputation_history": {
-                "ip": "192.168.1.1",
-                "date": "2023-01-01",
-                "ip_reputation": 85,
-                "ip_reputation_explain": {"ip_density": 0.5, "names_num_listed": 10},
-            }
+            "ip_reputation_history": [
+                {
+                    "ipv4": "192.168.1.1",
+                    "date": "2024-01-01",
+                    "ip_reputation": 85
+                }
+            ]
         }
     }
     mock_client.get_ipv4_reputation.return_value = mock_response
 
     # Mock tableToMarkdown
-    mocker.patch("SilentPush.tableToMarkdown", return_value="Mocked Markdown Table")
+    mocker.patch("CommonServerPython.tableToMarkdown", return_value="Mocked Markdown Table")
 
     # Call the function
     result = get_ipv4_reputation_command(mock_client, args)
+
+    # Verify client call
+    mock_client.get_ipv4_reputation.assert_called_once_with("192.168.1.1", 1, 10)
 
     # Assertions
     assert isinstance(result, CommandResults)
     assert result.outputs_prefix == "SilentPush.IPv4Reputation"
     assert result.outputs_key_field == "ip"
     assert result.outputs["ip"] == "192.168.1.1"
-    assert result.outputs["reputation_score"] == 85
-    assert result.outputs["ip_reputation_explain"] == {"ip_density": 0.5, "names_num_listed": 10}
+    assert result.outputs["reputation_history"][0]["ip"] == "192.168.1.1"
     assert result.readable_output == "Mocked Markdown Table"
 
+def test_get_ipv4_reputation_command_error_retry(mock_client, mocker):
+    args = {"ipv4": "192.168.1.1", "explain": "true"}
+    
+    # Mock first response with error
+    error_response = {
+        "response": {
+            "ip_reputation_history": {
+                "error": "Invalid explain parameter"
+            }
+        }
+    }
+    # Mock second response after retry
+    success_response = {
+        "response": {
+            "ip_reputation_history": [
+                {"ipv4": "192.168.1.1", "ip_reputation": 85}
+            ]
+        }
+    }
+    
+    mock_client.get_ipv4_reputation.side_effect = [error_response, success_response]
+    mocker.patch("CommonServerPython.validate_ip", return_value=True)
+    mocker.patch("CommonServerPython.tableToMarkdown", return_value="Mocked Table")
 
-def test_get_ipv4_reputation_command_no_data_second(mock_client, mocker):
-    # Mock arguments
-    args = {"ipv4": "192.168.1.1", "explain": "false", "limit": "1"}
+    result = get_ipv4_reputation_command(mock_client, args)
+    assert result.outputs["ip"] == "192.168.1.1"
+    assert len(mock_client.get_ipv4_reputation.call_args_list) == 2
 
-    # Mock validate_ip
-    mocker.patch("SilentPush.validate_ip", return_value=True)
-
-    # Mock response from client
-    mock_response = {}
+def test_get_ipv4_reputation_command_no_data(mock_client, mocker):
+    args = {"ipv4": "192.168.1.1", "explain": "false"}
+    mocker.patch("CommonServerPython.validate_ip", return_value=True)
+    
+    # Mock empty response
+    mock_response = {"response": {}}
     mock_client.get_ipv4_reputation.return_value = mock_response
 
-    # Call the function
     result = get_ipv4_reputation_command(mock_client, args)
-
-    # Assertions
+    
     assert isinstance(result, CommandResults)
     assert result.outputs_prefix == "SilentPush.IPv4Reputation"
     assert result.outputs_key_field == "ip"
@@ -636,25 +740,40 @@ def test_get_asn_reputation_command_success(mock_client, mocker):
     args = {"asn": "12345", "limit": "10", "explain": "true"}
 
     # Mock response from client
-    mock_response = [{"asn": "12345", "reputation_score": 85, "details": "ASN is associated with suspicious activity"}]
+    mock_response = {
+        "asn_reputation_history": [
+            {
+                "asn": 12345,
+                "reputation_score": 85,
+                "timestamp": "2024-01-22T10:00:00Z",
+                "explanation": {
+                    "malicious_activity": 0.7,
+                    "spam_activity": 0.3
+                }
+            }
+        ]
+    }
     mock_client.get_asn_reputation.return_value = mock_response
 
     # Mock helper functions
-    mocker.patch("SilentPush.extract_and_sort_asn_reputation", return_value=mock_response)
-    mocker.patch("SilentPush.prepare_asn_reputation_table", return_value=mock_response)
-    mocker.patch("SilentPush.get_table_headers", return_value=["asn", "reputation_score", "details"])
-    mocker.patch("SilentPush.tableToMarkdown", return_value="Mocked Markdown Table")
+    mocker.patch("CommonServerPython.tableToMarkdown", return_value="Mocked Markdown Table")
 
     # Call the function
     result = get_asn_reputation_command(mock_client, args)
+
+    # Verify client call
+    mock_client.get_asn_reputation.assert_called_once_with(
+        12345,
+        limit=10,
+        explain=True
+    )
 
     # Assertions
     assert isinstance(result, CommandResults)
     assert result.outputs_prefix == "SilentPush.ASNReputation"
     assert result.outputs_key_field == "asn"
-    assert result.outputs == mock_response
+    assert result.outputs == mock_response["asn_reputation_history"]
     assert result.readable_output == "Mocked Markdown Table"
-
 
 def test_get_asn_reputation_command_no_asn(mock_client):
     # Mock arguments without asn
@@ -664,32 +783,36 @@ def test_get_asn_reputation_command_no_asn(mock_client):
     with pytest.raises(ValueError, match="ASN is required."):
         get_asn_reputation_command(mock_client, args)
 
+def test_get_asn_reputation_command_invalid_asn(mock_client):
+    # Mock arguments with invalid ASN
+    args = {"asn": "invalid"}
+
+    # Call the function and expect ValueError
+    with pytest.raises(ValueError, match="Invalid ASN number"):
+        get_asn_reputation_command(mock_client, args)
 
 def test_get_asn_reputation_command_no_data(mock_client, mocker):
     # Mock arguments
-    args = {"asn": "12345", "limit": "10", "explain": "false"}
+    args = {"asn": "12345"}
 
-    # Mock response from client
-    mock_response = []
+    # Mock empty response
+    mock_response = {"asn_reputation_history": []}
     mock_client.get_asn_reputation.return_value = mock_response
 
-    # Mock helper functions
-    mocker.patch("SilentPush.extract_and_sort_asn_reputation", return_value=[])
-    mocker.patch(
-        "SilentPush.generate_no_reputation_response",
-        return_value=CommandResults(
-            readable_output="No reputation data found for ASN 12345", outputs_prefix="SilentPush.ASNReputation", outputs=None
-        ),
-    )
-
-    # Call the function
     result = get_asn_reputation_command(mock_client, args)
-
-    # Assertions
+    
     assert isinstance(result, CommandResults)
     assert result.outputs_prefix == "SilentPush.ASNReputation"
-    assert result.outputs is None
-    assert result.readable_output == "No reputation data found for ASN 12345"
+    assert result.outputs == []
+    assert "No reputation data found for ASN 12345" in result.readable_output
+
+def test_get_asn_reputation_command_with_limit(mock_client):
+    # Test with limit parameter
+    args = {"asn": "12345", "limit": "5"}
+    mock_client.get_asn_reputation.return_value = {"asn_reputation_history": []}
+    
+    get_asn_reputation_command(mock_client, args)
+    mock_client.get_asn_reputation.assert_called_once_with(12345, limit=5, explain=False)
 
 
 def test_get_enrichment_data_command_success(mock_client, mocker):
@@ -834,17 +957,18 @@ def test_screenshot_url_command_success(mock_client, mocker):
     args = {"url": "https://example.com"}
 
     # Mock response from client
-    mock_response = {"screenshot_url": "https://example.com/screenshot.jpg", "status_code": 200}
+    mock_response = {"screenshot_url": "https://storage.com/path/screenshot.jpg", "status_code": 200}
     mock_client.screenshot_url.return_value = mock_response
 
-    # Mock requests.get
-    mock_image_response = mocker.Mock(spec=Response)
+    # Mock generic_http_request response
+    mock_image_response = mocker.Mock()
     mock_image_response.status_code = 200
     mock_image_response.content = b"image content"
-    mocker.patch("requests.Session.request", return_value=mock_image_response)
+    mocker.patch("CommonServerPython.generic_http_request", return_value=mock_image_response)
 
-    # Mock fileResult
-    mocker.patch("SilentPush.fileResult", return_value={"Type": 3, "FileID": "123", "File": "example_screenshot.jpg"})
+    # Mock return_results and fileResult
+    mock_file_result = mocker.patch("CommonServerPython.fileResult", return_value={"Type": 3, "FileID": "123"})
+    mock_return_results = mocker.patch("CommonServerPython.return_results")
 
     # Call the function
     result = screenshot_url_command(mock_client, args)
@@ -855,49 +979,53 @@ def test_screenshot_url_command_success(mock_client, mocker):
     assert result.outputs_key_field == "url"
     assert result.outputs["url"] == "https://example.com"
     assert result.outputs["status"] == "success"
-    assert result.outputs["screenshot_url"] == "https://example.com/screenshot.jpg"
-    assert "Screenshot captured for https://example.com" in result.readable_output
-
+    assert result.outputs["screenshot_url"] == mock_response["screenshot_url"]
+    assert result.outputs["file_name"] == "example.com_screenshot.jpg"
+    
+    # Verify file handling
+    mock_file_result.assert_called_once_with(
+        "example.com_screenshot.jpg",
+        mock_image_response.content
+    )
+    mock_return_results.assert_called_once()
 
 def test_screenshot_url_command_no_url(mock_client):
-    # Mock arguments without URL
-    args = {}
-
-    # Call the function and expect ValueError
+    # Test with empty args
     with pytest.raises(ValueError, match="URL is required"):
-        screenshot_url_command(mock_client, args)
+        screenshot_url_command(mock_client, {})
 
+def test_screenshot_url_command_missing_screenshot_url(mock_client):
+    args = {"url": "https://example.com"}
+    mock_client.screenshot_url.return_value = {"status": "success"}
+    
+    with pytest.raises(ValueError, match="screenshot_url is missing from API response"):
+        screenshot_url_command(mock_client, args)
 
 def test_screenshot_url_command_error_from_api(mock_client):
-    # Mock arguments
     args = {"url": "https://example.com"}
-
-    # Mock response from client with error
-    mock_response = {"error": "Invalid URL"}
-    mock_client.screenshot_url.return_value = mock_response
-
-    # Call the function and expect Exception
-    with pytest.raises(Exception, match="Invalid URL"):
+    mock_client.screenshot_url.return_value = {"error": "API Error"}
+    
+    with pytest.raises(Exception, match="API Error"):
         screenshot_url_command(mock_client, args)
 
+def test_screenshot_url_command_invalid_screenshot_url(mock_client):
+    args = {"url": "https://example.com"}
+    mock_client.screenshot_url.return_value = {"screenshot_url": "invalid_url"}
+    
+    with pytest.raises(ValueError, match="Invalid screenshot URL format"):
+        screenshot_url_command(mock_client, args)
 
 def test_screenshot_url_command_failed_image_download(mock_client, mocker):
-    # Mock arguments
     args = {"url": "https://example.com"}
-
-    # Mock response from client
-    mock_response = {"screenshot_url": "https://example.com/screenshot.jpg", "status_code": 200}
+    mock_response = {"screenshot_url": "https://storage.com/path/screenshot.jpg"}
     mock_client.screenshot_url.return_value = mock_response
 
-    # Mock requests.get with failed status code
-    mock_image_response = mocker.Mock(spec=Response)
+    mock_image_response = mocker.Mock()
     mock_image_response.status_code = 404
-    mocker.patch("requests.Session.request", return_value=mock_image_response)
+    mocker.patch("CommonServerPython.generic_http_request", return_value=mock_image_response)
 
-    # Call the function
     result = screenshot_url_command(mock_client, args)
-
-    # Assertions
+    assert isinstance(result, dict)
     assert result["error"] == "Failed to download screenshot image: HTTP 404"
 
 
