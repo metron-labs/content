@@ -7,6 +7,7 @@ import traceback
 from typing import Any
 import ast
 from urllib.parse import urlencode
+import urllib.parse import urlparse
 
 import demistomock as demisto  # noqa: E402 lgtm [py/polluting-import]
 from CommonServerPython import *  # noqa: E402 lgtm [py/polluting-import]
@@ -1734,7 +1735,6 @@ class Client(BaseClient):
         remove_nulls_from_dictionary(params)
 
         response = self._http_request(method="GET", url_suffix=url_suffix, params=params)
-        print("response", response)
 
         if isinstance(response, str):
             try:
@@ -2150,52 +2150,52 @@ class Client(BaseClient):
             # Log or wrap the unexpected response type for debugging or display
             return {"error": response if isinstance(response, str) else "Unexpected response type"}
 
-    def get_ipv4_reputation(self, ipv4: str, explain: int = 1, limit: int = None) -> dict[str, Any]:
+    def get_ipv4_reputation(self, ipv4: str, explain: bool = True, limit: int = None) -> dict:
         """
-        Retrieve reputation information for an IPv4 address.
+        Retrieve historical reputation data for the specified IPv4 address.
 
         Args:
-            ipv4: The IPv4 address to check.
-            explain: Whether to include explanation details (1 for yes, 0 for no).
-            limit: Maximum number of history entries to return.
+            ipv4 (str): The IPv4 address to check.
+            explain (bool): Whether to include explanation details.
+            limit (int): Maximum number of history entries to return.
 
         Returns:
-            Dictionary containing reputation information.
+            dict: Dictionary containing 'ip_reputation_history' key with list of entries.
         """
         url_suffix = f"{IPV4_REPUTATION}/{ipv4}"
-        query_params = {}
 
-        if explain:
-            query_params["explain"] = 1
-        if limit is not None:
-            query_params["limit"] = limit
+        params = {
+            "explain": int(bool(explain)),
+            "limit": limit
+        }
 
-        raw_response = self._http_request(
+        remove_nulls_from_dictionary(params)
+
+        response = self._http_request(
             method="GET",
             url_suffix=url_suffix,
-            params=query_params,
+            params=params,
             headers={
                 "Accept": "application/json",
                 "Content-Type": "application/json"
             }
         )
 
-        if raw_response.get("status_code") != 200:
-            return raw_response
+        if isinstance(response, str):
+            try:
+                response = json.loads(response)
+            except Exception as e:
+                raise ValueError(f"Unable to parse JSON from response: {e}")
 
-        response_data = raw_response.get("response", {})
-        history = response_data.get("ip_reputation_history")
+        data = response.get("response", {}).get("ip_reputation_history", [])
 
-        if isinstance(history, list):
-            return raw_response
-
-        if isinstance(history, dict) and "error" in history:
+        if isinstance(data, dict) and "error" in data:
             if explain:
-                demisto.debug("Retrying without explain parameter due to error response")
-                return self.get_ipv4_reputation(ipv4, explain=0, limit=limit)
-            return {"status": "error", "message": history["error"]}
+                return self.get_ipv4_reputation(ipv4, explain=False, limit=limit)
+            raise ValueError(f"API Error: {data['error']}")
 
-        return raw_response
+        return {"ip_reputation_history": data if isinstance(data, list) else []}
+
 
     def forward_padns_lookup(self, qtype: str, qname: str, **kwargs) -> dict[str, Any]:
         """
@@ -2439,33 +2439,36 @@ def get_nameserver_reputation_command(client: Client, args: dict) -> CommandResu
         CommandResults: The command results containing nameserver reputation data.
     """
     nameserver = args.get("nameserver")
-    explain = argToBoolean(args.get("explain", False))
+    explain = argToBoolean(args.get("explain", "false"))
     limit = arg_to_number(args.get("limit"))
 
     if not nameserver:
         raise ValueError("Nameserver is required.")
 
-    # Call the client method - this returns a list
     reputation_data = client.get_nameserver_reputation(nameserver, explain, limit)
 
-    # Ensure the data is a list of dicts
     if not isinstance(reputation_data, list):
         demisto.error(f"Expected list, got: {type(reputation_data)}")
         reputation_data = []
 
-    # Optional: Format dates from YYYYMMDD to YYYY-MM-DD
     for item in reputation_data:
-        if "date" in item and isinstance(item["date"], int):
-            raw_date = str(item["date"])
-            if len(raw_date) == 8:
-                item["date"] = f"{raw_date[:4]}-{raw_date[4:6]}-{raw_date[6:]}"
+        date_val = item.get("date")
+        if isinstance(date_val, int):
+            try:
+                parsed_date = datetime.strptime(str(date_val), "%Y%m%d").date()
+                item["date"] = parsed_date.isoformat()
+            except ValueError as e:
+                demisto.error(f"Failed to parse date {date_val}: {e}")
 
-    # Generate table output
-    if reputation_data and isinstance(reputation_data[0], dict):
+    if reputation_data and all(isinstance(item, dict) for item in reputation_data):
+        all_headers = set()
+        for item in reputation_data:
+            all_headers.update(item.keys())
+
         readable_output = tableToMarkdown(
             f"Nameserver Reputation for {nameserver}",
             reputation_data,
-            headers=list(reputation_data[0].keys()),
+            headers=sorted(all_headers),
             removeNull=True
         )
     else:
@@ -2736,22 +2739,18 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
     """
     domains = argToList(args.get("domains", ""))
     cluster = argToBoolean(args.get("cluster", False))
-    # Force mode to be "live" if not explicitly provided
-    mode = args.get("mode", "live").lower()
-    if mode != "live":
-        mode = "live"  # Force live mode regardless of input
-
     match = args.get("match", "self")
-    as_of = args.get("as_of", None)
-    origin_uid = args.get("origin_uid", None)
+    as_of = args.get("as_of")
+    origin_uid = args.get("origin_uid")
     use_get = argToBoolean(args.get("use_get", False))
 
     if not domains and not use_get:
         raise ValueError('"domains" argument is required when using POST.')
 
+    mode = "live"
+
     raw_response = client.list_domain_infratags(domains, cluster, mode, match, as_of, origin_uid)
 
-    # Robust check for the 'mode' field in response
     response_mode = raw_response.get("response", {}).get("mode", "").lower()
     if response_mode and response_mode != "live":
         raise ValueError(f"Expected live mode but got {response_mode}")
@@ -2771,6 +2770,7 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
         readable_output=readable_output,
         raw_response=raw_response,
     )
+
 
 
 @metadata_collector.command(
@@ -3167,8 +3167,8 @@ def get_asn_reputation_command(client: Client, args: dict) -> CommandResults:
         CommandResults: Formatted command results for XSOAR
     """
     asn = args.get("asn")
-    limit = arg_to_number(args.get("limit", None))
-    explain = argToBoolean(args.get("explain", False))
+    limit = arg_to_number(args.get("limit"))
+    explain = argToBoolean(args.get("explain", "false"))  
 
     if not asn:
         raise ValueError("ASN is required.")
@@ -3178,7 +3178,7 @@ def get_asn_reputation_command(client: Client, args: dict) -> CommandResults:
 
     if not asn_reputation:
         return CommandResults(
-            readable_output=f"No reputation data found for ASN {asn}.{debug_output}",
+            readable_output=f"No reputation data found for ASN {asn}.",
             outputs_prefix="SilentPush.ASNReputation",
             outputs_key_field="asn",
             outputs=[],
@@ -3190,7 +3190,7 @@ def get_asn_reputation_command(client: Client, args: dict) -> CommandResults:
         f"ASN Reputation for {asn}",
         data_for_table,
         headers=get_table_headers(explain)
-    ) + debug_output
+    )
 
     return CommandResults(
         outputs_prefix="SilentPush.ASNReputation",
@@ -3199,6 +3199,8 @@ def get_asn_reputation_command(client: Client, args: dict) -> CommandResults:
         readable_output=readable_output,
         raw_response=raw_response,
     )
+
+
 
 
 def extract_and_sort_asn_reputation(raw_response: dict) -> list:
@@ -3213,17 +3215,16 @@ def extract_and_sort_asn_reputation(raw_response: dict) -> list:
     """
     response_data = raw_response.get("response", {})
 
-    # Handle unexpected format gracefully
+    
     if not isinstance(response_data, dict):
         response_data = {"asn_reputation": response_data}
 
     asn_reputation = response_data.get("asn_reputation") or response_data.get("asn_reputation_history", [])
 
-    # Normalize to list
+
     if isinstance(asn_reputation, dict):
         asn_reputation = [asn_reputation]
     elif not isinstance(asn_reputation, list):
-        # If it's something else (e.g., a string), fallback to an empty list
         asn_reputation = []
 
     return sorted(asn_reputation, key=lambda x: x.get("date", ""), reverse=True)
@@ -3373,12 +3374,10 @@ def get_ipv4_reputation_command(client: Client, args: dict[str, Any]) -> Command
 
     raw_response = client.get_ipv4_reputation(ipv4, explain, limit)
 
-    # Try various fallbacks to locate history
     history = raw_response.get("response", {}).get("ip_reputation_history")
     if not history:
         history = raw_response.get("ip_reputation_history")
 
-    # Check if history is a list
     if not isinstance(history, list) or not history:
         return CommandResults(
             readable_output=f"No reputation data found for IPv4: {ipv4}",
@@ -3388,11 +3387,9 @@ def get_ipv4_reputation_command(client: Client, args: dict[str, Any]) -> Command
             raw_response=raw_response,
         )
 
-    # Ensure each entry has the 'ip' field
     for entry in history:
         entry["ip"] = entry.get("ipv4", ipv4)
 
-    # Create table markdown output
     readable_output = tableToMarkdown(
         f"IPv4 Reputation History for {ipv4}",
         history,
@@ -3738,18 +3735,16 @@ def screenshot_url_command(client: Client, args: dict[str, Any]) -> CommandResul
     if not result.get("screenshot_url"):
         raise ValueError("screenshot_url is missing from API response.")
 
-
-    # Parse the screenshot URL to get server and path
     screenshot_url = result["screenshot_url"]
-    if screenshot_url.startswith(('http://', 'https://')):
-        # Extract server URL and URL suffix
-        parsed_url = screenshot_url.split('://', 1)
-        protocol = parsed_url[0]
-        remaining = parsed_url[1].split('/', 1)
-        server_url = f"{protocol}://{remaining[0]}"
-        url_suffix = f"/{remaining[1]}" if len(remaining) > 1 else ""
-    else:
+    parsed_url = urlparse(screenshot_url)
+
+    if not parsed_url.scheme or not parsed_url.netloc:
         raise ValueError(f"Invalid screenshot URL format: {screenshot_url}")
+
+    server_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+    url_suffix = parsed_url.path
+    if parsed_url.query:
+        url_suffix += f"?{parsed_url.query}"
 
     image_response = generic_http_request(
         method="GET",
@@ -3758,14 +3753,12 @@ def screenshot_url_command(client: Client, args: dict[str, Any]) -> CommandResul
         resp_type='response'
     )
 
-    print(image_response, "image")
-
     if not image_response or image_response.status_code != 200:
         return {
             "error": f"Failed to download screenshot image: HTTP {getattr(image_response, 'status_code', 'No response')}"
         }
 
-    filename = f"{url.split('://')[1].split('/')[0]}_screenshot.jpg"
+    filename = f"{urlparse(url).netloc}_screenshot.jpg"
 
     readable_output = (
         f"### Screenshot captured for {url}\n"
