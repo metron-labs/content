@@ -6,8 +6,7 @@ import urllib3
 import traceback
 from typing import Any
 import ast
-from urllib.parse import urlencode
-import urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 import demistomock as demisto  # noqa: E402 lgtm [py/polluting-import]
 from CommonServerPython import *  # noqa: E402 lgtm [py/polluting-import]
@@ -2094,7 +2093,7 @@ class Client(BaseClient):
 
         return self._http_request("POST", url_suffix, data=ip_data)
 
-    def get_asn_reputation(self, asn: int, limit: int | None = None, explain: bool | None = False) -> dict[str, Any]:
+    def get_asn_reputation(self, asn: int, limit: int | None = None, explain: bool = False) -> dict[str, Any]:
         """
         Retrieve reputation history for a specific Autonomous System Number (ASN).
 
@@ -2106,17 +2105,17 @@ class Client(BaseClient):
         Returns:
             Dict[str, Any]: ASN reputation history information.
         """
-        params = {}
-        if limit is not None:
-            params["limit"] = limit
-        if explain:
-            params["explain"] = "true"
+        params = {
+            "explain": int(bool(explain)),
+            "limit": limit
+        }
 
         return self._http_request(
             method="GET",
             url_suffix=f"{ASN_REPUTATION}/{asn}",
-            params=params,
+            params=params
         )
+
 
     def get_asn_takedown_reputation(self, asn: str, explain: int = 0, limit: int = None) -> dict[str, Any]:
         """
@@ -2424,7 +2423,7 @@ def get_job_status_command(client: Client, args: dict) -> CommandResults:
     inputs_list=NAMESERVER_REPUTATION_INPUTS,
     outputs_prefix="SilentPush.NameserverReputation",
     outputs_list=NAMESERVER_REPUTATION_OUTPUTS,
-    description="This command retrieves historical reputation data for a specified nameserver, "
+    description="This command retrieves historical reputation data for a specified nameserver,"
                 "including reputation scores and optional detailed calculation information.",
 )
 def get_nameserver_reputation_command(client: Client, args: dict) -> CommandResults:
@@ -2739,6 +2738,7 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
     """
     domains = argToList(args.get("domains", ""))
     cluster = argToBoolean(args.get("cluster", False))
+    mode = args.get("mode", "live").lower()
     match = args.get("match", "self")
     as_of = args.get("as_of")
     origin_uid = args.get("origin_uid")
@@ -2747,13 +2747,11 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
     if not domains and not use_get:
         raise ValueError('"domains" argument is required when using POST.')
 
-    mode = "live"
-
-    raw_response = client.list_domain_infratags(domains, cluster, mode, match, as_of, origin_uid)
+    raw_response = client.list_domain_infratags(domains, cluster, mode=mode, match=match, as_of=as_of, origin_uid=origin_uid)
 
     response_mode = raw_response.get("response", {}).get("mode", "").lower()
-    if response_mode and response_mode != "live":
-        raise ValueError(f"Expected live mode but got {response_mode}")
+    if response_mode and response_mode != mode:
+        raise ValueError(f"Expected mode '{mode}' but got '{response_mode}'")
 
     infratags = raw_response.get("response", {}).get("infratags", [])
     tag_clusters = raw_response.get("response", {}).get("tag_clusters", [])
@@ -2770,8 +2768,6 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
         readable_output=readable_output,
         raw_response=raw_response,
     )
-
-
 
 @metadata_collector.command(
     command_name="silentpush-list-domain-information",
@@ -3168,7 +3164,7 @@ def get_asn_reputation_command(client: Client, args: dict) -> CommandResults:
     """
     asn = args.get("asn")
     limit = arg_to_number(args.get("limit"))
-    explain = argToBoolean(args.get("explain", "false"))  
+    explain = argToBoolean(args.get("explain","false"))  
 
     if not asn:
         raise ValueError("ASN is required.")
