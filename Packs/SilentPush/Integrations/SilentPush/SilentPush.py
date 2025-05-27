@@ -37,7 +37,7 @@ DOMAIN_CERTIFICATE = "explore/domain/certificates"
 ENRICHMENT = "explore/enrich"
 LIST_IP = "explore/bulk/ip2asn"
 ASN_REPUTATION = "explore/ipreputation/history/asn"
-ASN_TAKEDOWN_REPUTATION = "explore/takedownreputation/asn"
+ASN_TAKEDOWN_REPUTATION = "explore/takedownreputation/history/asn"
 IPV4_REPUTATION = "explore/ipreputation/history/ipv4"
 FORWARD_PADNS = "explore/padns/lookup/query"
 REVERSE_PADNS = "explore/padns/lookup/answer"
@@ -1726,10 +1726,7 @@ class Client(BaseClient):
         """
         url_suffix = f"{NAMESERVER_REPUTATION}/{nameserver}"
 
-        params = {
-            "explain": int(bool(explain)),
-            "limit": limit
-        }
+        params = {"explain": int(bool(explain)), "limit": limit}
 
         remove_nulls_from_dictionary(params)
 
@@ -1896,7 +1893,7 @@ class Client(BaseClient):
             "match": match,
             "clusters": int(cluster),
             "as_of": as_of,
-            "origin_uid": origin_uid
+            "origin_uid": origin_uid,
         }
         remove_nulls_from_dictionary(payload)
 
@@ -2105,17 +2102,9 @@ class Client(BaseClient):
         Returns:
             Dict[str, Any]: ASN reputation history information.
         """
-        params = {
-            "explain": int(bool(explain)),
-            "limit": limit
-        }
+        params = {"explain": int(bool(explain)), "limit": limit}
 
-        return self._http_request(
-            method="GET",
-            url_suffix=f"{ASN_REPUTATION}/{asn}",
-            params=params
-        )
-
+        return self._http_request(method="GET", url_suffix=f"{ASN_REPUTATION}/{asn}", params=params)
 
     def get_asn_takedown_reputation(self, asn: str, explain: int = 0, limit: int = None) -> dict[str, Any]:
         """
@@ -2136,18 +2125,12 @@ class Client(BaseClient):
         """
         if not asn:
             raise ValueError("ASN is required.")
+
         url_suffix = f"{ASN_TAKEDOWN_REPUTATION}/{asn}"
-        query_params = assign_params(limit=limit, explain=explain)
+        query_params = assign_params(explain=int(bool(explain)), limit=limit)
 
         raw_response = self._http_request(method="GET", url_suffix=url_suffix, params=query_params)
-
-        response = raw_response.get("response")
-
-        if isinstance(response, dict):
-            return response.get("takedown_reputation", {})
-        else:
-            # Log or wrap the unexpected response type for debugging or display
-            return {"error": response if isinstance(response, str) else "Unexpected response type"}
+        return raw_response.get("response", {})
 
     def get_ipv4_reputation(self, ipv4: str, explain: bool = True, limit: int = None) -> dict:
         """
@@ -2163,10 +2146,7 @@ class Client(BaseClient):
         """
         url_suffix = f"{IPV4_REPUTATION}/{ipv4}"
 
-        params = {
-            "explain": int(bool(explain)),
-            "limit": limit
-        }
+        params = {"explain": int(bool(explain)), "limit": limit}
 
         remove_nulls_from_dictionary(params)
 
@@ -2174,10 +2154,7 @@ class Client(BaseClient):
             method="GET",
             url_suffix=url_suffix,
             params=params,
-            headers={
-                "Accept": "application/json",
-                "Content-Type": "application/json"
-            }
+            headers={"Accept": "application/json", "Content-Type": "application/json"},
         )
 
         if isinstance(response, str):
@@ -2194,7 +2171,6 @@ class Client(BaseClient):
             raise ValueError(f"API Error: {data['error']}")
 
         return {"ip_reputation_history": data if isinstance(data, list) else []}
-
 
     def forward_padns_lookup(self, qtype: str, qname: str, **kwargs) -> dict[str, Any]:
         """
@@ -2296,7 +2272,7 @@ class Client(BaseClient):
         Returns:
             Dict[str, Any]: Response containing future attack indicators.
         """
-        params = {"feed_uuids": feed_uuid, "page": page_no, "size": page_size}
+        params = {"source_uuids": feed_uuid, "page": page_no, "limit": page_size}
 
         query_string = urlencode(params)
         url = self._base_url.replace("/api/v1/merge-api", "") + f"/api/v2/iocs/threat-ranking/?{query_string}"
@@ -2424,7 +2400,7 @@ def get_job_status_command(client: Client, args: dict) -> CommandResults:
     outputs_prefix="SilentPush.NameserverReputation",
     outputs_list=NAMESERVER_REPUTATION_OUTPUTS,
     description="This command retrieves historical reputation data for a specified nameserver,"
-                "including reputation scores and optional detailed calculation information.",
+    "including reputation scores and optional detailed calculation information.",
 )
 def get_nameserver_reputation_command(client: Client, args: dict) -> CommandResults:
     """
@@ -2465,10 +2441,7 @@ def get_nameserver_reputation_command(client: Client, args: dict) -> CommandResu
             all_headers.update(item.keys())
 
         readable_output = tableToMarkdown(
-            f"Nameserver Reputation for {nameserver}",
-            reputation_data,
-            headers=sorted(all_headers),
-            removeNull=True
+            f"Nameserver Reputation for {nameserver}", reputation_data, headers=sorted(all_headers), removeNull=True
         )
     else:
         readable_output = f"No valid reputation history found for nameserver: {nameserver}"
@@ -2768,6 +2741,7 @@ def list_domain_infratags_command(client: Client, args: dict) -> CommandResults:
         readable_output=readable_output,
         raw_response=raw_response,
     )
+
 
 @metadata_collector.command(
     command_name="silentpush-list-domain-information",
@@ -3163,8 +3137,14 @@ def get_asn_reputation_command(client: Client, args: dict) -> CommandResults:
         CommandResults: Formatted command results for XSOAR
     """
     asn = args.get("asn")
+    if not asn:
+        raise ValueError("ASN is required.")
+    try:
+        asn = int(asn)
+    except ValueError:
+        raise ValueError("Invalid ASN number")
     limit = arg_to_number(args.get("limit"))
-    explain = argToBoolean(args.get("explain","false"))  
+    explain = argToBoolean(args.get("explain", "false"))
 
     if not asn:
         raise ValueError("ASN is required.")
@@ -3182,11 +3162,7 @@ def get_asn_reputation_command(client: Client, args: dict) -> CommandResults:
         )
 
     data_for_table = prepare_asn_reputation_table(asn_reputation, explain)
-    readable_output = tableToMarkdown(
-        f"ASN Reputation for {asn}",
-        data_for_table,
-        headers=get_table_headers(explain)
-    )
+    readable_output = tableToMarkdown(f"ASN Reputation for {asn}", data_for_table, headers=get_table_headers(explain))
 
     return CommandResults(
         outputs_prefix="SilentPush.ASNReputation",
@@ -3195,8 +3171,6 @@ def get_asn_reputation_command(client: Client, args: dict) -> CommandResults:
         readable_output=readable_output,
         raw_response=raw_response,
     )
-
-
 
 
 def extract_and_sort_asn_reputation(raw_response: dict) -> list:
@@ -3211,12 +3185,10 @@ def extract_and_sort_asn_reputation(raw_response: dict) -> list:
     """
     response_data = raw_response.get("response", {})
 
-    
     if not isinstance(response_data, dict):
         response_data = {"asn_reputation": response_data}
 
     asn_reputation = response_data.get("asn_reputation") or response_data.get("asn_reputation_history", [])
-
 
     if isinstance(asn_reputation, dict):
         asn_reputation = [asn_reputation]
@@ -3314,30 +3286,45 @@ def get_asn_takedown_reputation_command(client, args):
     """
     asn = args.get("asn")
     if not asn:
-        raise ValueError("ASN is a required parameter")
+        raise ValueError("ASN is a required parameter.")
 
-    explain = argToBoolean(args.get("explain", False))
-    limit = arg_to_number(args.get("limit"))
+    try:
+        explain = argToBoolean(args.get("explain", False))
+        limit = arg_to_number(args.get("limit"))
+    except Exception as e:
+        raise ValueError(f"Invalid argument: {e}")
 
-    response = client.get_asn_takedown_reputation(asn, explain, limit)
+    try:
+        response = client.get_asn_takedown_reputation(asn, explain, limit)
+    except Exception as e:
+        raise DemistoException(f"API call failed: {str(e)}")
 
-    if isinstance(response, dict):
-        table_data = [response]
-    elif isinstance(response, str):
-        table_data = [{"message": response}]
-    else:
-        table_data = [{"error": "Invalid response format"}]
+    takedown_history = response.get("takedown_reputation_history")
 
-    # Explicitly specify headers from keys of first dict
-    headers = list(table_data[0].keys()) if table_data else ["message"]
+    if not takedown_history:
+        return CommandResults(
+            readable_output=f"No takedown reputation history found for ASN: {asn}",
+            outputs_prefix="SilentPush.ASNTakedownReputation",
+            outputs_key_field="asn",
+            outputs={"asn": asn, "history": []},
+            raw_response=response,
+        )
 
-    readable_output = tableToMarkdown(f"Takedown Reputation for ASN {asn}", table_data, headers=headers, removeNull=True)
+    for entry in takedown_history:
+        if isinstance(entry.get("date"), int):
+            try:
+                entry["date"] = datetime.strptime(str(entry["date"]), "%Y%m%d").date().isoformat()
+            except ValueError:
+                demisto.debug(f"Failed to format date: {entry.get('date')}")
+
+    readable_output = tableToMarkdown(f"Takedown Reputation for ASN {asn}", takedown_history, removeNull=True)
 
     return CommandResults(
         readable_output=readable_output,
         outputs_prefix="SilentPush.ASNTakedownReputation",
         outputs_key_field="asn",
-        outputs=table_data,
+        outputs={"asn": asn, "history": takedown_history},
+        raw_response=response,
     )
 
 
@@ -3386,11 +3373,7 @@ def get_ipv4_reputation_command(client: Client, args: dict[str, Any]) -> Command
     for entry in history:
         entry["ip"] = entry.get("ipv4", ipv4)
 
-    readable_output = tableToMarkdown(
-        f"IPv4 Reputation History for {ipv4}",
-        history,
-        headers=["date", "ip", "ip_reputation"]
-    )
+    readable_output = tableToMarkdown(f"IPv4 Reputation History for {ipv4}", history, headers=["date", "ip", "ip_reputation"])
 
     return CommandResults(
         outputs_prefix="SilentPush.IPv4Reputation",
@@ -3742,17 +3725,10 @@ def screenshot_url_command(client: Client, args: dict[str, Any]) -> CommandResul
     if parsed_url.query:
         url_suffix += f"?{parsed_url.query}"
 
-    image_response = generic_http_request(
-        method="GET",
-        server_url=server_url,
-        url_suffix=url_suffix,
-        resp_type='response'
-    )
+    image_response = generic_http_request(method="GET", server_url=server_url, url_suffix=url_suffix, resp_type="response")
 
     if not image_response or image_response.status_code != 200:
-        return {
-            "error": f"Failed to download screenshot image: HTTP {getattr(image_response, 'status_code', 'No response')}"
-        }
+        return {"error": f"Failed to download screenshot image: HTTP {getattr(image_response, 'status_code', 'No response')}"}
 
     filename = f"{urlparse(url).netloc}_screenshot.jpg"
 
