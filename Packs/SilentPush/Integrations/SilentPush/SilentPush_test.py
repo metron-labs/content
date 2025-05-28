@@ -424,8 +424,7 @@ def test_get_ipv4_reputation_command_no_ipv4(mock_client):
 
 
 def test_get_future_attack_indicators_command_success(mock_client, mocker):
-    # Mock arguments
-    args = {"source_uuids": "test-source-uuids", "page_no": "1", "page_size": "10"}
+    args = {"feed_uuid": "test-feed-uuid", "page_no": "1", "page_size": "10"}
 
     # Mock response from client
     mock_response = [
@@ -443,27 +442,29 @@ def test_get_future_attack_indicators_command_success(mock_client, mocker):
     # Assertions
     assert isinstance(result, CommandResults)
     assert result.outputs_prefix == "SilentPush.FutureAttackIndicators"
-    assert result.outputs_key_field == "source_uuids"
+    assert result.outputs_key_field == "feed_uuid"  
     assert result.outputs == mock_response
     assert result.readable_output == "Mocked Markdown Table"
 
 
-def test_get_future_attack_indicators_command_no_source_uuids(mock_client):
-    # Mock arguments without source_uuids
+def test_get_future_attack_indicators_command_no_feed_uuid(mock_client):
+    # Mock arguments without feed_uuid
     args = {}
 
     # Call the function and expect ValueError
-    with pytest.raises(ValueError, match="source_uuids is a required parameter"):
+    with pytest.raises(ValueError, match="feed_uuid is a required parameter"):
         get_future_attack_indicators_command(mock_client, args)
 
 
 def test_get_future_attack_indicators_command_no_data(mock_client, mocker):
-    # Mock arguments
-    args = {"source_uuids": "test-source-uuids", "page_no": "1", "page_size": "10"}
+    args = {"feed_uuid": "test-feed-uuid", "page_no": "1", "page_size": "10"}
 
     # Mock response from client
     mock_response = []
     mock_client.get_future_attack_indicators.return_value = mock_response
+
+    # Mock tableToMarkdown
+    mocker.patch("SilentPush.tableToMarkdown", return_value="### SilentPush Future Attack Indicators\n**No entries.**")
 
     # Call the function
     result = get_future_attack_indicators_command(mock_client, args)
@@ -471,7 +472,7 @@ def test_get_future_attack_indicators_command_no_data(mock_client, mocker):
     # Assertions
     assert isinstance(result, CommandResults)
     assert result.outputs_prefix == "SilentPush.FutureAttackIndicators"
-    assert result.outputs_key_field == "source_uuids"
+    assert result.outputs_key_field == "feed_uuid"
     assert result.outputs == []
     assert result.readable_output.strip() == "### SilentPush Future Attack Indicators\n**No entries.**"
 
