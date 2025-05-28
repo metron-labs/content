@@ -211,7 +211,9 @@ def test_get_asns_for_domain_command_success(mock_client, mocker):
 
     # Mock response from client
     mock_response = {
-        "response": {"records": [{"domain_asns": {"12345": "Example ASN Description", "67890": "Another ASN Description"}}]}
+        "response": {
+            "records": [{"domain_asns": {"12345": "Example ASN Description", "67890": "Another ASN Description"}}]
+        }
     }
     mock_client.get_asns_for_domain.return_value = mock_response
 
@@ -442,7 +444,7 @@ def test_get_future_attack_indicators_command_success(mock_client, mocker):
     # Assertions
     assert isinstance(result, CommandResults)
     assert result.outputs_prefix == "SilentPush.FutureAttackIndicators"
-    assert result.outputs_key_field == "feed_uuid"  
+    assert result.outputs_key_field == "feed_uuid"
     assert result.outputs == mock_response
     assert result.readable_output == "Mocked Markdown Table"
 
@@ -487,7 +489,10 @@ def test_list_ip_information_command_success(mock_client, mocker):
     # Mock gather_ip_information
     mocker.patch(
         "SilentPush.gather_ip_information",
-        side_effect=[[{"ip": "192.168.1.1", "info": "IPv4 info"}], [{"ip": "2001:db8::ff00:42:8329", "info": "IPv6 info"}]],
+        side_effect=[
+            [{"ip": "192.168.1.1", "info": "IPv4 info"}],
+            [{"ip": "2001:db8::ff00:42:8329", "info": "IPv6 info"}],
+        ],
     )
 
     # Mock tableToMarkdown
@@ -500,7 +505,10 @@ def test_list_ip_information_command_success(mock_client, mocker):
     assert isinstance(result, CommandResults)
     assert result.outputs_prefix == "SilentPush.IPInformation"
     assert result.outputs_key_field == "ip"
-    assert result.outputs == [{"ip": "192.168.1.1", "info": "IPv4 info"}, {"ip": "2001:db8::ff00:42:8329", "info": "IPv6 info"}]
+    assert result.outputs == [
+        {"ip": "192.168.1.1", "info": "IPv4 info"},
+        {"ip": "2001:db8::ff00:42:8329", "info": "IPv6 info"},
+    ]
     assert result.readable_output == "Mocked Markdown Table"
 
 
@@ -757,8 +765,18 @@ def test_get_domain_certificates_command_success(mock_client, mocker):
     mock_response = {
         "response": {
             "domain_certificates": [
-                {"certificate_id": "123", "issuer": "Example Issuer", "valid_from": "2023-01-01", "valid_to": "2024-01-01"},
-                {"certificate_id": "456", "issuer": "Another Issuer", "valid_from": "2022-01-01", "valid_to": "2023-01-01"},
+                {
+                    "certificate_id": "123",
+                    "issuer": "Example Issuer",
+                    "valid_from": "2023-01-01",
+                    "valid_to": "2024-01-01",
+                },
+                {
+                    "certificate_id": "456",
+                    "issuer": "Another Issuer",
+                    "valid_from": "2022-01-01",
+                    "valid_to": "2023-01-01",
+                },
             ],
             "metadata": {"total": 2},
         }
@@ -927,7 +945,9 @@ def test_live_url_scan_command_success(mock_client, mocker):
     mock_client.live_url_scan.return_value = mock_response
 
     # Mock format_scan_results
-    mocker.patch("SilentPush.format_scan_results", return_value=("Mocked Readable Output", mock_response["response"]["scan"]))
+    mocker.patch(
+        "SilentPush.format_scan_results", return_value=("Mocked Readable Output", mock_response["response"]["scan"])
+    )
 
     # Call the function
     result = live_url_scan_command(mock_client, args)
@@ -1055,7 +1075,10 @@ def test_reverse_padns_lookup_command_success(mock_client, mocker):
     # Mock response from client
     mock_response = {
         "response": {
-            "records": [{"answer": "192.168.1.1", "type": "A", "ttl": 3600}, {"answer": "192.168.1.2", "type": "A", "ttl": 3600}]
+            "records": [
+                {"answer": "192.168.1.1", "type": "A", "ttl": 3600},
+                {"answer": "192.168.1.2", "type": "A", "ttl": 3600},
+            ]
         }
     }
     mock_client.reverse_padns_lookup.return_value = mock_response
@@ -1126,7 +1149,10 @@ def test_forward_padns_lookup_command_success(mock_client, mocker):
     # Mock response from client
     mock_response = {
         "response": {
-            "records": [{"answer": "192.168.1.1", "type": "A", "ttl": 3600}, {"answer": "192.168.1.2", "type": "A", "ttl": 3600}]
+            "records": [
+                {"answer": "192.168.1.1", "type": "A", "ttl": 3600},
+                {"answer": "192.168.1.2", "type": "A", "ttl": 3600},
+            ]
         }
     }
     mock_client.forward_padns_lookup.return_value = mock_response
