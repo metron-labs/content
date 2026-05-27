@@ -6,6 +6,8 @@ sectionorder:
 - Connect
 - Collect
 - Vega Entities
+- Alerts
+- Incidents
 configuration:
 - display: Base URL
   additionalinfo: The Base URL of the Vega API.
@@ -30,74 +32,102 @@ configuration:
   type: 8
   section: Collect
   required: false
-- display: Fetch Alerts
-  additionalinfo: When checked, Vega alerts will be fetched as XSOAR incidents.
-  name: fetch_alerts
-  type: 8
+  defaultvalue: 'true'
+  hidden: true
+- name: incidentFetchInterval
+  type: 19
+  display: Incidents Fetch Interval
+  defaultvalue: "5"
+  required: true
+- display: Vega Entities to fetch
+  additionalinfo: Select the Vega entities to fetch as XSOAR incidents.
+  name: vega_entities
+  type: 16
   section: Vega Entities
-  required: false
+  required: true
+  options:
+  - Alerts
+  - Incidents
+  defaultvalue: Alerts,Incidents
 - display: Alert Severities to fetch
   additionalinfo: Filter alerts by severity. If empty, all severities are fetched.
   name: alert_severities
   type: 16
-  section: Vega Entities
+  section: Alerts
   required: false
   options:
   - LOW
   - MEDIUM
   - HIGH
   - CRITICAL
+  defaultvalue: LOW,MEDIUM,HIGH,CRITICAL
 - display: Alert Statuses to fetch
   additionalinfo: Filter alerts by status. If empty, all statuses are fetched.
   name: alert_statuses
   type: 16
-  section: Vega Entities
+  section: Alerts
   required: false
   options:
   - OPEN
   - IN_PROGRESS
-  - CLOSED
-- display: Fetch Incidents
-  additionalinfo: When checked, Vega incidents will be fetched as XSOAR incidents.
-  name: fetch_incidents_flag
-  type: 8
-  section: Vega Entities
+  - PEER_REVIEW
+  - RESOLVED
+  defaultvalue: OPEN,IN_PROGRESS,PEER_REVIEW,RESOLVED
+- display: Alert Verdicts to fetch
+  additionalinfo: Filter alerts by verdict. If empty, all verdicts are fetched.
+  name: alert_verdicts
+  type: 16
+  section: Alerts
   required: false
+  options:
+  - MALICIOUS
+  - SUSPICIOUS
+  - BENIGN
+  - INCONCLUSIVE
+  - NA
+  defaultvalue: MALICIOUS,SUSPICIOUS,BENIGN,INCONCLUSIVE,NA
 - display: Incident Severities to fetch
   additionalinfo: Filter incidents by severity. If empty, all severities are fetched.
   name: incident_severities
   type: 16
-  section: Vega Entities
+  section: Incidents
   required: false
   options:
   - LOW
   - MEDIUM
   - HIGH
   - CRITICAL
+  defaultvalue: LOW,MEDIUM,HIGH,CRITICAL
 - display: Incident Statuses to fetch
   additionalinfo: Filter incidents by status. If empty, all statuses are fetched.
   name: incident_statuses
   type: 16
-  section: Vega Entities
+  section: Incidents
   required: false
   options:
   - NEW
   - INVESTIGATING
-  - CLOSED
-- defaultvalue: '50'
-  display: Maximum items per fetch
-  additionalinfo: Maximum number of alerts/incidents to fetch per run. Default is 50.
-  name: max_fetch
-  type: 0
-  section: Collect
+  - ON_HOLD
+  - EXTERNAL_ESCALATION
+  - RESOLVED
+  - REOPENED
+  - REVIEW_RECOMMENDED
+  - RESPONSE_REQUIRED
+  - UNDER_REVIEW
+  defaultvalue: NEW,INVESTIGATING,ON_HOLD,EXTERNAL_ESCALATION,RESOLVED,REOPENED,REVIEW_RECOMMENDED,RESPONSE_REQUIRED,UNDER_REVIEW
+- display: Incident Verdicts to fetch
+  additionalinfo: Filter incidents by verdict. If empty, all verdicts are fetched.
+  name: incident_verdicts
+  type: 16
+  section: Incidents
   required: false
-- defaultvalue: 3 days
-  display: First fetch time
-  additionalinfo: 'How far back to fetch the first time (e.g., 3 days, 1 week).'
-  name: first_fetch
-  type: 0
-  section: Collect
-  required: false
+  options:
+  - MALICIOUS
+  - SUSPICIOUS
+  - BENIGN
+  - INCONCLUSIVE
+  - NA
+  defaultvalue: MALICIOUS,SUSPICIOUS,BENIGN,INCONCLUSIVE,NA
 - display: Incident type
   name: incidentType
   type: 13

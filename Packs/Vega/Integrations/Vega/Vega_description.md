@@ -4,11 +4,11 @@ The Vega integration allows you to ingest alerts and incidents from the Vega pla
 
 ### Authentication
 
-To connect to the Vega platform, you need an **Access Key**.
+To connect to the Vega platform, you need an **Access Key ID** and an **Access Key**.
 1. Log in to your Vega console.
 2. Navigate to **Settings** > **Machine Users** / **API Keys**.
-3. Generate or retrieve an Access Key for your machine user.
-4. Copy the Access Key and paste it into the **Access Key** configuration parameter of this integration.
+3. Generate or retrieve an **Access Key ID** and **Access Key** for your machine user.
+4. Copy the **Access Key ID** and **Access Key** and paste them into the respective configuration parameters of this integration.
 
 ### Session Management
 
@@ -17,9 +17,9 @@ It retrieves a JSON Web Token (`session_jwt`) and caches it in integration conte
 
 ### Ingestion Settings
 
-You can configure the integration to fetch alerts, incidents, or both:
-- **Fetch Alerts**: Fetches Vega alerts. You can filter the fetched alerts by specific severities (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`) and statuses (`OPEN`, `IN_PROGRESS`, `CLOSED`).
-- **Fetch Incidents**: Fetches Vega incidents. You can filter the fetched incidents by specific severities (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`) and statuses (`NEW`, `INVESTIGATING`, `CLOSED`).
+You can configure the integration to fetch alerts, incidents, or both using the **Vega Entities to fetch** parameter.
+- **Alerts**: Fetches Vega alerts. You can filter the fetched alerts by specific severities (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), statuses (`New`, `Investigating`, `On Hold`, `External Escalation`, `Resolved`, `Reopened`, `Review Recommended`, `Response Required`, `Under Review`), and verdicts (`Malicious`, `Suspicious`, `Benign`, `Inconclusive`, `N/A`).
+- **Incidents**: Fetches Vega incidents. You can filter the fetched incidents by specific severities (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), statuses (`New`, `Investigating`, `On Hold`, `External Escalation`, `Resolved`, `Reopened`, `Review Recommended`, `Response Required`, `Under Review`), and verdicts (`Malicious`, `Suspicious`, `Benign`, `Inconclusive`, `N/A`).
 
 - **First fetch time**: The relative time window to retrieve alerts and incidents on the very first run (e.g., `3 days`, `1 week`).
 - **Maximum items per fetch**: Limits the number of alerts and incidents retrieved per run (default: 50).
