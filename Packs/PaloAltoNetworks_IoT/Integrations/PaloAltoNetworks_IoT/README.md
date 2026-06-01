@@ -1,16 +1,16 @@
-This is the Palo Alto Networks IoT integration (previously Zingbox).
-This integration was integrated and tested with the Banff release of Palo Alto Networks IoT.
+This is the Palo Alto Networks Device Security integration (previously Zingbox).
+This integration was integrated and tested with the Banff release of Palo Alto Networks Device Security.
 
-## Get your Palo Alto Networks IoT Access Keys
+## Get your Palo Alto Networks Device Security Access Keys
 
 This integration requires that API access be configured.
-To obtain the **Access Key ID** and **Secret Access Key**, refer to the [Palo Alto Networks IoT API User Guide](https://docs.paloaltonetworks.com/iot/iot-security-api-reference/iot-security-api-overview/get-started-with-the-iot-security-api.html).
+To obtain the **Access Key ID** and **Secret Access Key**, refer to the [Palo Alto Networks Device Security API User Guide](https://docs.paloaltonetworks.com/iot/iot-security-api-reference/iot-security-api-overview/get-started-with-the-iot-security-api.html).
 
-## Configure Palo Alto Networks IoT in Cortex
+## Configure Palo Alto Networks Device Security in Cortex
 
 | **Parameter** | **Description** | **Required** |
 | --- | --- | --- |
-| url | Palo Alto Networks IoT Security Portal URL \(e.g. https://example.iot.paloaltonetworks.com\) | True |
+| url | Palo Alto Networks Device Security Portal URL \(e.g. https://example.iot.paloaltonetworks.com\) | True |
 | tenant_id | Tenant ID | True |
 | access_key_id | Access Key ID | True |
 | secret_access_key | Secret Access Key | True |

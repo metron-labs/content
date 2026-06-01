@@ -8,7 +8,7 @@ commonfields:
   version: -1
 configuration:
 - defaultvalue: https://example.iot.paloaltonetworks.com
-  display: Palo Alto Networks IoT Security Portal URL (e.g. https://example.iot.paloaltonetworks.com)
+  display: Palo Alto Networks Device Security Portal URL (e.g. https://example.iot.paloaltonetworks.com)
   name: url
   required: true
   type: 0
