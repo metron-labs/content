@@ -2,6 +2,7 @@ import demistomock as demisto
 from CommonServerPython import *
 from CommonServerUserPython import *
 import re
+from collections.abc import Callable
 
 # requests.packages.urllib3.disable_warnings() # pylint: disable=no-member
 
@@ -313,6 +314,95 @@ def incident_to_xsoar_incident(incident: dict) -> dict:
     }
 
 
+def _fetch_paginated_entities(
+    fetch_func: Callable[..., dict],
+    entities_key: str,
+    max_fetch: int,
+    **fetch_kwargs: Any,
+) -> list[dict]:
+    """Fetch entities from the Vega API with offset-based pagination.
+
+    Args:
+        fetch_func: Client method (get_alerts or get_incidents).
+        entities_key: Response key holding the entity list ('alerts' or 'incidents').
+        max_fetch: Maximum total entities to retrieve across all pages.
+        **fetch_kwargs: Keyword arguments forwarded to fetch_func (excluding limit/offset).
+
+    Returns:
+        Combined list of entities up to max_fetch.
+    """
+    entities: list[dict] = []
+    offset = 0
+    page_size = min(MAX_FETCH, max_fetch)
+
+    while len(entities) < max_fetch:
+        remaining = max_fetch - len(entities)
+        limit = min(page_size, remaining)
+
+        response = fetch_func(limit=limit, offset=offset, **fetch_kwargs)
+
+        api_error = response.get("error")
+        if api_error and api_error.get("message"):
+            demisto.debug(f"Vega API error during pagination: {api_error.get('message')}")
+
+        page = response.get(entities_key) or []
+        if not page:
+            break
+
+        entities.extend(page)
+        total = response.get("total")
+
+        if total is not None:
+            if offset + len(page) >= total:
+                break
+        elif len(page) < limit:
+            break
+
+        offset += len(page)
+
+    demisto.debug(f"Paginated fetch for {entities_key}: retrieved {len(entities)} entities (offset up to {offset}).")
+    return entities
+
+
+def _update_fetch_state(
+    fetched_entities: list[dict],
+    previous_last_fetch: str,
+    previous_last_ids: list[str],
+    id_key: str = "id",
+    time_key: str = "createdAt",
+) -> tuple[str, list[str]]:
+    """Calculate next-run last_fetch and last_ids from a paginated API response.
+
+    Args:
+        fetched_entities: All entities returned across paginated API calls.
+        previous_last_fetch: ISO 8601 timestamp from the previous run.
+        previous_last_ids: Entity IDs seen at the previous last_fetch timestamp.
+        id_key: Field name for the entity ID.
+        time_key: Field name for the entity creation timestamp.
+
+    Returns:
+        Tuple of (new_last_fetch, new_last_ids).
+    """
+    if not fetched_entities:
+        return previous_last_fetch, previous_last_ids
+
+    max_time = max(entity.get(time_key, "") for entity in fetched_entities)
+    ids_at_max: list[str] = []
+    for entity in fetched_entities:
+        if entity.get(time_key) == max_time:
+            entity_id = entity.get(id_key)
+            if entity_id:
+                ids_at_max.append(str(entity_id))
+
+    if max_time > previous_last_fetch:
+        return max_time, ids_at_max
+    if max_time == previous_last_fetch:
+        return max_time, list(set(previous_last_ids + ids_at_max))
+
+    # Edge case: API returned entities older than last_fetch (inclusive from filter).
+    return previous_last_fetch, list(set(previous_last_ids + ids_at_max))
+
+
 def fetch_incidents_command(
     client: Client,
     last_run: dict,
@@ -357,43 +447,26 @@ def fetch_incidents_command(
     if fetch_alerts:
         demisto.debug("Fetching Vega alerts...")
         try:
-            alerts_response = client.get_alerts(
+            alerts = _fetch_paginated_entities(
+                client.get_alerts,
+                entities_key="alerts",
+                max_fetch=max_fetch,
                 severities=alert_severities,
                 statuses=alert_statuses,
                 verdicts=alert_verdicts,
                 from_time=alerts_last_fetch,
-                limit=max_fetch,
             )
-
-            api_error = alerts_response.get("error")
-            if api_error and api_error.get("message"):
-                demisto.debug(f"Vega alerts API error: {api_error.get('message')}")
-
-            alerts = alerts_response.get("alerts") or []
             demisto.debug(f"Fetched {len(alerts)} alerts from Vega.")
-
-            latest_alert_time = alerts_last_fetch
-            new_alert_ids: list[str] = []
 
             for alert in alerts:
                 alert_id = alert.get("id", "")
-                alert_created = alert.get("createdAt", "")
-
-                # Deduplicate: skip alerts already seen in the last run
                 if alert_id in alerts_last_ids:
                     continue
-
                 xsoar_incidents.append(alert_to_incident(alert))
 
-                # Track the latest timestamp
-                if not latest_alert_time or alert_created > latest_alert_time:
-                    latest_alert_time = alert_created
-                    new_alert_ids = [alert_id]
-                elif alert_created == latest_alert_time:
-                    new_alert_ids.append(alert_id)
-
-            next_run["alerts_last_fetch"] = latest_alert_time
-            next_run["alerts_last_ids"] = new_alert_ids
+            next_run["alerts_last_fetch"], next_run["alerts_last_ids"] = _update_fetch_state(
+                alerts, alerts_last_fetch, alerts_last_ids
+            )
 
         except Exception as e:
             demisto.debug(f"Error fetching Vega alerts: {e}")
@@ -402,43 +475,26 @@ def fetch_incidents_command(
     if fetch_incidents:
         demisto.debug("Fetching Vega incidents...")
         try:
-            incidents_response = client.get_incidents(
+            incidents = _fetch_paginated_entities(
+                client.get_incidents,
+                entities_key="incidents",
+                max_fetch=max_fetch,
                 severities=incident_severities,
                 statuses=incident_statuses,
                 verdicts=incident_verdicts,
                 from_time=incidents_last_fetch,
-                limit=max_fetch,
             )
-
-            api_error = incidents_response.get("error")
-            if api_error and api_error.get("message"):
-                demisto.debug(f"Vega incidents API error: {api_error.get('message')}")
-
-            incidents = incidents_response.get("incidents") or []
             demisto.debug(f"Fetched {len(incidents)} incidents from Vega.")
-
-            latest_incident_time = incidents_last_fetch
-            new_incident_ids: list[str] = []
 
             for incident in incidents:
                 incident_id = incident.get("id", "")
-                incident_created = incident.get("createdAt", "")
-
-                # Deduplicate: skip incidents already seen in the last run
                 if incident_id in incidents_last_ids:
                     continue
-
                 xsoar_incidents.append(incident_to_xsoar_incident(incident))
 
-                # Track the latest timestamp
-                if not latest_incident_time or incident_created > latest_incident_time:
-                    latest_incident_time = incident_created
-                    new_incident_ids = [incident_id]
-                elif incident_created == latest_incident_time:
-                    new_incident_ids.append(incident_id)
-
-            next_run["incidents_last_fetch"] = latest_incident_time
-            next_run["incidents_last_ids"] = new_incident_ids
+            next_run["incidents_last_fetch"], next_run["incidents_last_ids"] = _update_fetch_state(
+                incidents, incidents_last_fetch, incidents_last_ids
+            )
 
         except Exception as e:
             demisto.debug(f"Error fetching Vega incidents: {e}")

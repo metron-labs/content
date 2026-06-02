@@ -3,6 +3,9 @@ from CommonServerPython import *
 from CommonServerUserPython import *
 from Vega import (
     Client,
+    _fetch_paginated_entities,
+    _update_fetch_state,
+    fetch_incidents_command,
     test_module as vega_test_module,
     main as vega_main,
 )
@@ -146,3 +149,163 @@ def test_url_normalization():
             access_key_id="test-key-id",
         )
         assert client._base_url == expected
+
+
+FIRST_FETCH_TIME = "2026-01-01T00:00:00Z"
+TIMESTAMP_T1 = "2026-06-01T10:00:00Z"
+TIMESTAMP_T2 = "2026-06-01T11:00:00Z"
+
+
+def test_update_fetch_state_preserves_ids_when_all_dupes():
+    previous_ids = ["alert-a", "alert-b"]
+    fetched = [
+        {"id": "alert-a", "createdAt": TIMESTAMP_T1},
+        {"id": "alert-b", "createdAt": TIMESTAMP_T1},
+    ]
+
+    last_fetch, last_ids = _update_fetch_state(fetched, TIMESTAMP_T1, previous_ids)
+
+    assert last_fetch == TIMESTAMP_T1
+    assert set(last_ids) == set(previous_ids)
+
+
+def test_update_fetch_state_preserves_state_when_empty():
+    previous_ids = ["alert-a", "alert-b"]
+
+    last_fetch, last_ids = _update_fetch_state([], TIMESTAMP_T1, previous_ids)
+
+    assert last_fetch == TIMESTAMP_T1
+    assert last_ids == previous_ids
+
+
+def test_update_fetch_state_merges_ids_at_same_timestamp():
+    previous_ids = ["alert-a"]
+    fetched = [
+        {"id": "alert-a", "createdAt": TIMESTAMP_T1},
+        {"id": "alert-c", "createdAt": TIMESTAMP_T1},
+    ]
+
+    last_fetch, last_ids = _update_fetch_state(fetched, TIMESTAMP_T1, previous_ids)
+
+    assert last_fetch == TIMESTAMP_T1
+    assert set(last_ids) == {"alert-a", "alert-c"}
+
+
+def test_update_fetch_state_advances_to_newer_timestamp():
+    previous_ids = ["alert-a"]
+    fetched = [
+        {"id": "alert-a", "createdAt": TIMESTAMP_T1},
+        {"id": "alert-d", "createdAt": TIMESTAMP_T2},
+    ]
+
+    last_fetch, last_ids = _update_fetch_state(fetched, TIMESTAMP_T1, previous_ids)
+
+    assert last_fetch == TIMESTAMP_T2
+    assert last_ids == ["alert-d"]
+
+
+def test_fetch_paginated_entities_multiple_pages(mocker):
+    page_one = {
+        "alerts": [{"id": "1", "createdAt": TIMESTAMP_T1}],
+        "total": 2,
+        "limit": 1,
+        "offset": 0,
+    }
+    page_two = {
+        "alerts": [{"id": "2", "createdAt": TIMESTAMP_T2}],
+        "total": 2,
+        "limit": 1,
+        "offset": 1,
+    }
+    mock_get_alerts = mocker.Mock(side_effect=[page_one, page_two])
+
+    results = _fetch_paginated_entities(
+        mock_get_alerts,
+        entities_key="alerts",
+        max_fetch=200,
+        from_time=FIRST_FETCH_TIME,
+    )
+
+    assert len(results) == 2
+    assert results[0]["id"] == "1"
+    assert results[1]["id"] == "2"
+    assert mock_get_alerts.call_count == 2
+    assert mock_get_alerts.call_args_list[0].kwargs["offset"] == 0
+    assert mock_get_alerts.call_args_list[1].kwargs["offset"] == 1
+
+
+def test_fetch_incidents_command_no_duplicate_reingest(mocker):
+    mocker.patch.object(demisto, "debug")
+    mock_client = mocker.Mock()
+    mock_client.get_alerts.return_value = {
+        "alerts": [
+            {"id": "alert-1", "name": "Test Alert", "severity": "HIGH", "createdAt": TIMESTAMP_T1},
+        ],
+        "total": 1,
+        "limit": 200,
+        "offset": 0,
+    }
+    mock_client.get_incidents.return_value = {"incidents": [], "total": 0, "limit": 200, "offset": 0}
+
+    last_run = {
+        "alerts_last_fetch": TIMESTAMP_T1,
+        "alerts_last_ids": ["alert-1"],
+    }
+
+    next_run, incidents = fetch_incidents_command(
+        client=mock_client,
+        last_run=last_run,
+        fetch_alerts=True,
+        fetch_incidents=False,
+        alert_severities=None,
+        alert_statuses=None,
+        alert_verdicts=None,
+        incident_severities=None,
+        incident_statuses=None,
+        incident_verdicts=None,
+        first_fetch_time=FIRST_FETCH_TIME,
+    )
+
+    assert incidents == []
+    assert next_run["alerts_last_fetch"] == TIMESTAMP_T1
+    assert set(next_run["alerts_last_ids"]) == {"alert-1"}
+
+
+def test_fetch_incidents_command_pagination(mocker):
+    mocker.patch.object(demisto, "debug")
+    mock_client = mocker.Mock()
+    mock_client.get_incidents.side_effect = [
+        {
+            "incidents": [{"id": "inc-1", "name": "Inc 1", "severity": "LOW", "createdAt": TIMESTAMP_T1}],
+            "total": 2,
+            "limit": 1,
+            "offset": 0,
+        },
+        {
+            "incidents": [{"id": "inc-2", "name": "Inc 2", "severity": "MEDIUM", "createdAt": TIMESTAMP_T2}],
+            "total": 2,
+            "limit": 1,
+            "offset": 1,
+        },
+    ]
+    mock_client.get_alerts.return_value = {"alerts": [], "total": 0, "limit": 200, "offset": 0}
+
+    next_run, incidents = fetch_incidents_command(
+        client=mock_client,
+        last_run={},
+        fetch_alerts=False,
+        fetch_incidents=True,
+        alert_severities=None,
+        alert_statuses=None,
+        alert_verdicts=None,
+        incident_severities=None,
+        incident_statuses=None,
+        incident_verdicts=None,
+        first_fetch_time=FIRST_FETCH_TIME,
+        max_fetch=200,
+    )
+
+    assert len(incidents) == 2
+    assert mock_client.get_incidents.call_count == 2
+    assert next_run["incidents_last_fetch"] == TIMESTAMP_T2
+    assert next_run["incidents_last_ids"] == ["inc-2"]
