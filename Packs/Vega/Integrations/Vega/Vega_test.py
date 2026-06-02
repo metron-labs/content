@@ -233,7 +233,6 @@ def test_fetch_paginated_entities_multiple_pages(mocker):
     results = _fetch_paginated_entities(
         mock_get_alerts,
         entities_key="alerts",
-        max_fetch=200,
         from_time=FIRST_FETCH_TIME,
     )
 
@@ -243,6 +242,35 @@ def test_fetch_paginated_entities_multiple_pages(mocker):
     assert mock_get_alerts.call_count == 2
     assert mock_get_alerts.call_args_list[0].kwargs["offset"] == 0
     assert mock_get_alerts.call_args_list[1].kwargs["offset"] == 1
+
+
+def test_fetch_paginated_entities_fetches_beyond_single_page(mocker):
+    """Verify pagination continues until total is reached when the API returns multiple pages."""
+    page_one = {
+        "alerts": [{"id": str(i), "createdAt": TIMESTAMP_T1} for i in range(200)],
+        "total": 250,
+        "limit": 200,
+        "offset": 0,
+    }
+    page_two = {
+        "alerts": [{"id": str(i), "createdAt": TIMESTAMP_T2} for i in range(200, 250)],
+        "total": 250,
+        "limit": 200,
+        "offset": 200,
+    }
+    mock_get_alerts = mocker.Mock(side_effect=[page_one, page_two])
+
+    results = _fetch_paginated_entities(
+        mock_get_alerts,
+        entities_key="alerts",
+        from_time=FIRST_FETCH_TIME,
+    )
+
+    assert len(results) == 250
+    assert mock_get_alerts.call_count == 2
+    assert mock_get_alerts.call_args_list[0].kwargs.get("limit") is None
+    assert mock_get_alerts.call_args_list[0].kwargs["offset"] == 0
+    assert mock_get_alerts.call_args_list[1].kwargs["offset"] == 200
 
 
 def test_fetch_incidents_command_no_duplicate_reingest(mocker):
@@ -313,7 +341,6 @@ def test_fetch_incidents_command_pagination(mocker):
         incident_statuses=None,
         incident_verdicts=None,
         first_fetch_time=FIRST_FETCH_TIME,
-        max_fetch=200,
     )
 
     assert len(incidents) == 2

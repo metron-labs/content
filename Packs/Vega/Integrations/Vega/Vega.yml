@@ -49,7 +49,6 @@ configuration:
       - Alerts
       - Incidents
     defaultvalue: Alerts,Incidents
-  - display: Backfill Days
     additionalinfo: >-
       Number of days before today to fetch alerts and incidents on the first run.
       Use 0 for today only. Valid range is 0–365.
@@ -57,7 +56,7 @@ configuration:
     type: 1
     section: Vega Entities
     required: true
-    defaultvalue: "30"
+    defaultvalue: "365"
   - display: Alert Severities to fetch
     additionalinfo: Filter alerts by severity. If empty, all severities are fetched.
     name: alert_severities

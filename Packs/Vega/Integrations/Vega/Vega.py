@@ -49,8 +49,6 @@ GET_INCIDENTS_QUERY = (
     "  error { code message } } }"
 )
 
-MAX_FETCH = 200
-
 BACKFILL_HISTORY_MIN_DAYS = 0
 BACKFILL_HISTORY_MAX_DAYS = 365
 DEFAULT_BACKFILL_HISTORY_DAYS = 30
@@ -239,7 +237,7 @@ class Client(BaseClient):
         statuses: list[str] | None = None,
         verdicts: list[str] | None = None,
         from_time: str | None = None,
-        limit: int = MAX_FETCH,
+        limit: int | None = None,
         offset: int = 0,
     ) -> dict:
         """Fetch alerts from the Vega API.
@@ -249,13 +247,15 @@ class Client(BaseClient):
             statuses: Filter by alert statuses.
             verdicts: Filter by alert verdicts.
             from_time: Fetch alerts created after this time (ISO 8601).
-            limit: Maximum number of alerts to fetch.
+            limit: Optional maximum number of alerts per request. When omitted, the API default is used.
             offset: Offset for pagination.
 
         Returns:
             The getAlerts response data.
         """
-        variables: dict[str, Any] = {"limit": limit, "offset": offset}
+        variables: dict[str, Any] = {"offset": offset}
+        if limit is not None:
+            variables["limit"] = limit
         if severities:
             variables["alertSeverities"] = severities
         if statuses:
@@ -275,7 +275,7 @@ class Client(BaseClient):
         statuses: list[str] | None = None,
         verdicts: list[str] | None = None,
         from_time: str | None = None,
-        limit: int = MAX_FETCH,
+        limit: int | None = None,
         offset: int = 0,
     ) -> dict:
         """Fetch incidents from the Vega API.
@@ -285,13 +285,15 @@ class Client(BaseClient):
             statuses: Filter by incident statuses.
             verdicts: Filter by incident verdicts.
             from_time: Fetch incidents created after this time (ISO 8601).
-            limit: Maximum number of incidents to fetch.
+            limit: Optional maximum number of incidents per request. When omitted, the API default is used.
             offset: Offset for pagination.
 
         Returns:
             The getIncidents response data.
         """
-        variables: dict[str, Any] = {"limit": limit, "offset": offset}
+        variables: dict[str, Any] = {"offset": offset}
+        if limit is not None:
+            variables["limit"] = limit
         if severities:
             variables["severities"] = severities
         if statuses:
@@ -443,29 +445,26 @@ def incident_to_xsoar_incident(incident: dict) -> dict:
 def _fetch_paginated_entities(
     fetch_func: Callable[..., dict],
     entities_key: str,
-    max_fetch: int,
     **fetch_kwargs: Any,
 ) -> list[dict]:
     """Fetch entities from the Vega API with offset-based pagination.
 
+    Paginates through all available pages until the API reports no more results.
+    No client-side limit is applied; offset is advanced until every record is retrieved.
+
     Args:
         fetch_func: Client method (get_alerts or get_incidents).
         entities_key: Response key holding the entity list ('alerts' or 'incidents').
-        max_fetch: Maximum total entities to retrieve across all pages.
         **fetch_kwargs: Keyword arguments forwarded to fetch_func (excluding limit/offset).
 
     Returns:
-        Combined list of entities up to max_fetch.
+        Combined list of all entities returned by the API for the given filters.
     """
     entities: list[dict] = []
     offset = 0
-    page_size = min(MAX_FETCH, max_fetch)
 
-    while len(entities) < max_fetch:
-        remaining = max_fetch - len(entities)
-        limit = min(page_size, remaining)
-
-        response = fetch_func(limit=limit, offset=offset, **fetch_kwargs)
+    while True:
+        response = fetch_func(offset=offset, **fetch_kwargs)
 
         api_error = response.get("error")
         if api_error and api_error.get("message"):
@@ -478,10 +477,7 @@ def _fetch_paginated_entities(
         entities.extend(page)
         total = response.get("total")
 
-        if total is not None:
-            if offset + len(page) >= total:
-                break
-        elif len(page) < limit:
+        if total is not None and offset + len(page) >= total:
             break
 
         offset += len(page)
@@ -541,7 +537,6 @@ def fetch_incidents_command(
     incident_statuses: list[str] | None,
     incident_verdicts: list[str] | None,
     first_fetch_time: str,
-    max_fetch: int = MAX_FETCH,
 ) -> tuple[dict, list[dict]]:
     """Fetch alerts and/or incidents from Vega and return them as XSOAR incidents.
 
@@ -557,7 +552,6 @@ def fetch_incidents_command(
         incident_statuses: Filter incidents by status.
         incident_verdicts: Filter incidents by verdict.
         first_fetch_time: ISO 8601 timestamp to use as the start time on the first run.
-        max_fetch: Maximum total incidents to return.
 
     Returns:
         A tuple of (next_run, xsoar_incidents).
@@ -576,7 +570,6 @@ def fetch_incidents_command(
             alerts = _fetch_paginated_entities(
                 client.get_alerts,
                 entities_key="alerts",
-                max_fetch=max_fetch,
                 severities=alert_severities,
                 statuses=alert_statuses,
                 verdicts=alert_verdicts,
@@ -604,7 +597,6 @@ def fetch_incidents_command(
             incidents = _fetch_paginated_entities(
                 client.get_incidents,
                 entities_key="incidents",
-                max_fetch=max_fetch,
                 severities=incident_severities,
                 statuses=incident_statuses,
                 verdicts=incident_verdicts,
@@ -699,7 +691,6 @@ def main() -> None:
                 incident_statuses=incident_statuses,
                 incident_verdicts=incident_verdicts,
                 first_fetch_time=first_fetch_time,
-                max_fetch=MAX_FETCH,
             )
             demisto.setLastRun(next_run)
             demisto.incidents(xsoar_incidents)
