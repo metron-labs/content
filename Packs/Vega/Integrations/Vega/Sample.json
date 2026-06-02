@@ -1,0 +1,52 @@
+{
+    "id": "019e1b27-6d49-7ea1-a9d2-f2ed27ac93d5",
+    "name": "SMS MFA Bypass - Multiple Failed Attempts Followed by Success from Different Device",
+    "createdBy": "U2yXk4RwcBqL5dSBfWaD3pkfZb86",
+    "createdAt": "2026-04-27T13:07:44.779Z",
+    "lastUpdated": "2026-04-30T14:21:37.371Z",
+    "severity": "CRITICAL",
+    "status": "RESPONSE_REQUIRED",
+    "dataSources": ["Okta System Logs"],
+    "verdict": "MALICIOUS",
+    "verdictReasoning": "The investigation confirms a malicious verdict due to confirmed credential compromise, MFA bypass, cloud environment reconnaissance, persistence establishment, and sensitive data exfiltration.",
+    "assignee": null,
+    "comments": [
+        {
+            "text": "investigate this tomaer",
+            "addedBy": "Vega",
+            "addedAt": "2026-05-05T19:57:01.366Z"
+        }
+    ],
+    "incidentSummary": "The investigation confirms a malicious verdict due to confirmed credential compromise, MFA bypass, cloud environment reconnaissance, persistence establishment, and sensitive data exfiltration.",
+    "incidentFindings": [
+        "Between 21:00:00 and 21:01:00 UTC on 2026-04-26, 10 failed SMS MFA authentication attempts occurred for user angel.doyle@vega.io from TOR exit node 185.220.101.42 in Bucharest, Romania, indicating credential compromise and MFA brute-forcing.",
+        "At 21:01:30 UTC, a successful SMS MFA authentication for angel.doyle@vega.io originated from IP 169.1.209.45 in Tel Aviv, Israel, from a different device type, occurring 30 seconds after the failed attempts, indicating SMS interception or SIM swap.",
+        "At 21:01:35 UTC, a session was established for angel.doyle@vega.io from the TOR exit node 185.220.101.42, followed by SSO to Microsoft Office 365 and Amazon Web Services via SAML 2.0, confirming attacker control of the session.",
+        "Starting at 21:10:00 UTC, the attacker performed systematic reconnaissance across 15 AWS services and accessed 24 secrets from AWS Secrets Manager, including production database credentials, API keys, OAuth client secrets, and code repository access tokens.",
+        "At 21:18:00 UTC, the attacker created a new IAM access key (AKIAKAXIHJSYRJLWWY5O) for the terraform-automation user, establishing persistent backdoor access to the AWS environment.",
+        "Between 21:20:00 and 21:21:05 UTC, the attacker exfiltrated data from 8 sensitive S3 buckets (including employee data, customer PII, financial reports, and secrets backup) to an attacker-controlled bucket named 'scattered-spider-exfil-bucket'.",
+        "Starting at 21:15:14 UTC, the attacker accessed 84 OneDrive files and 54 Exchange email items, established persistence through 33 service principal additions and 27 application additions in Azure AD, attempted lateral movement via 21 mailbox permission grants and 30 group creations, and attempted to cover tracks by modifying audit log configurations 27 times and moving 31 items to deleted items."
+    ],
+    "assets": [
+        "angel.doyle@vega.io",
+        "00u2kd9f7xANGELDOYLE",
+        "angel.doyle@TomerVega.onmicrosoft.com",
+        "angel.doyle",
+        "terraform-automation"
+    ],
+    "observables": [
+        "185.220.101.42",
+        "169.1.209.45",
+        "218.12.83.203",
+        "scattered-spider-exfil-bucket"
+    ],
+    "alertsCount": 1,
+    "alerts": [
+        {
+            "alertId": "019e1b27-512b-73c0-81f4-87418ae3de1b",
+            "name": "Authentication Success After Multiple Failed MFA Attempts",
+            "createdAt": "2026-04-27T02:22:44.903Z"
+        }
+    ],
+    "link": "https://api.vega.io/incidents/list/019e1b27-6d49-7ea1-a9d2-f2ed27ac93d5"
+}

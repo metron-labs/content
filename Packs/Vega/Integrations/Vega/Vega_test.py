@@ -1,11 +1,17 @@
+from datetime import datetime, timezone
+
 import demistomock as demisto
 from CommonServerPython import *
 from CommonServerUserPython import *
+import pytest
+
 from Vega import (
     Client,
     _fetch_paginated_entities,
     _update_fetch_state,
     fetch_incidents_command,
+    parse_backfill_history,
+    validate_backfill_history_days,
     test_module as vega_test_module,
     main as vega_main,
 )
@@ -309,3 +315,42 @@ def test_fetch_incidents_command_pagination(mocker):
     assert mock_client.get_incidents.call_count == 2
     assert next_run["incidents_last_fetch"] == TIMESTAMP_T2
     assert next_run["incidents_last_ids"] == ["inc-2"]
+
+
+def test_parse_backfill_history_today(mocker):
+    fixed_now = datetime(2026, 6, 2, 15, 30, 0, tzinfo=timezone.utc)
+    mocker.patch("Vega.datetime", wraps=datetime)
+    mocker.patch("Vega.datetime.now", return_value=fixed_now)
+
+    assert parse_backfill_history(0) == "2026-06-02T00:00:00Z"
+
+
+def test_parse_backfill_history_days(mocker):
+    fixed_now = datetime(2026, 6, 2, 15, 30, 0, tzinfo=timezone.utc)
+    mocker.patch("Vega.datetime", wraps=datetime)
+    mocker.patch("Vega.datetime.now", return_value=fixed_now)
+
+    assert parse_backfill_history(7) == "2026-05-26T00:00:00Z"
+
+
+def test_parse_backfill_history_defaults(mocker):
+    fixed_now = datetime(2026, 6, 2, 15, 30, 0, tzinfo=timezone.utc)
+    mocker.patch("Vega.datetime", wraps=datetime)
+    mocker.patch("Vega.datetime.now", return_value=fixed_now)
+
+    assert parse_backfill_history(None) == "2026-05-03T00:00:00Z"
+
+
+def test_validate_backfill_history_days_rejects_out_of_range():
+    with pytest.raises(ValueError, match="between 0 and 365"):
+        validate_backfill_history_days(500)
+    with pytest.raises(ValueError, match="between 0 and 365"):
+        validate_backfill_history_days(-5)
+    with pytest.raises(ValueError, match="must be an integer"):
+        validate_backfill_history_days("not-a-number")
+
+
+def test_parse_backfill_history_legacy_first_fetch():
+    result = parse_backfill_history(None, legacy_first_fetch="7 days")
+    parsed = datetime.strptime(result, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    assert (datetime.now(timezone.utc) - parsed).days >= 6

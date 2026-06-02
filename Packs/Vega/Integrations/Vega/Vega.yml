@@ -15,18 +15,21 @@ configuration:
     required: true
     type: 0
     section: Connect
+    defaultvalue: "https://api.vega.io/api/v1/"
   - display: Access Key ID
     additionalinfo: The Access Key ID used to authenticate with the Vega API.
     name: access_key_id
     required: true
     type: 4
     section: Connect
+    defaultvalue: "K3E1sZgbbNR2v3DpC3QCStodL1ay"
   - display: Access Key
     additionalinfo: The Access Key used to authenticate with the Vega API.
     name: access_key
     required: true
     type: 4
     section: Connect
+    defaultvalue: "K3E1sZgbbNR2v3DpC3QCStodL1ayfU3oOoel9iygCfoOk6bY1l8M3pZws9Ji3i85LCMPCUJ"
   - display: Fetch incidents
     name: isFetch
     type: 8
@@ -49,15 +52,15 @@ configuration:
       - Alerts
       - Incidents
     defaultvalue: Alerts,Incidents
-  - display: First Fetch Time
+  - display: Backfill History
     additionalinfo: >-
-      How far back in time to fetch alerts and incidents on the first run.
-      Specify a relative time such as "30 days", "7 days", "1 week", or "2 months".
-    name: first_fetch
-    type: 0
+      Number of days before today to fetch alerts and incidents on the first run.
+      Use 0 for today only. Valid range is 0–365.
+    name: backfill_history
+    type: 1
     section: Vega Entities
-    required: false
-    defaultvalue: "30 days"
+    required: true
+    defaultvalue: "30"
   - display: Alert Severities to fetch
     additionalinfo: Filter alerts by severity. If empty, all severities are fetched.
     name: alert_severities

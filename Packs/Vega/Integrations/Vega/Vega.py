@@ -3,6 +3,7 @@ from CommonServerPython import *
 from CommonServerUserPython import *
 import re
 from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 
 # requests.packages.urllib3.disable_warnings() # pylint: disable=no-member
 
@@ -50,24 +51,66 @@ GET_INCIDENTS_QUERY = (
 
 MAX_FETCH = 200
 
-# Fallback start date used only if no first_fetch param is configured.
-DEFAULT_FIRST_FETCH = "30 days"
+BACKFILL_HISTORY_MIN_DAYS = 0
+BACKFILL_HISTORY_MAX_DAYS = 365
+DEFAULT_BACKFILL_HISTORY_DAYS = 30
 
 
-def parse_first_fetch(first_fetch: str | None) -> str:
-    """Convert a relative time string (e.g. '30 days', '1 week') to an ISO 8601 UTC timestamp.
+def parse_backfill_history(
+    backfill_history: str | int | None,
+    legacy_first_fetch: str | None = None,
+) -> str:
+    """Convert a backfill day count to an ISO 8601 UTC timestamp for the first fetch.
 
     Args:
-        first_fetch: A relative time string from demisto.params(), e.g. "30 days" or "7 days".
+        backfill_history: Days before today (0 = start of today UTC, max 365).
+        legacy_first_fetch: Deprecated relative time string from older instances (e.g. "30 days").
 
     Returns:
         An ISO 8601 UTC timestamp string, e.g. "2026-01-01T00:00:00Z".
     """
-    first_fetch = first_fetch or DEFAULT_FIRST_FETCH
-    parsed = arg_to_datetime(first_fetch, is_utc=True)
-    if not parsed:
-        parsed = arg_to_datetime(DEFAULT_FIRST_FETCH, is_utc=True)
-    return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")  # type: ignore[union-attr]
+    days: int | None = None
+    if backfill_history is not None and str(backfill_history).strip() != "":
+        try:
+            days = int(backfill_history)
+        except (TypeError, ValueError):
+            days = None
+
+    if days is None and legacy_first_fetch:
+        parsed = arg_to_datetime(legacy_first_fetch, is_utc=True)
+        if parsed:
+            return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")  # type: ignore[union-attr]
+
+    if days is None:
+        days = DEFAULT_BACKFILL_HISTORY_DAYS
+
+    days = max(BACKFILL_HISTORY_MIN_DAYS, min(BACKFILL_HISTORY_MAX_DAYS, days))
+    now = datetime.now(timezone.utc)
+    start = (now - timedelta(days=days)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return start.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def validate_backfill_history_days(backfill_history: str | int | None) -> None:
+    """Validate that backfill_history is an integer between 0 and 365 inclusive.
+
+    Args:
+        backfill_history: Days before today (0 = start of today UTC, max 365).
+
+    Raises:
+        ValueError: If the value is not an integer or is outside the allowed range.
+    """
+    if backfill_history is None or str(backfill_history).strip() == "":
+        return
+
+    try:
+        days = int(backfill_history)
+    except (TypeError, ValueError):
+        raise ValueError("backfill_history must be an integer between 0 and 365.")
+
+    if days < BACKFILL_HISTORY_MIN_DAYS or days > BACKFILL_HISTORY_MAX_DAYS:
+        raise ValueError("backfill_history must be between 0 and 365.")
 
 
 class Client(BaseClient):
@@ -144,7 +187,9 @@ class Client(BaseClient):
 
         return response
 
-    def test_connection(self) -> dict:
+    def test_connection(self, backfill_history: str | int | None = None) -> dict:
+        validate_backfill_history_days(backfill_history)
+
         try:
             login_res: dict = self._http_request(
                 method="POST",
@@ -272,7 +317,9 @@ def alert_to_incident(alert: dict) -> dict:
     Returns:
         An XSOAR incident dict.
     """
-    severity = VEGA_SEVERITY_TO_XSOAR.get(alert.get("severity", "").upper(), IncidentSeverity.UNKNOWN)
+    severity = VEGA_SEVERITY_TO_XSOAR.get(
+        alert.get("severity", "").upper(), IncidentSeverity.UNKNOWN
+    )
     created_at = alert.get("createdAt", "")
 
     # Inject vegaEntityType so the classifier transformer can route correctly
@@ -280,7 +327,7 @@ def alert_to_incident(alert: dict) -> dict:
     raw["vegaEntityType"] = "Vega Alert"
 
     return {
-        "name": f"Alert: {raw.get('name', 'Unknown')}",
+        "name": f"{raw.get('name', 'Unknown')}",
         "occurred": created_at,
         "severity": severity,
         "type": "Vega Alert",
@@ -298,7 +345,9 @@ def incident_to_xsoar_incident(incident: dict) -> dict:
         An XSOAR incident dict.
     """
 
-    severity = VEGA_SEVERITY_TO_XSOAR.get(incident.get("severity", "").upper(), IncidentSeverity.UNKNOWN)
+    severity = VEGA_SEVERITY_TO_XSOAR.get(
+        incident.get("severity", "").upper(), IncidentSeverity.UNKNOWN
+    )
     created_at = incident.get("createdAt", "")
 
     # Inject vegaEntityType so the classifier transformer can route correctly
@@ -306,7 +355,7 @@ def incident_to_xsoar_incident(incident: dict) -> dict:
     raw["vegaEntityType"] = "Vega Incident"
 
     return {
-        "name": f"Incident: {raw.get('name', 'Unknown')}",
+        "name": f"{raw.get('name', 'Unknown')}",
         "occurred": created_at,
         "severity": severity,
         "type": "Vega Incident",
@@ -343,7 +392,9 @@ def _fetch_paginated_entities(
 
         api_error = response.get("error")
         if api_error and api_error.get("message"):
-            demisto.debug(f"Vega API error during pagination: {api_error.get('message')}")
+            demisto.debug(
+                f"Vega API error during pagination: {api_error.get('message')}"
+            )
 
         page = response.get(entities_key) or []
         if not page:
@@ -360,7 +411,9 @@ def _fetch_paginated_entities(
 
         offset += len(page)
 
-    demisto.debug(f"Paginated fetch for {entities_key}: retrieved {len(entities)} entities (offset up to {offset}).")
+    demisto.debug(
+        f"Paginated fetch for {entities_key}: retrieved {len(entities)} entities (offset up to {offset})."
+    )
     return entities
 
 
@@ -464,8 +517,8 @@ def fetch_incidents_command(
                     continue
                 xsoar_incidents.append(alert_to_incident(alert))
 
-            next_run["alerts_last_fetch"], next_run["alerts_last_ids"] = _update_fetch_state(
-                alerts, alerts_last_fetch, alerts_last_ids
+            next_run["alerts_last_fetch"], next_run["alerts_last_ids"] = (
+                _update_fetch_state(alerts, alerts_last_fetch, alerts_last_ids)
             )
 
         except Exception as e:
@@ -492,8 +545,8 @@ def fetch_incidents_command(
                     continue
                 xsoar_incidents.append(incident_to_xsoar_incident(incident))
 
-            next_run["incidents_last_fetch"], next_run["incidents_last_ids"] = _update_fetch_state(
-                incidents, incidents_last_fetch, incidents_last_ids
+            next_run["incidents_last_fetch"], next_run["incidents_last_ids"] = (
+                _update_fetch_state(incidents, incidents_last_fetch, incidents_last_ids)
             )
 
         except Exception as e:
@@ -504,9 +557,9 @@ def fetch_incidents_command(
     return next_run, xsoar_incidents
 
 
-def test_module(client: Client):
+def test_module(client: Client, backfill_history: str | int | None = None):
     try:
-        client.test_connection()
+        client.test_connection(backfill_history)
         return "ok"
     except Exception as e:
         return str(e)
@@ -527,12 +580,16 @@ def main() -> None:
 
     try:
         vega_entities = argToList(
-            params.get("vega_entities") if params.get("vega_entities") is not None else ["Alerts", "Incidents"]
+            params.get("vega_entities")
+            if params.get("vega_entities") is not None
+            else ["Alerts", "Incidents"]
         )
         fetch_alerts = "Alerts" in vega_entities
         fetch_incidents = "Incidents" in vega_entities
         if not fetch_alerts and not fetch_incidents:
-            raise ValueError("At least one of 'Fetch Alerts' or 'Fetch Incidents' must be checked.")
+            raise ValueError(
+                "At least one of 'Fetch Alerts' or 'Fetch Incidents' must be checked."
+            )
 
         # Parse filter parameters
         alert_severities = argToList(params.get("alert_severities")) or None
@@ -542,8 +599,10 @@ def main() -> None:
         incident_statuses = argToList(params.get("incident_statuses")) or None
         incident_verdicts = argToList(params.get("incident_verdicts")) or None
 
-        # Parse first_fetch param (default: "30 days")
-        first_fetch_time = parse_first_fetch(params.get("first_fetch"))
+        first_fetch_time = parse_backfill_history(
+            params.get("backfill_history"),
+            legacy_first_fetch=params.get("first_fetch"),
+        )
 
         client = Client(
             base_url=base_url,
@@ -554,7 +613,7 @@ def main() -> None:
         )
 
         if command == "test-module":
-            result = test_module(client)
+            result = test_module(client, params.get("backfill_history"))
             return_results(result)
 
         elif command == "fetch-incidents":
