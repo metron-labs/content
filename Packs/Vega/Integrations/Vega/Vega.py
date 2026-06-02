@@ -306,6 +306,87 @@ class Client(BaseClient):
         return data.get("getIncidents", {})
 
 
+def _normalize_list_items(value: Any) -> list[str]:
+    """Extract string items from a list field value."""
+    if not isinstance(value, list):
+        return []
+    items: list[str] = []
+    for item in value:
+        if item is None:
+            continue
+        if isinstance(item, dict):
+            items.append(json.dumps(item))
+        else:
+            text = str(item).strip()
+            if text:
+                items.append(text)
+    return items
+
+
+def _format_bullet_list(value: Any) -> Any:
+    """Format a list field as newline-separated bullet points."""
+    if value is None or not isinstance(value, list) or not value:
+        return value
+    items = _normalize_list_items(value)
+    if not items:
+        return value
+    return "\n".join(f"• {item}" for item in items)
+
+
+def _highlight_values_in_text(text: str, values: set[str]) -> str:
+    """Wrap occurrences of known asset/observable values in backticks."""
+    if not text or not values:
+        return text
+    result = text
+    for value in sorted(values, key=len, reverse=True):
+        if not value or f"`{value}`" in result:
+            continue
+        result = result.replace(value, f"`{value}`")
+    return result
+
+
+def _format_incident_findings(
+    findings: Any,
+    assets: Any,
+    observables: Any,
+) -> Any:
+    """Format incident findings as a numbered list with asset/observable highlights."""
+    if findings is None or not isinstance(findings, list) or not findings:
+        return findings
+
+    highlight_values = set(_normalize_list_items(assets) + _normalize_list_items(observables))
+    formatted_findings: list[str] = []
+    for index, finding in enumerate(findings, start=1):
+        if isinstance(finding, dict):
+            text = json.dumps(finding)
+        else:
+            text = str(finding).strip()
+        if not text:
+            continue
+        text = _highlight_values_in_text(text, highlight_values)
+        formatted_findings.append(f"{index}. {text}")
+
+    if not formatted_findings:
+        return findings
+    return "\n".join(formatted_findings)
+
+
+def _format_raw_entity_for_xsoar(raw: dict) -> None:
+    """Format display-oriented list fields in raw entity data before XSOAR ingestion."""
+    if "dataSources" in raw:
+        raw["dataSources"] = _format_bullet_list(raw.get("dataSources"))
+
+    assets = raw.get("assets")
+    observables = raw.get("observables")
+
+    if "assets" in raw:
+        raw["assets"] = _format_bullet_list(assets)
+    if "observables" in raw:
+        raw["observables"] = _format_bullet_list(observables)
+    if "incidentFindings" in raw:
+        raw["incidentFindings"] = _format_incident_findings(raw.get("incidentFindings"), assets, observables)
+
+
 def alert_to_incident(alert: dict) -> dict:
     """Convert a Vega alert to an XSOAR incident.
 
@@ -321,6 +402,7 @@ def alert_to_incident(alert: dict) -> dict:
     # Inject vegaEntityType so the classifier transformer can route correctly
     raw = dict(alert)
     raw["vegaEntityType"] = "Vega Alert"
+    _format_raw_entity_for_xsoar(raw)
 
     return {
         "name": f"{raw.get('name', 'Unknown')}",
@@ -347,6 +429,7 @@ def incident_to_xsoar_incident(incident: dict) -> dict:
     # Inject vegaEntityType so the classifier transformer can route correctly
     raw = dict(incident)
     raw["vegaEntityType"] = "Vega Incident"
+    _format_raw_entity_for_xsoar(raw)
 
     return {
         "name": f"{raw.get('name', 'Unknown')}",

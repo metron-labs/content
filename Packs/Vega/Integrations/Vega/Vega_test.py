@@ -8,8 +8,13 @@ import pytest
 from Vega import (
     Client,
     _fetch_paginated_entities,
+    _format_bullet_list,
+    _format_incident_findings,
+    _format_raw_entity_for_xsoar,
     _update_fetch_state,
+    alert_to_incident,
     fetch_incidents_command,
+    incident_to_xsoar_incident,
     parse_backfill_history,
     validate_backfill_history_days,
     test_module as vega_test_module,
@@ -354,3 +359,92 @@ def test_parse_backfill_history_legacy_first_fetch():
     result = parse_backfill_history(None, legacy_first_fetch="7 days")
     parsed = datetime.strptime(result, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
     assert (datetime.now(UTC) - parsed).days >= 6
+
+
+def test_format_bullet_list():
+    assert _format_bullet_list(["CloudTrail", "VPC Flow Logs"]) == "• CloudTrail\n• VPC Flow Logs"
+    assert _format_bullet_list([]) == []
+    assert _format_bullet_list(None) is None
+    assert _format_bullet_list("already formatted") == "already formatted"
+
+
+def test_format_incident_findings_numbered_and_highlighted():
+    findings = [
+        "Suspicious activity from 10.0.0.1",
+        "Domain evil.com contacted by host",
+    ]
+    assets = ["10.0.0.1"]
+    observables = ["evil.com"]
+
+    result = _format_incident_findings(findings, assets, observables)
+
+    assert result == ("1. Suspicious activity from `10.0.0.1`\n" "2. Domain `evil.com` contacted by host")
+
+
+def test_format_raw_entity_for_xsoar_alert():
+    alert = {
+        "id": "alert-1",
+        "name": "Test Alert",
+        "dataSources": ["CloudTrail", "GuardDuty"],
+    }
+    _format_raw_entity_for_xsoar(alert)
+
+    assert alert["dataSources"] == "• CloudTrail\n• GuardDuty"
+    assert set(alert.keys()) == {"id", "name", "dataSources"}
+
+
+def test_format_raw_entity_for_xsoar_incident():
+    incident = {
+        "id": "inc-1",
+        "dataSources": ["CloudTrail"],
+        "assets": ["i-12345"],
+        "observables": ["10.0.0.1"],
+        "incidentFindings": ["Instance i-12345 connected to 10.0.0.1"],
+    }
+    _format_raw_entity_for_xsoar(incident)
+
+    assert incident["dataSources"] == "• CloudTrail"
+    assert incident["assets"] == "• i-12345"
+    assert incident["observables"] == "• 10.0.0.1"
+    assert incident["incidentFindings"] == "1. Instance `i-12345` connected to `10.0.0.1`"
+
+
+def test_alert_to_incident_formats_raw_json():
+    alert = {
+        "id": "alert-1",
+        "name": "Test Alert",
+        "severity": "HIGH",
+        "createdAt": TIMESTAMP_T1,
+        "dataSources": ["CloudTrail"],
+    }
+    xsoar_incident = alert_to_incident(alert)
+    raw = json.loads(xsoar_incident["rawJSON"])
+
+    assert raw["dataSources"] == "• CloudTrail"
+    assert raw["vegaEntityType"] == "Vega Alert"
+    assert set(raw.keys()) == {
+        "id",
+        "name",
+        "severity",
+        "createdAt",
+        "dataSources",
+        "vegaEntityType",
+    }
+
+
+def test_incident_to_xsoar_incident_formats_raw_json():
+    incident = {
+        "id": "inc-1",
+        "name": "Test Incident",
+        "severity": "LOW",
+        "createdAt": TIMESTAMP_T1,
+        "assets": ["host-1"],
+        "observables": ["host-1"],
+        "incidentFindings": ["Activity detected on host-1"],
+    }
+    xsoar_incident = incident_to_xsoar_incident(incident)
+    raw = json.loads(xsoar_incident["rawJSON"])
+
+    assert raw["assets"] == "• host-1"
+    assert raw["observables"] == "• host-1"
+    assert raw["incidentFindings"] == "1. Activity detected on `host-1`"

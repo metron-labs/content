@@ -1,0 +1,7 @@
+
+#### Integrations
+
+##### Vega
+
+- Formatted data sources, assets, and observables as bulleted lists before XSOAR ingestion.
+- Formatted incident findings as a numbered list with asset and observable values highlighted in code style.

@@ -24,5 +24,6 @@
         "mode": "All",
         "fieldCliNameToExtractSettings": {}
     },
+    "layout": "Vega Alert",
     "fromVersion": "6.10.0"
 }
