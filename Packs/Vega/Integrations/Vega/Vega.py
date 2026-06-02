@@ -49,13 +49,39 @@ GET_INCIDENTS_QUERY = (
 
 MAX_FETCH = 200
 
+# Fallback start date used only if no first_fetch param is configured.
+DEFAULT_FIRST_FETCH = "30 days"
+
+
+def parse_first_fetch(first_fetch: str | None) -> str:
+    """Convert a relative time string (e.g. '30 days', '1 week') to an ISO 8601 UTC timestamp.
+
+    Args:
+        first_fetch: A relative time string from demisto.params(), e.g. "30 days" or "7 days".
+
+    Returns:
+        An ISO 8601 UTC timestamp string, e.g. "2026-01-01T00:00:00Z".
+    """
+    first_fetch = first_fetch or DEFAULT_FIRST_FETCH
+    parsed = arg_to_datetime(first_fetch, is_utc=True)
+    if not parsed:
+        parsed = arg_to_datetime(DEFAULT_FIRST_FETCH, is_utc=True)
+    return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")  # type: ignore[union-attr]
+
 
 class Client(BaseClient):
     """
     Client Class For Vega API Integration
     """
 
-    def __init__(self, base_url: str, verify: bool, proxy: bool, access_key: str, access_key_id: str = ""):
+    def __init__(
+        self,
+        base_url: str,
+        verify: bool,
+        proxy: bool,
+        access_key: str,
+        access_key_id: str = "",
+    ):
         if base_url:
             base_url = base_url.rstrip("/")
             if not base_url.lower().endswith("/api/v1"):
@@ -248,12 +274,16 @@ def alert_to_incident(alert: dict) -> dict:
     severity = VEGA_SEVERITY_TO_XSOAR.get(alert.get("severity", "").upper(), IncidentSeverity.UNKNOWN)
     created_at = alert.get("createdAt", "")
 
+    # Inject vegaEntityType so the classifier transformer can route correctly
+    raw = dict(alert)
+    raw["vegaEntityType"] = "Vega Alert"
+
     return {
-        "name": f"Alert: {alert.get('name', 'Unknown')}",
+        "name": f"Alert: {raw.get('name', 'Unknown')}",
         "occurred": created_at,
         "severity": severity,
         "type": "Vega Alert",
-        "rawJSON": json.dumps(alert),
+        "rawJSON": json.dumps(raw),
     }
 
 
@@ -266,15 +296,20 @@ def incident_to_xsoar_incident(incident: dict) -> dict:
     Returns:
         An XSOAR incident dict.
     """
+
     severity = VEGA_SEVERITY_TO_XSOAR.get(incident.get("severity", "").upper(), IncidentSeverity.UNKNOWN)
     created_at = incident.get("createdAt", "")
 
+    # Inject vegaEntityType so the classifier transformer can route correctly
+    raw = dict(incident)
+    raw["vegaEntityType"] = "Vega Incident"
+
     return {
-        "name": f"Incident: {incident.get('name', 'Unknown')}",
+        "name": f"Incident: {raw.get('name', 'Unknown')}",
         "occurred": created_at,
         "severity": severity,
         "type": "Vega Incident",
-        "rawJSON": json.dumps(incident),
+        "rawJSON": json.dumps(raw),
     }
 
 
@@ -289,6 +324,7 @@ def fetch_incidents_command(
     incident_severities: list[str] | None,
     incident_statuses: list[str] | None,
     incident_verdicts: list[str] | None,
+    first_fetch_time: str,
     max_fetch: int = MAX_FETCH,
 ) -> tuple[dict, list[dict]]:
     """Fetch alerts and/or incidents from Vega and return them as XSOAR incidents.
@@ -304,6 +340,7 @@ def fetch_incidents_command(
         incident_severities: Filter incidents by severity.
         incident_statuses: Filter incidents by status.
         incident_verdicts: Filter incidents by verdict.
+        first_fetch_time: ISO 8601 timestamp to use as the start time on the first run.
         max_fetch: Maximum total incidents to return.
 
     Returns:
@@ -312,8 +349,8 @@ def fetch_incidents_command(
     xsoar_incidents: list[dict] = []
     next_run: dict = dict(last_run)
 
-    alerts_last_fetch = last_run.get("alerts_last_fetch")
-    incidents_last_fetch = last_run.get("incidents_last_fetch")
+    alerts_last_fetch = last_run.get("alerts_last_fetch") or first_fetch_time
+    incidents_last_fetch = last_run.get("incidents_last_fetch") or first_fetch_time
     alerts_last_ids: list[str] = last_run.get("alerts_last_ids", [])
     incidents_last_ids: list[str] = last_run.get("incidents_last_ids", [])
 
@@ -449,6 +486,9 @@ def main() -> None:
         incident_statuses = argToList(params.get("incident_statuses")) or None
         incident_verdicts = argToList(params.get("incident_verdicts")) or None
 
+        # Parse first_fetch param (default: "30 days")
+        first_fetch_time = parse_first_fetch(params.get("first_fetch"))
+
         client = Client(
             base_url=base_url,
             verify=verify_certificate,
@@ -474,6 +514,7 @@ def main() -> None:
                 incident_severities=incident_severities,
                 incident_statuses=incident_statuses,
                 incident_verdicts=incident_verdicts,
+                first_fetch_time=first_fetch_time,
                 max_fetch=MAX_FETCH,
             )
             demisto.setLastRun(next_run)
