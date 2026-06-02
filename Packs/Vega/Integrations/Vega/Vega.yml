@@ -15,21 +15,18 @@ configuration:
     required: true
     type: 0
     section: Connect
-    defaultvalue: "https://api.vega.io/api/v1/"
   - display: Access Key ID
     additionalinfo: The Access Key ID used to authenticate with the Vega API.
     name: access_key_id
     required: true
     type: 4
     section: Connect
-    defaultvalue: "K3E1sZgbbNR2v3DpC3QCStodL1ay"
   - display: Access Key
     additionalinfo: The Access Key used to authenticate with the Vega API.
     name: access_key
     required: true
     type: 4
     section: Connect
-    defaultvalue: "K3E1sZgbbNR2v3DpC3QCStodL1ayfU3oOoel9iygCfoOk6bY1l8M3pZws9Ji3i85LCMPCUJ"
   - display: Fetch incidents
     name: isFetch
     type: 8

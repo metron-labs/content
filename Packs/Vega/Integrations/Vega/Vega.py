@@ -3,7 +3,7 @@ from CommonServerPython import *
 from CommonServerUserPython import *
 import re
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 
 # requests.packages.urllib3.disable_warnings() # pylint: disable=no-member
 
@@ -85,10 +85,8 @@ def parse_backfill_history(
         days = DEFAULT_BACKFILL_HISTORY_DAYS
 
     days = max(BACKFILL_HISTORY_MIN_DAYS, min(BACKFILL_HISTORY_MAX_DAYS, days))
-    now = datetime.now(timezone.utc)
-    start = (now - timedelta(days=days)).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    )
+    now = datetime.now(UTC)
+    start = (now - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
     return start.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -317,9 +315,7 @@ def alert_to_incident(alert: dict) -> dict:
     Returns:
         An XSOAR incident dict.
     """
-    severity = VEGA_SEVERITY_TO_XSOAR.get(
-        alert.get("severity", "").upper(), IncidentSeverity.UNKNOWN
-    )
+    severity = VEGA_SEVERITY_TO_XSOAR.get(alert.get("severity", "").upper(), IncidentSeverity.UNKNOWN)
     created_at = alert.get("createdAt", "")
 
     # Inject vegaEntityType so the classifier transformer can route correctly
@@ -345,9 +341,7 @@ def incident_to_xsoar_incident(incident: dict) -> dict:
         An XSOAR incident dict.
     """
 
-    severity = VEGA_SEVERITY_TO_XSOAR.get(
-        incident.get("severity", "").upper(), IncidentSeverity.UNKNOWN
-    )
+    severity = VEGA_SEVERITY_TO_XSOAR.get(incident.get("severity", "").upper(), IncidentSeverity.UNKNOWN)
     created_at = incident.get("createdAt", "")
 
     # Inject vegaEntityType so the classifier transformer can route correctly
@@ -392,9 +386,7 @@ def _fetch_paginated_entities(
 
         api_error = response.get("error")
         if api_error and api_error.get("message"):
-            demisto.debug(
-                f"Vega API error during pagination: {api_error.get('message')}"
-            )
+            demisto.debug(f"Vega API error during pagination: {api_error.get('message')}")
 
         page = response.get(entities_key) or []
         if not page:
@@ -411,9 +403,7 @@ def _fetch_paginated_entities(
 
         offset += len(page)
 
-    demisto.debug(
-        f"Paginated fetch for {entities_key}: retrieved {len(entities)} entities (offset up to {offset})."
-    )
+    demisto.debug(f"Paginated fetch for {entities_key}: retrieved {len(entities)} entities (offset up to {offset}).")
     return entities
 
 
@@ -517,8 +507,8 @@ def fetch_incidents_command(
                     continue
                 xsoar_incidents.append(alert_to_incident(alert))
 
-            next_run["alerts_last_fetch"], next_run["alerts_last_ids"] = (
-                _update_fetch_state(alerts, alerts_last_fetch, alerts_last_ids)
+            next_run["alerts_last_fetch"], next_run["alerts_last_ids"] = _update_fetch_state(
+                alerts, alerts_last_fetch, alerts_last_ids
             )
 
         except Exception as e:
@@ -545,8 +535,8 @@ def fetch_incidents_command(
                     continue
                 xsoar_incidents.append(incident_to_xsoar_incident(incident))
 
-            next_run["incidents_last_fetch"], next_run["incidents_last_ids"] = (
-                _update_fetch_state(incidents, incidents_last_fetch, incidents_last_ids)
+            next_run["incidents_last_fetch"], next_run["incidents_last_ids"] = _update_fetch_state(
+                incidents, incidents_last_fetch, incidents_last_ids
             )
 
         except Exception as e:
@@ -580,16 +570,12 @@ def main() -> None:
 
     try:
         vega_entities = argToList(
-            params.get("vega_entities")
-            if params.get("vega_entities") is not None
-            else ["Alerts", "Incidents"]
+            params.get("vega_entities") if params.get("vega_entities") is not None else ["Alerts", "Incidents"]
         )
         fetch_alerts = "Alerts" in vega_entities
         fetch_incidents = "Incidents" in vega_entities
         if not fetch_alerts and not fetch_incidents:
-            raise ValueError(
-                "At least one of 'Fetch Alerts' or 'Fetch Incidents' must be checked."
-            )
+            raise ValueError("At least one of 'Fetch Alerts' or 'Fetch Incidents' must be checked.")
 
         # Parse filter parameters
         alert_severities = argToList(params.get("alert_severities")) or None

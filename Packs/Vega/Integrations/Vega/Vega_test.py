@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 
 import demistomock as demisto
 from CommonServerPython import *
@@ -318,7 +318,7 @@ def test_fetch_incidents_command_pagination(mocker):
 
 
 def test_parse_backfill_history_today(mocker):
-    fixed_now = datetime(2026, 6, 2, 15, 30, 0, tzinfo=timezone.utc)
+    fixed_now = datetime(2026, 6, 2, 15, 30, 0, tzinfo=UTC)
     mocker.patch("Vega.datetime", wraps=datetime)
     mocker.patch("Vega.datetime.now", return_value=fixed_now)
 
@@ -326,7 +326,7 @@ def test_parse_backfill_history_today(mocker):
 
 
 def test_parse_backfill_history_days(mocker):
-    fixed_now = datetime(2026, 6, 2, 15, 30, 0, tzinfo=timezone.utc)
+    fixed_now = datetime(2026, 6, 2, 15, 30, 0, tzinfo=UTC)
     mocker.patch("Vega.datetime", wraps=datetime)
     mocker.patch("Vega.datetime.now", return_value=fixed_now)
 
@@ -334,7 +334,7 @@ def test_parse_backfill_history_days(mocker):
 
 
 def test_parse_backfill_history_defaults(mocker):
-    fixed_now = datetime(2026, 6, 2, 15, 30, 0, tzinfo=timezone.utc)
+    fixed_now = datetime(2026, 6, 2, 15, 30, 0, tzinfo=UTC)
     mocker.patch("Vega.datetime", wraps=datetime)
     mocker.patch("Vega.datetime.now", return_value=fixed_now)
 
@@ -352,5 +352,5 @@ def test_validate_backfill_history_days_rejects_out_of_range():
 
 def test_parse_backfill_history_legacy_first_fetch():
     result = parse_backfill_history(None, legacy_first_fetch="7 days")
-    parsed = datetime.strptime(result, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    assert (datetime.now(timezone.utc) - parsed).days >= 6
+    parsed = datetime.strptime(result, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    assert (datetime.now(UTC) - parsed).days >= 6
