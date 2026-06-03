@@ -1,6 +1,7 @@
 import demistomock as demisto
 from CommonServerPython import *
 from CommonServerUserPython import *
+import html as html_module
 import re
 from collections.abc import Callable
 from datetime import datetime, timedelta, UTC
@@ -48,6 +49,49 @@ GET_INCIDENTS_QUERY = (
     "  total limit offset "
     "  error { code message } } }"
 )
+
+GET_INCIDENT_DETAILS_QUERY = (
+    "query getIncidentsDetails($id: UUID!) { "
+    " incident(id: $id) { "
+    "  ...IncidentDetailFields "
+    "  timelineEvents { ...IncidentTimelineEventFields } "
+    " } "
+    "} "
+    "fragment UserIdentityFields on User { id email name } "
+    "fragment DataSourceListFields on DataSource { id vendor displayName } "
+    "fragment IncidentBaseFields on Incident { "
+    " id incidentId name description status createdAt "
+    " createdBy { ...UserIdentityFields } lastUpdate firstSeen "
+    " assignee { ...UserIdentityFields } severity alertCount alertIds "
+    " dataSources { ...DataSourceListFields } state verdict "
+    "} "
+    "fragment FeedbackFields on Feedback { id liked comment } "
+    "fragment EntityFields on Entity { id type category value reputationData } "
+    "fragment RecommendedActionSummaryFields on RecommendedAction { "
+    " id actionName actionDescription actionPriority "
+    "} "
+    "fragment RecommendedActionFields on RecommendedAction { "
+    " ...RecommendedActionSummaryFields feedback { ...FeedbackFields } "
+    "} "
+    "fragment IncidentDetailFields on Incident { "
+    " ...IncidentBaseFields userVerdict keyFindings verdictReasoning "
+    " investigationNotebookID userNotebookIDs "
+    " keyFindingsFeedback { ...FeedbackFields } entities { ...EntityFields } "
+    " recommendedActions { ...RecommendedActionFields } connectorTypes "
+    "} "
+    "fragment IncidentTimelineEventFields on IncidentTimelineEvent { "
+    " id timestamp summary entities { ...EntityFields } dataSourceIds "
+    " dataSources { ...DataSourceListFields } "
+    " alert { id displayName severity } "
+    "}"
+)
+
+VEGA_TIMELINE_ALERT_SEVERITY_LABELS: dict[int, str] = {
+    1: "Low",
+    2: "Medium",
+    3: "High",
+    4: "Critical",
+}
 
 BACKFILL_HISTORY_MIN_DAYS = 0
 BACKFILL_HISTORY_MAX_DAYS = 365
@@ -308,6 +352,20 @@ class Client(BaseClient):
         data = response.get("data", {})
         return data.get("getIncidents", {})
 
+    def get_incident_details(self, incident_id: str) -> dict:
+        """Fetch full incident details including timeline events.
+
+        Args:
+            incident_id: Vega incident UUID.
+
+        Returns:
+            The incident object from the GraphQL response, or an empty dict if not found.
+        """
+        response = self._graphql_request(GET_INCIDENT_DETAILS_QUERY, {"id": incident_id})
+        data = response.get("data", {})
+        incident = data.get("incident")
+        return incident if isinstance(incident, dict) else {}
+
 
 def _normalize_list_items(value: Any) -> list[str]:
     """Extract string items from a list or scalar field value."""
@@ -406,6 +464,184 @@ def _build_vega_alert_custom_fields(raw: dict) -> dict[str, str]:
     created_at = raw.get("createdAt")
     if created_at:
         custom_fields["vegacreatedat"] = str(created_at)
+    return custom_fields
+
+
+def _timeline_alert_severity_label(severity: Any) -> str:
+    """Map Vega numeric alert severity to a human-readable label."""
+    if severity is None:
+        return "N/A"
+    try:
+        return VEGA_TIMELINE_ALERT_SEVERITY_LABELS.get(int(severity), str(severity))
+    except (TypeError, ValueError):
+        return str(severity)
+
+
+def _escape_html(text: str) -> str:
+    """Escape text for safe inclusion in timeline HTML."""
+    return html_module.escape(str(text))
+
+
+def _format_timeline_display_timestamp(timestamp: Any) -> str:
+    """Convert an ISO timestamp to the timeline display format (YYYY-MM-DD HH:MM:SS)."""
+    text = str(timestamp or "").strip()
+    if not text:
+        return "—"
+    text = text.replace("T", " ").replace("Z", "").strip()
+    if "." in text:
+        text = text.split(".", maxsplit=1)[0]
+    return text
+
+
+def _timeline_severity_bars_html(severity: Any) -> str:
+    """Render alert severity as vertical bars (Vega UI style)."""
+    try:
+        level = max(1, min(4, int(severity)))
+    except (TypeError, ValueError):
+        level = 2
+    bar_heights = (8, 11, 14, 16)
+    bars: list[str] = []
+    for index, height in enumerate(bar_heights, start=1):
+        color = "#f97316" if index <= level else "#404040"
+        bars.append(f"<div style='width:4px;height:{height}px;background:{color};border-radius:1px;'></div>")
+    return f"<div style='display:flex;gap:2px;align-items:flex-end;'>{''.join(bars)}</div>"
+
+
+_TIMELINE_PILL_STYLE = (
+    "display:inline-block;padding:4px 10px;border-radius:999px;"
+    "background:#2a2a2a;border:1px solid #404040;color:#f5f5f5;"
+    "font-size:11px;line-height:1.4;white-space:normal;max-width:100%;"
+)
+
+
+def _timeline_data_source_label(source: dict) -> str:
+    """Build the full display name for a timeline data source."""
+    vendor = str(source.get("vendor", "")).strip()
+    display_name = str(source.get("displayName", "")).strip()
+    if vendor and display_name:
+        return f"{vendor} · {display_name}"
+    if display_name:
+        return display_name
+    if vendor:
+        return vendor
+    return ""
+
+
+def _timeline_footer_html(event: dict) -> str:
+    """Build footer badges (data sources, severity, entities) for a timeline event."""
+    parts: list[str] = []
+
+    data_sources = event.get("dataSources")
+    if isinstance(data_sources, list):
+        for source in data_sources:
+            if not isinstance(source, dict):
+                continue
+            label = _timeline_data_source_label(source)
+            if label:
+                parts.append(f"<span style='{_TIMELINE_PILL_STYLE}'>{_escape_html(label)}</span>")
+
+    alert = event.get("alert")
+    if isinstance(alert, dict) and alert.get("displayName"):
+        severity_label = _timeline_alert_severity_label(alert.get("severity"))
+        parts.append(f"<span style='{_TIMELINE_PILL_STYLE}'>Severity: {_escape_html(severity_label)}</span>")
+
+    entities = event.get("entities")
+    if isinstance(entities, list):
+        for entity in entities:
+            if not isinstance(entity, dict):
+                continue
+            entity_type = str(entity.get("type", "")).strip()
+            category = str(entity.get("category", "")).strip()
+            value = str(entity.get("value", "")).strip()
+            if not value:
+                continue
+            meta_parts = [part for part in (entity_type, category) if part]
+            pill_text = value
+            if meta_parts:
+                pill_text = f"{pill_text} ({', '.join(meta_parts)})"
+            parts.append(f"<span style='{_TIMELINE_PILL_STYLE}'>{_escape_html(pill_text)}</span>")
+
+    if not parts:
+        return ""
+
+    return f"<div style='display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px;'>" f"{''.join(parts)}</div>"
+
+
+def _timeline_axis_html(is_last: bool) -> str:
+    """Render the vertical timeline axis (line only; Vega API has no timeline event type field)."""
+    line_bottom = "bottom:0;" if is_last else "bottom:-28px;"
+    return (
+        f"<div style='width:20px;flex-shrink:0;position:relative;align-self:stretch;min-height:20px;'>"
+        f"<div style='position:absolute;left:50%;top:0;width:2px;{line_bottom}"
+        f"background:#404040;transform:translateX(-50%);'></div></div>"
+    )
+
+
+def _timeline_event_row_html(event: dict, is_last: bool) -> str:
+    """Render a single timeline row (timestamp, axis line, content)."""
+    timestamp = _escape_html(_format_timeline_display_timestamp(event.get("timestamp")))
+    summary = _escape_html(str(event.get("summary", "")).strip() or "No summary provided.")
+    alert_data = event.get("alert")
+    content_parts: list[str] = []
+    if isinstance(alert_data, dict) and str(alert_data.get("displayName", "")).strip():
+        alert_name = _escape_html(str(alert_data.get("displayName", "")).strip())
+        severity_bars = _timeline_severity_bars_html(alert_data.get("severity"))
+        content_parts.append(
+            f"<div style='display:inline-flex;align-items:center;gap:10px;"
+            f"background:#141414;border:1px solid #333333;border-radius:10px;"
+            f"padding:10px 14px;margin-bottom:12px;max-width:100%;'>"
+            f"{severity_bars}"
+            f"<span style='color:#ffffff;font-size:14px;font-weight:600;line-height:1.4;'>"
+            f"{alert_name}</span></div>"
+        )
+
+    content_parts.append(f"<p style='margin:0;color:#e5e5e5;font-size:13px;line-height:1.65;'>{summary}</p>")
+    footer = _timeline_footer_html(event)
+    if footer:
+        content_parts.append(footer)
+
+    return (
+        f"<div style='display:flex;align-items:stretch;margin-bottom:28px;position:relative;'>"
+        f"<div style='width:148px;flex-shrink:0;text-align:right;padding-right:14px;"
+        f"padding-top:2px;color:#9ca3af;font-size:12px;font-family:monospace;'>{timestamp}</div>"
+        f"{_timeline_axis_html(is_last)}"
+        f"<div style='flex:1;min-width:0;padding-left:12px;padding-top:0;'>"
+        f"{''.join(content_parts)}</div></div>"
+    )
+
+
+def _format_timeline_events_html(timeline_events: list[dict]) -> str:
+    """Render Vega incident timeline as HTML (dark theme, three-column layout)."""
+    if not timeline_events:
+        return (
+            "<div style='background:#000000;color:#ffffff;padding:16px;font-family:"
+            "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;'>"
+            "<div style='font-size:15px;font-weight:600;margin-bottom:8px;'>Timeline</div>"
+            "<p style='margin:0;color:#9ca3af;font-size:13px;'>"
+            "No timeline events are available for this incident.</p></div>"
+        )
+
+    sorted_events = sorted(
+        timeline_events,
+        key=lambda event: str(event.get("timestamp", "")),
+    )
+    rows = [_timeline_event_row_html(event, is_last=index == len(sorted_events) - 1) for index, event in enumerate(sorted_events)]
+
+    return (
+        "<div style='background:#000000;color:#ffffff;padding:16px 16px 8px 16px;"
+        "font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;'>"
+        "<div style='font-size:15px;font-weight:600;margin-bottom:20px;color:#ffffff;'>"
+        "Timeline</div>"
+        f"<div style='position:relative;'>{''.join(rows)}</div></div>"
+    )
+
+
+def _build_vega_incident_custom_fields(raw: dict) -> dict[str, str]:
+    """Build CustomFields for Vega incidents (set directly on ingest, not via mapper)."""
+    custom_fields: dict[str, str] = {}
+    timeline_html = raw.get("vegaTimelineEvents")
+    if timeline_html:
+        custom_fields["vegatimelineevents"] = str(timeline_html)
     return custom_fields
 
 
@@ -523,11 +759,12 @@ def alert_to_incident(alert: dict, integration_url: str | None = None) -> dict:
     return xsoar_incident
 
 
-def incident_to_xsoar_incident(incident: dict) -> dict:
+def incident_to_xsoar_incident(incident: dict, timeline_events: list[dict] | None = None) -> dict:
     """Convert a Vega incident to an XSOAR incident.
 
     Args:
         incident: A single incident dict from the Vega API.
+        timeline_events: Optional timeline events from getIncidentsDetails.
 
     Returns:
         An XSOAR incident dict.
@@ -539,16 +776,23 @@ def incident_to_xsoar_incident(incident: dict) -> dict:
     # Inject vegaEntityType so the classifier transformer can route correctly
     raw = dict(incident)
     raw["vegaEntityType"] = "Vega Incident"
+    if timeline_events is not None:
+        raw["timelineEvents"] = timeline_events
+        raw["vegaTimelineEvents"] = _format_timeline_events_html(timeline_events)
     _apply_vega_entity_link(raw)
     _format_raw_entity_for_xsoar(raw)
 
-    return {
+    xsoar_incident: dict[str, Any] = {
         "name": f"{raw.get('name', 'Unknown')}",
         "occurred": created_at,
         "severity": severity,
         "type": "Vega Incident",
         "rawJSON": json.dumps(raw),
     }
+    custom_fields = _build_vega_incident_custom_fields(raw)
+    if custom_fields:
+        xsoar_incident["CustomFields"] = custom_fields
+    return xsoar_incident
 
 
 def _fetch_paginated_entities(
@@ -733,7 +977,16 @@ def fetch_incidents_command(
                 incident_id = incident.get("id", "")
                 if incident_id in incidents_last_ids:
                     continue
-                xsoar_incidents.append(incident_to_xsoar_incident(incident))
+                timeline_events: list[dict] = []
+                if incident_id:
+                    try:
+                        details = client.get_incident_details(str(incident_id))
+                        fetched_events = details.get("timelineEvents")
+                        if isinstance(fetched_events, list):
+                            timeline_events = [event for event in fetched_events if isinstance(event, dict)]
+                    except Exception as details_error:
+                        demisto.debug(f"Could not fetch timeline for Vega incident {incident_id}: {details_error}")
+                xsoar_incidents.append(incident_to_xsoar_incident(incident, timeline_events=timeline_events))
 
             next_run["incidents_last_fetch"], next_run["incidents_last_ids"] = _update_fetch_state(
                 incidents, incidents_last_fetch, incidents_last_ids

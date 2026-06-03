@@ -1,11 +1,11 @@
 {
-    "id": "incident_vegacreatedat",
+    "id": "incident_vegatimelineevents",
     "version": -1,
-    "name": "Vega Created At",
+    "name": "Vega Timeline Events",
     "ownerOnly": false,
-    "description": "The timestamp when this Vega alert was created.",
-    "cliName": "vegacreatedat",
-    "type": "shortText",
+    "description": "Chronological investigation timeline for a Vega incident, including alerts, data sources, and entities.",
+    "cliName": "vegatimelineevents",
+    "type": "html",
     "closeForm": false,
     "editForm": false,
     "required": false,
@@ -18,11 +18,11 @@
     "group": 0,
     "hidden": false,
     "associatedTypes": [
-        "Vega Alert"
+        "Vega Incident"
     ],
     "associatedToAll": false,
-    "unmapped": true,
-    "unsearchable": false,
+    "unmapped": false,
+    "unsearchable": true,
     "caseInsensitive": true,
     "sla": 0,
     "threshold": 72,

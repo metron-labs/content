@@ -1,9 +1,9 @@
 {
     "id": "incident_vegamitreattack",
     "version": -1,
-    "name": "Vega MITRE ATT&CK",
+    "name": "Vega MITRE ATT\u0026CK",
     "ownerOnly": false,
-    "description": "MITRE ATT&CK tactics and techniques associated with this Vega alert.",
+    "description": "MITRE ATT\u0026CK tactics and techniques associated with this Vega alert.",
     "cliName": "vegamitreattack",
     "type": "longText",
     "closeForm": false,

@@ -12,6 +12,7 @@ from Vega import (
     _format_bullet_list,
     _format_incident_findings,
     _format_raw_entity_for_xsoar,
+    _format_timeline_events_html,
     _update_fetch_state,
     alert_to_incident,
     fetch_incidents_command,
@@ -328,6 +329,7 @@ def test_fetch_incidents_command_pagination(mocker):
             "offset": 1,
         },
     ]
+    mock_client.get_incident_details.return_value = {"timelineEvents": []}
     mock_client.get_alerts.return_value = {"alerts": [], "total": 0, "limit": 200, "offset": 0}
 
     next_run, incidents = fetch_incidents_command(
@@ -523,6 +525,116 @@ def test_incident_to_xsoar_incident_formats_raw_json():
     assert raw["observables"] == "• host-1"
     assert raw["incidentFindings"] == "1. Activity detected on `host-1`"
     assert "link" not in raw
+
+
+def test_format_timeline_events_html_dark_theme_layout():
+    timeline = [
+        {
+            "id": "evt-1",
+            "timestamp": "2026-04-28T01:30:00Z",
+            "summary": "SSM enumeration detected.",
+            "entities": [],
+            "dataSources": [{"vendor": "AWS", "displayName": "CloudTrail"}],
+            "alert": {"id": "alert-1", "displayName": "AWS SSM Enumeration", "severity": 3},
+        },
+        {
+            "id": "evt-2",
+            "timestamp": "2026-04-28T02:00:00Z",
+            "summary": "Authorized scanner context.",
+            "entities": [
+                {
+                    "type": "ASSET",
+                    "category": "USERNAME",
+                    "value": "arn:aws:sts::890123456789:assumed-role/WizAccess-Role/wiz-scanner-session",
+                }
+            ],
+            "dataSources": [{"vendor": "Wiz", "displayName": "Wiz Issues"}],
+            "alert": None,
+        },
+    ]
+    formatted = _format_timeline_events_html(timeline)
+
+    assert "background:#000000" in formatted
+    assert "color:#ffffff" in formatted
+    assert "Timeline</div>" in formatted
+    assert "2026-04-28 01:30:00" in formatted
+    assert "AWS SSM Enumeration" in formatted
+    assert "AWS · CloudTrail" in formatted
+    assert "Wiz · Wiz Issues" in formatted
+    assert "Severity: High" in formatted
+    assert "SSM enumeration detected." in formatted
+    assert "arn:aws:sts::890123456789:assumed-role/WizAccess-Role/wiz-scanner-session" in formatted
+    assert formatted.count("align-items:stretch") == 2
+    assert "border-radius:50%" not in formatted
+
+
+def test_incident_to_xsoar_incident_includes_timeline_events():
+    timeline = [
+        {
+            "id": "evt-1",
+            "timestamp": "2026-04-28T01:30:00Z",
+            "summary": "Test event.",
+            "entities": [],
+            "dataSources": [],
+            "alert": None,
+        }
+    ]
+    incident = {
+        "id": "inc-1",
+        "name": "Test Incident",
+        "severity": "LOW",
+        "createdAt": TIMESTAMP_T1,
+    }
+    xsoar_incident = incident_to_xsoar_incident(incident, timeline_events=timeline)
+    raw = json.loads(xsoar_incident["rawJSON"])
+
+    assert raw["timelineEvents"] == timeline
+    assert "vegaTimelineEvents" in raw
+    assert xsoar_incident["CustomFields"]["vegatimelineevents"]
+    assert "Test event." in xsoar_incident["CustomFields"]["vegatimelineevents"]
+
+
+def test_fetch_incidents_command_fetches_timeline_details(mocker):
+    mocker.patch.object(demisto, "debug")
+    mock_client = mocker.Mock()
+    mock_client.get_incidents.return_value = {
+        "incidents": [{"id": "inc-1", "name": "Inc 1", "severity": "LOW", "createdAt": TIMESTAMP_T2}],
+        "total": 1,
+        "limit": 200,
+        "offset": 0,
+    }
+    mock_client.get_incident_details.return_value = {
+        "timelineEvents": [
+            {
+                "id": "evt-1",
+                "timestamp": TIMESTAMP_T2,
+                "summary": "Timeline summary.",
+                "entities": [],
+                "dataSources": [],
+                "alert": None,
+            }
+        ]
+    }
+    mock_client.get_alerts.return_value = {"alerts": [], "total": 0, "limit": 200, "offset": 0}
+
+    _, incidents = fetch_incidents_command(
+        client=mock_client,
+        last_run={},
+        fetch_alerts=False,
+        fetch_incidents=True,
+        alert_severities=None,
+        alert_statuses=None,
+        alert_verdicts=None,
+        incident_severities=None,
+        incident_statuses=None,
+        incident_verdicts=None,
+        first_fetch_time=FIRST_FETCH_TIME,
+    )
+
+    assert len(incidents) == 1
+    mock_client.get_incident_details.assert_called_once_with("inc-1")
+    raw = json.loads(incidents[0]["rawJSON"])
+    assert raw["timelineEvents"][0]["summary"] == "Timeline summary."
 
 
 def test_alert_to_incident_normalizes_api_link():

@@ -480,7 +480,7 @@
 					},
 					{
 						"displayType": "ROW",
-						"h": 3,
+						"h": 7,
 						"hideItemTitleOnlyOne": true,
 						"hideName": false,
 						"i": "js3vpk9qph-3038823d-d212-4810-901f-68ee05e66c73",
@@ -502,6 +502,32 @@
 						"static": false,
 						"w": 1,
 						"x": 2,
+						"y": 6
+					},
+					{
+						"displayType": "ROW",
+						"h": 7,
+						"hideItemTitleOnlyOne": true,
+						"hideName": true,
+						"i": "js3vpk9qph-vega-timeline-events-section",
+						"items": [
+							{
+								"endCol": 4,
+								"fieldId": "vegatimelineevents",
+								"height": 106,
+								"id": "a8f3c2e1-4b5d-6e7f-8a9b-0c1d2e3f4a5b",
+								"index": 0,
+								"sectionItemType": "field",
+								"startCol": 0
+							}
+						],
+						"maxW": 3,
+						"minH": 4,
+						"moved": false,
+						"name": "Investigation Timeline",
+						"static": false,
+						"w": 2,
+						"x": 0,
 						"y": 6
 					}
 				],

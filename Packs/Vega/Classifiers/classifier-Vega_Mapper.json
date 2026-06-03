@@ -104,6 +104,9 @@
                 "Vega Incident Link": {
                     "simple": "link"
                 },
+                "Vega Timeline Events": {
+                    "simple": "vegaTimelineEvents"
+                },
                 "External Link": {
                     "simple": "link"
                 }
