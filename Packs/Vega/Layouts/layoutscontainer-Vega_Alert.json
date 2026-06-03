@@ -398,6 +398,17 @@
 								"index": 0,
 								"sectionItemType": "field",
 								"startCol": 3
+							},
+							{
+								"dropEffect": "move",
+								"endCol": 5,
+								"fieldId": "externallink",
+								"height": 53,
+								"id": "3a33a757-4cf8-4eb9-8d82-0a081faf752e",
+								"index": 1,
+								"listId": "kmppymlq3f-0aa82e68-9bb3-4b07-89a7-cdc083bf6679",
+								"sectionItemType": "field",
+								"startCol": 3
 							}
 						],
 						"maxW": 3,

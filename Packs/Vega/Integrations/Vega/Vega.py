@@ -52,6 +52,7 @@ GET_INCIDENTS_QUERY = (
 BACKFILL_HISTORY_MIN_DAYS = 0
 BACKFILL_HISTORY_MAX_DAYS = 365
 DEFAULT_BACKFILL_HISTORY_DAYS = 30
+GET_ALERTS_FETCH_LIMIT = 100  # Set to None for production (unlimited alert fetch)
 
 
 def parse_backfill_history(
@@ -445,16 +446,18 @@ def incident_to_xsoar_incident(incident: dict) -> dict:
 def _fetch_paginated_entities(
     fetch_func: Callable[..., dict],
     entities_key: str,
+    max_entities: int | None = None,
     **fetch_kwargs: Any,
 ) -> list[dict]:
     """Fetch entities from the Vega API with offset-based pagination.
 
-    Paginates through all available pages until the API reports no more results.
-    No client-side limit is applied; offset is advanced until every record is retrieved.
+    Paginates through all available pages until the API reports no more results,
+    or until max_entities is reached when set.
 
     Args:
         fetch_func: Client method (get_alerts or get_incidents).
         entities_key: Response key holding the entity list ('alerts' or 'incidents').
+        max_entities: Optional cap on total entities to retrieve across all pages.
         **fetch_kwargs: Keyword arguments forwarded to fetch_func (excluding limit/offset).
 
     Returns:
@@ -464,7 +467,14 @@ def _fetch_paginated_entities(
     offset = 0
 
     while True:
-        response = fetch_func(offset=offset, **fetch_kwargs)
+        request_kwargs = dict(fetch_kwargs)
+        if max_entities is not None:
+            remaining = max_entities - len(entities)
+            if remaining <= 0:
+                break
+            request_kwargs["limit"] = remaining
+
+        response = fetch_func(offset=offset, **request_kwargs)
 
         api_error = response.get("error")
         if api_error and api_error.get("message"):
@@ -475,6 +485,10 @@ def _fetch_paginated_entities(
             break
 
         entities.extend(page)
+        if max_entities is not None and len(entities) >= max_entities:
+            entities = entities[:max_entities]
+            break
+
         total = response.get("total")
 
         if total is not None and offset + len(page) >= total:
@@ -570,6 +584,7 @@ def fetch_incidents_command(
             alerts = _fetch_paginated_entities(
                 client.get_alerts,
                 entities_key="alerts",
+                max_entities=GET_ALERTS_FETCH_LIMIT,
                 severities=alert_severities,
                 statuses=alert_statuses,
                 verdicts=alert_verdicts,

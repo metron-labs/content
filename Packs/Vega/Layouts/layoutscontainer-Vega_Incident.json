@@ -399,7 +399,7 @@
 							{
 								"endCol": 2,
 								"fieldId": "vegaincidentid",
-								"height": 26,
+								"height": 53,
 								"id": "2879156c-323b-48e8-874b-971157e5ecf3",
 								"index": 0,
 								"sectionItemType": "field",
@@ -408,7 +408,7 @@
 							{
 								"endCol": 2,
 								"fieldId": "severity",
-								"height": 26,
+								"height": 53,
 								"id": "c9000510-fa11-4568-a9a8-c0b2b362638e",
 								"index": 1,
 								"sectionItemType": "field",
@@ -417,7 +417,7 @@
 							{
 								"endCol": 2,
 								"fieldId": "verdict",
-								"height": 26,
+								"height": 53,
 								"id": "a5ad0dc4-2bd1-4656-84f9-c4d7c03f7db1",
 								"index": 2,
 								"sectionItemType": "field",
@@ -426,9 +426,18 @@
 							{
 								"endCol": 2,
 								"fieldId": "vegastatus",
-								"height": 26,
+								"height": 53,
 								"id": "19a38271-38da-4261-bd27-947a28a0a2ed",
 								"index": 3,
+								"sectionItemType": "field",
+								"startCol": 0
+							},
+							{
+								"endCol": 2,
+								"fieldId": "externallink",
+								"height": 53,
+								"id": "0aaefba2-9893-4edc-bcda-562d402d2b90",
+								"index": 4,
 								"sectionItemType": "field",
 								"startCol": 0
 							}
