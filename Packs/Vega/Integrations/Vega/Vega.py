@@ -52,7 +52,7 @@ GET_INCIDENTS_QUERY = (
 BACKFILL_HISTORY_MIN_DAYS = 0
 BACKFILL_HISTORY_MAX_DAYS = 365
 DEFAULT_BACKFILL_HISTORY_DAYS = 30
-GET_ALERTS_FETCH_LIMIT = 100  # Set to None for production (unlimited alert fetch)
+GET_ALERTS_FETCH_LIMIT = None  # Set to None for production (unlimited alert fetch)
 
 
 def parse_backfill_history(
@@ -374,6 +374,33 @@ def _format_incident_findings(
     return "\n".join(formatted_findings)
 
 
+def _api_to_app_url(url: str) -> str:
+    """Replace the api host subdomain with app in a Vega platform URL."""
+    return url.strip().replace("://api.", "://app.")
+
+
+def _platform_ui_base_url(integration_url: str) -> str:
+    """Derive the Vega app UI base URL from the configured integration URL."""
+    base = integration_url.rstrip("/")
+    if base.lower().endswith("/api/v1"):
+        base = base[: -len("/api/v1")]
+    return _api_to_app_url(base)
+
+
+def _apply_vega_entity_link(raw: dict, integration_url: str | None = None) -> None:
+    """Normalize or build Vega platform UI links before XSOAR ingestion."""
+    api_link = raw.get("link")
+    if api_link:
+        raw["link"] = _api_to_app_url(str(api_link))
+        return
+
+    entity_type = raw.get("vegaEntityType")
+    entity_id = raw.get("id", "")
+    if entity_type == "Vega Alert" and entity_id and integration_url:
+        platform_base = _platform_ui_base_url(integration_url)
+        raw["link"] = f"{platform_base.rstrip('/')}/incidents/alerts/{entity_id}"
+
+
 def _format_raw_entity_for_xsoar(raw: dict) -> None:
     """Format display-oriented list fields in raw entity data before XSOAR ingestion."""
     if "dataSources" in raw:
@@ -390,11 +417,12 @@ def _format_raw_entity_for_xsoar(raw: dict) -> None:
         raw["incidentFindings"] = _format_incident_findings(raw.get("incidentFindings"), assets, observables)
 
 
-def alert_to_incident(alert: dict) -> dict:
+def alert_to_incident(alert: dict, integration_url: str | None = None) -> dict:
     """Convert a Vega alert to an XSOAR incident.
 
     Args:
         alert: A single alert dict from the Vega API.
+        integration_url: The Vega integration instance URL used to derive alert links.
 
     Returns:
         An XSOAR incident dict.
@@ -405,6 +433,7 @@ def alert_to_incident(alert: dict) -> dict:
     # Inject vegaEntityType so the classifier transformer can route correctly
     raw = dict(alert)
     raw["vegaEntityType"] = "Vega Alert"
+    _apply_vega_entity_link(raw, integration_url=integration_url)
     _format_raw_entity_for_xsoar(raw)
 
     return {
@@ -432,6 +461,7 @@ def incident_to_xsoar_incident(incident: dict) -> dict:
     # Inject vegaEntityType so the classifier transformer can route correctly
     raw = dict(incident)
     raw["vegaEntityType"] = "Vega Incident"
+    _apply_vega_entity_link(raw)
     _format_raw_entity_for_xsoar(raw)
 
     return {
@@ -551,12 +581,14 @@ def fetch_incidents_command(
     incident_statuses: list[str] | None,
     incident_verdicts: list[str] | None,
     first_fetch_time: str,
+    integration_url: str | None = None,
 ) -> tuple[dict, list[dict]]:
     """Fetch alerts and/or incidents from Vega and return them as XSOAR incidents.
 
     Args:
         client: The Vega API client.
         last_run: The last run dict from demisto.getLastRun().
+        integration_url: The Vega integration instance URL used to derive alert links.
         fetch_alerts: Whether to fetch alerts.
         fetch_incidents: Whether to fetch incidents.
         alert_severities: Filter alerts by severity.
@@ -596,7 +628,7 @@ def fetch_incidents_command(
                 alert_id = alert.get("id", "")
                 if alert_id in alerts_last_ids:
                     continue
-                xsoar_incidents.append(alert_to_incident(alert))
+                xsoar_incidents.append(alert_to_incident(alert, integration_url=integration_url))
 
             next_run["alerts_last_fetch"], next_run["alerts_last_ids"] = _update_fetch_state(
                 alerts, alerts_last_fetch, alerts_last_ids
@@ -706,6 +738,7 @@ def main() -> None:
                 incident_statuses=incident_statuses,
                 incident_verdicts=incident_verdicts,
                 first_fetch_time=first_fetch_time,
+                integration_url=base_url,
             )
             demisto.setLastRun(next_run)
             demisto.incidents(xsoar_incidents)

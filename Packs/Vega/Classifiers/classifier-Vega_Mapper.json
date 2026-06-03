@@ -53,6 +53,12 @@
                 },
                 "Vega Related Incidents": {
                     "simple": "relatedIncidents"
+                },
+                "Vega Alert Link": {
+                    "simple": "link"
+                },
+                "External Link": {
+                    "simple": "link"
                 }
             }
         },

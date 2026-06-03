@@ -444,11 +444,12 @@ def test_alert_to_incident_formats_raw_json():
         "createdAt": TIMESTAMP_T1,
         "dataSources": ["CloudTrail"],
     }
-    xsoar_incident = alert_to_incident(alert)
+    xsoar_incident = alert_to_incident(alert, integration_url="https://api.vega.io")
     raw = json.loads(xsoar_incident["rawJSON"])
 
     assert raw["dataSources"] == "• CloudTrail"
     assert raw["vegaEntityType"] == "Vega Alert"
+    assert raw["link"] == "https://app.vega.io/incidents/alerts/alert-1"
     assert set(raw.keys()) == {
         "id",
         "name",
@@ -456,6 +457,7 @@ def test_alert_to_incident_formats_raw_json():
         "createdAt",
         "dataSources",
         "vegaEntityType",
+        "link",
     }
 
 
@@ -475,3 +477,31 @@ def test_incident_to_xsoar_incident_formats_raw_json():
     assert raw["assets"] == "• host-1"
     assert raw["observables"] == "• host-1"
     assert raw["incidentFindings"] == "1. Activity detected on `host-1`"
+    assert "link" not in raw
+
+
+def test_alert_to_incident_normalizes_api_link():
+    alert = {
+        "id": "alert-1",
+        "name": "Test Alert",
+        "severity": "HIGH",
+        "createdAt": TIMESTAMP_T1,
+        "link": "https://api.vega.io/incidents/alerts/alert-1",
+    }
+    raw = json.loads(alert_to_incident(alert)["rawJSON"])
+
+    assert raw["link"] == "https://app.vega.io/incidents/alerts/alert-1"
+
+
+def test_incident_to_xsoar_incident_normalizes_api_link():
+    incident_id = "019e1b27-6d49-7ea1-a9d2-f2fe9227738f"
+    incident = {
+        "id": incident_id,
+        "name": "Test Incident",
+        "severity": "LOW",
+        "createdAt": TIMESTAMP_T1,
+        "link": f"https://api.vega.io/incidents/list/{incident_id}",
+    }
+    raw = json.loads(incident_to_xsoar_incident(incident)["rawJSON"])
+
+    assert raw["link"] == f"https://app.vega.io/incidents/list/{incident_id}"
