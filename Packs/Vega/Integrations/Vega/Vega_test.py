@@ -6,6 +6,7 @@ from CommonServerUserPython import *
 import pytest
 
 from Vega import (
+    _format_mitre_attack,
     Client,
     _fetch_paginated_entities,
     _format_bullet_list,
@@ -420,6 +421,50 @@ def test_format_raw_entity_for_xsoar_alert():
     assert set(alert.keys()) == {"id", "name", "dataSources"}
 
 
+def test_format_mitre_attack():
+    assert _format_mitre_attack(None) is None
+    assert _format_mitre_attack({}) is None
+    assert (
+        _format_mitre_attack({"mitreTactics": ["Discovery"], "mitreTechniques": ["Cloud Infrastructure Discovery"]})
+        == "• Discovery\n• Cloud Infrastructure Discovery"
+    )
+    assert _format_mitre_attack({"mitreTactics": "Discovery", "mitreTechniques": "T1526"}) == "• Discovery\n• T1526"
+
+
+def test_format_raw_entity_for_xsoar_mitre_attack():
+    alert = {
+        "id": "alert-1",
+        "mitre": {"mitreTactics": ["Discovery"], "mitreTechniques": ["T1526"]},
+    }
+    _format_raw_entity_for_xsoar(alert)
+
+    assert alert["vegaMitreAttack"] == "• Discovery\n• T1526"
+
+
+def test_format_mitre_attack_object_items():
+    mitre = {
+        "mitreTactics": [{"name": "Discovery", "id": "TA0007"}],
+        "mitreTechniques": [{"techniqueName": "Cloud Infrastructure Discovery", "techniqueId": "T1526"}],
+    }
+    assert _format_mitre_attack(mitre) == "• Discovery\n• Cloud Infrastructure Discovery"
+
+
+def test_alert_to_incident_sets_vega_mitre_attack():
+    alert = {
+        "id": "alert-1",
+        "name": "Test Alert",
+        "severity": "HIGH",
+        "createdAt": TIMESTAMP_T1,
+        "mitre": {"mitreTactics": ["Discovery"], "mitreTechniques": ["T1526"]},
+    }
+    xsoar_incident = alert_to_incident(alert)
+    raw = json.loads(xsoar_incident["rawJSON"])
+
+    assert raw["vegaMitreAttack"] == "• Discovery\n• T1526"
+    assert xsoar_incident["CustomFields"]["vegamitreattack"] == "• Discovery\n• T1526"
+    assert xsoar_incident["CustomFields"]["vegacreatedat"] == TIMESTAMP_T1
+
+
 def test_format_raw_entity_for_xsoar_incident():
     incident = {
         "id": "inc-1",
@@ -449,7 +494,7 @@ def test_alert_to_incident_formats_raw_json():
 
     assert raw["dataSources"] == "• CloudTrail"
     assert raw["vegaEntityType"] == "Vega Alert"
-    assert raw["link"] == "https://app.vega.io/incidents/alerts/alert-1"
+    assert raw["link"] == "https://app.vega.io/incidents/alerts/investigation/alert-1"
     assert set(raw.keys()) == {
         "id",
         "name",

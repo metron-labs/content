@@ -57,7 +57,7 @@ configuration:
     type: 1
     section: Vega Entities
     required: true
-    defaultvalue: "30"
+    defaultvalue: "365"
   - display: Alert Severities to fetch
     additionalinfo: Filter alerts by severity. If empty, all severities are fetched.
     name: alert_severities

@@ -52,7 +52,7 @@ GET_INCIDENTS_QUERY = (
 BACKFILL_HISTORY_MIN_DAYS = 0
 BACKFILL_HISTORY_MAX_DAYS = 365
 DEFAULT_BACKFILL_HISTORY_DAYS = 30
-GET_ALERTS_FETCH_LIMIT = None  # Set to None for production (unlimited alert fetch)
+GET_ALERTS_FETCH_LIMIT = 200  # Set to None for production (unlimited alert fetch)
 
 
 def parse_backfill_history(
@@ -310,7 +310,10 @@ class Client(BaseClient):
 
 
 def _normalize_list_items(value: Any) -> list[str]:
-    """Extract string items from a list field value."""
+    """Extract string items from a list or scalar field value."""
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
     if not isinstance(value, list):
         return []
     items: list[str] = []
@@ -318,7 +321,11 @@ def _normalize_list_items(value: Any) -> list[str]:
         if item is None:
             continue
         if isinstance(item, dict):
-            items.append(json.dumps(item))
+            label = _mitre_item_label(item)
+            if label:
+                items.append(label)
+            else:
+                items.append(json.dumps(item))
         else:
             text = str(item).strip()
             if text:
@@ -334,6 +341,72 @@ def _format_bullet_list(value: Any) -> Any:
     if not items:
         return value
     return "\n".join(f"• {item}" for item in items)
+
+
+def _mitre_item_label(item: dict) -> str:
+    """Extract a display label from a MITRE tactic/technique object."""
+    for key in ("name", "displayName", "techniqueName", "tacticName", "id", "techniqueId", "tacticId"):
+        value = item.get(key)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+MITRE_TACTIC_KEYS = ("mitreTactics", "mitre_tactics", "tactics")
+MITRE_TECHNIQUE_KEYS = ("mitreTechniques", "mitre_techniques", "techniques")
+
+
+def _get_first_mitre_value(mitre: dict, keys: tuple[str, ...]) -> Any:
+    """Return the first present MITRE tactic/technique value from supported API key names."""
+    for key in keys:
+        if key in mitre and mitre.get(key) is not None:
+            return mitre.get(key)
+    return None
+
+
+def _format_mitre_attack(mitre: Any) -> str | None:
+    """Merge MITRE tactics and techniques into a newline-separated bullet list."""
+    if not isinstance(mitre, dict):
+        return None
+    tactics = _get_first_mitre_value(mitre, MITRE_TACTIC_KEYS)
+    techniques = _get_first_mitre_value(mitre, MITRE_TECHNIQUE_KEYS)
+    items = _normalize_list_items(tactics) + _normalize_list_items(techniques)
+    if not items:
+        return None
+    return "\n".join(f"• {item}" for item in items)
+
+
+def _apply_vega_mitre_attack_format(raw: dict) -> None:
+    """Populate vegaMitreAttack in raw JSON for visibility in the incident context."""
+    mitre = raw.get("mitre")
+    if isinstance(mitre, dict):
+        mitre_payload: dict[str, Any] = mitre
+    elif raw.get("mitreTactics") is not None or raw.get("mitreTechniques") is not None:
+        mitre_payload = {
+            "mitreTactics": raw.get("mitreTactics"),
+            "mitreTechniques": raw.get("mitreTechniques"),
+        }
+    else:
+        demisto.debug("Vega alert has no MITRE data to format.")
+        return
+
+    mitre_attack = _format_mitre_attack(mitre_payload)
+    if mitre_attack:
+        raw["vegaMitreAttack"] = mitre_attack
+    else:
+        demisto.debug(f"Vega MITRE payload could not be formatted: {mitre_payload!r}")
+
+
+def _build_vega_alert_custom_fields(raw: dict) -> dict[str, str]:
+    """Build CustomFields for Vega alerts (set directly on ingest, not via mapper)."""
+    custom_fields: dict[str, str] = {}
+    mitre_attack = raw.get("vegaMitreAttack")
+    if mitre_attack:
+        custom_fields["vegamitreattack"] = str(mitre_attack)
+    created_at = raw.get("createdAt")
+    if created_at:
+        custom_fields["vegacreatedat"] = str(created_at)
+    return custom_fields
 
 
 def _highlight_values_in_text(text: str, values: set[str]) -> str:
@@ -398,7 +471,7 @@ def _apply_vega_entity_link(raw: dict, integration_url: str | None = None) -> No
     entity_id = raw.get("id", "")
     if entity_type == "Vega Alert" and entity_id and integration_url:
         platform_base = _platform_ui_base_url(integration_url)
-        raw["link"] = f"{platform_base.rstrip('/')}/incidents/alerts/{entity_id}"
+        raw["link"] = f"{platform_base.rstrip('/')}/incidents/alerts/investigation/{entity_id}"
 
 
 def _format_raw_entity_for_xsoar(raw: dict) -> None:
@@ -415,6 +488,7 @@ def _format_raw_entity_for_xsoar(raw: dict) -> None:
         raw["observables"] = _format_bullet_list(observables)
     if "incidentFindings" in raw:
         raw["incidentFindings"] = _format_incident_findings(raw.get("incidentFindings"), assets, observables)
+    _apply_vega_mitre_attack_format(raw)
 
 
 def alert_to_incident(alert: dict, integration_url: str | None = None) -> dict:
@@ -436,13 +510,17 @@ def alert_to_incident(alert: dict, integration_url: str | None = None) -> dict:
     _apply_vega_entity_link(raw, integration_url=integration_url)
     _format_raw_entity_for_xsoar(raw)
 
-    return {
+    xsoar_incident: dict[str, Any] = {
         "name": f"{raw.get('name', 'Unknown')}",
         "occurred": created_at,
         "severity": severity,
         "type": "Vega Alert",
         "rawJSON": json.dumps(raw),
     }
+    custom_fields = _build_vega_alert_custom_fields(raw)
+    if custom_fields:
+        xsoar_incident["CustomFields"] = custom_fields
+    return xsoar_incident
 
 
 def incident_to_xsoar_incident(incident: dict) -> dict:

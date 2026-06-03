@@ -352,7 +352,7 @@
 							},
 							{
 								"endCol": 2,
-								"fieldId": "vegacreatedby",
+								"fieldId": "vegacreatedat",
 								"height": 53,
 								"id": "ee9a3138-38d8-4ce1-94ac-ef47d60ece61",
 								"index": 1,
@@ -382,11 +382,13 @@
 								"startCol": 2
 							},
 							{
+								"dropEffect": "move",
 								"endCol": 3,
-								"fieldId": "vegamitretactics",
+								"fieldId": "vegamitreattack",
 								"height": 53,
-								"id": "69a869cd-1a33-4207-bd03-06411c8d955f",
+								"id": "23c75671-398d-4056-84ba-7d497b6e6406",
 								"index": 1,
+								"listId": "kmppymlq3f-0aa82e68-9bb3-4b07-89a7-cdc083bf6679",
 								"sectionItemType": "field",
 								"startCol": 2
 							},
@@ -405,7 +407,7 @@
 								"fieldId": "externallink",
 								"height": 53,
 								"id": "3a33a757-4cf8-4eb9-8d82-0a081faf752e",
-								"index": 1,
+								"index": 3,
 								"listId": "kmppymlq3f-0aa82e68-9bb3-4b07-89a7-cdc083bf6679",
 								"sectionItemType": "field",
 								"startCol": 3
