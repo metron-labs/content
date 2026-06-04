@@ -1,4 +1,4 @@
-An IoT vulnerability post processing script to resolve the vulnerability incident in IoT security portal using the API.
+An IoT vulnerability post processing script to resolve the vulnerability incident in Device Security portal using the API.
 
 ## Script Data
 
@@ -7,10 +7,10 @@ An IoT vulnerability post processing script to resolve the vulnerability inciden
 | **Name** | **Description** |
 | --- | --- |
 | Script Type | python3 |
-| Tags | iot, post-processing |
+| Tags | iot, device security, post-processing |
 | Cortex XSOAR Version | 5.5.0 |
 
-This script is executing the 'iot-security-resolve-vuln' command to resolve a vulnerability in the Palo Alto Networks IoT security portal during post-processing.
+This script is executing the 'iot-security-resolve-vuln' command to resolve a vulnerability in the Palo Alto Networks Device Security portal during post-processing.
 
 ## Inputs
 

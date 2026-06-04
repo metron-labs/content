@@ -1,4 +1,4 @@
-IoT alert post processing script to resolve the alert in IoT security portal using API.
+IoT alert post processing script to resolve the alert in Device Security portal using API.
 
 ## Script Data
 
@@ -7,10 +7,10 @@ IoT alert post processing script to resolve the alert in IoT security portal usi
 | **Name** | **Description** |
 | --- | --- |
 | Script Type | python3 |
-| Tags | iot, post-processing |
+| Tags | iot, device security, post-processing |
 | Cortex XSOAR Version | 5.5.0 |
 
-This script executes the 'iot-security-resolve-alert' command to resolve an alert in PANW IoT security portal during post-processing.
+This script executes the 'iot-security-resolve-alert' command to resolve an alert in PANW Device Security portal during post-processing.
 
 ## Inputs
 

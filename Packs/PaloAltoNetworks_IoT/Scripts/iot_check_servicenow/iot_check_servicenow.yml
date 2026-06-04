@@ -5,7 +5,7 @@ commonfields:
 name: iot-security-check-servicenow
 script: '-'
 tags:
-- iot
+- device security
 timeout: '0'
 type: python
 subtype: python3

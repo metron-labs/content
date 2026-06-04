@@ -1,4 +1,4 @@
-Close the XSOAR incident if the IoT ServiceNow ticket was closed. This command should be run in a Job.
+Close the XSOAR incident if the Device Security ServiceNow ticket was closed. This command should be run in a Job.
 
 ## Script Data
 
@@ -7,7 +7,7 @@ Close the XSOAR incident if the IoT ServiceNow ticket was closed. This command s
 | **Name** | **Description** |
 | --- | --- |
 | Script Type | python3 |
-| Tags | iot |
+| Tags | iot, device security |
 | Cortex XSOAR Version | 5.5.0 |
 
 This script is run by a playbook 'iot-check-service-playbook', that is run by a recurring XSOAR job.

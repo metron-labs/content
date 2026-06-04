@@ -6,7 +6,7 @@ enabled: true
 name: iot-security-vuln-post-processing
 script: '-'
 tags:
-- iot
+- device security
 - post-processing
 timeout: '0'
 type: python

@@ -1,5 +1,6 @@
 import json
 import time
+import base64
 from datetime import UTC, datetime
 from typing import Any
 
@@ -38,15 +39,24 @@ class Client(BaseClient):
         proxy=False,
         ok_codes=(),
         headers=None,
+        is_scm=False,
     ):
         super().__init__(base_url, verify=verify, proxy=proxy, ok_codes=ok_codes, headers=headers)
         self.tenant_id = tenant_id
+        self.is_scm = is_scm
         self.api_timeout = api_timeout
         self.first_fetch = first_fetch
         self.max_fetch = min(max_fetch, PAGELENGTH)
 
     def _http_request(self, **kwargs):  # type: ignore[override]
         try:
+            params = kwargs.get("params", {})
+
+            if not self.is_scm:
+                params["customerid"] = self.tenant_id
+
+            kwargs["params"] = params
+
             return super()._http_request(**kwargs)
         except DemistoException as error:
             error_message = error.args[0]
@@ -65,17 +75,13 @@ class Client(BaseClient):
         """
         Get a device from IoT security portal by device ID
         """
-        return self._http_request(
-            method="GET", url_suffix="/device", params={"customerid": self.tenant_id, "deviceid": id}, timeout=self.api_timeout
-        )
+        return self._http_request(method="GET", url_suffix="/device", params={"deviceid": id}, timeout=self.api_timeout)
 
     def get_device_by_ip(self, ip):
         """
         Get a device from IoT security portal by ip
         """
-        return self._http_request(
-            method="GET", url_suffix="/device/ip", params={"customerid": self.tenant_id, "ip": ip}, timeout=self.api_timeout
-        )
+        return self._http_request(method="GET", url_suffix="/device/ip", params={"ip": ip}, timeout=self.api_timeout)
 
     def list_alerts(self, stime="-1", offset=0, pagelength=100, sortdirection="asc"):
         """
@@ -85,7 +91,6 @@ class Client(BaseClient):
             method="GET",
             url_suffix="/alert/list",
             params={
-                "customerid": self.tenant_id,
                 "offset": offset,
                 "pagelength": pagelength,
                 "stime": stime,
@@ -106,7 +111,6 @@ class Client(BaseClient):
             method="GET",
             url_suffix="/vulnerability/list",
             params={
-                "customerid": self.tenant_id,
                 "offset": offset,
                 "pagelength": pagelength,
                 "stime": stime,
@@ -126,7 +130,6 @@ class Client(BaseClient):
             method="GET",
             url_suffix="/device/list",
             params={
-                "customerid": self.tenant_id,
                 "filter_monitored": "no",
                 "offset": offset,
                 "pagelength": pagelength,
@@ -146,7 +149,7 @@ class Client(BaseClient):
         return self._http_request(
             method="PUT",
             url_suffix="/alert/update",
-            params={"customerid": self.tenant_id, "id": alert_id},
+            params={"id": alert_id},
             json_data={"resolved": "yes", "reason": reason, "reason_type": [reason_type]},
             timeout=self.api_timeout,
         )
@@ -158,7 +161,6 @@ class Client(BaseClient):
         return self._http_request(
             method="PUT",
             url_suffix="/vulnerability/update",
-            params={"customerid": self.tenant_id},
             json_data={"action": "mitigate", "full_name": full_name, "reason": reason, "ticketIdList": [vuln_id]},
             timeout=self.api_timeout,
         )
@@ -211,6 +213,77 @@ def arg_to_timestamp(arg: Any, arg_name: str, required: bool = False) -> int | N
         # Convert to int if the input is a float
         return int(arg)
     raise ValueError(f'Invalid date: "{arg}"')
+
+
+def get_scm_access_token(token_base_url, tsg_id, client_id, client_secret, verify_certificate=True, proxy=False):
+    try:
+        integration_context = get_integration_context()
+        access_token = integration_context.get("scm_access_token")
+        expires_on = integration_context.get("scm_expires_on")
+        scope = integration_context.get("scm_scope", [])
+
+        if (
+            integration_context.get("scm_client_id") == client_id
+            and integration_context.get("scm_client_secret") == client_secret
+            and integration_context.get("scm_tsg_id") == tsg_id
+            and access_token
+            and expires_on
+            and datetime.fromisoformat(expires_on) > datetime.now()
+        ):
+            return access_token
+
+        auth = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+        client = BaseClient(
+            token_base_url,
+            verify=verify_certificate,
+            proxy=proxy,
+            ok_codes=(200, 201, 202, 204),
+            headers={"Authorization": f"Basic {auth}"},
+        )
+
+        token_data = client._http_request(
+            method="POST",
+            url_suffix="/oauth2/access_token",
+            data={
+                "grant_type": "client_credentials",
+                "scope": f"tsg_id:{tsg_id}",
+            },
+        )
+
+        access_token = token_data.get("access_token")
+        expires_in = token_data.get("expires_in", 0)
+        scope = token_data.get("scope")
+
+        set_integration_context(
+            {
+                "scm_access_token": access_token,
+                "scm_expires_on": str(datetime.now() + timedelta(seconds=int(expires_in))),
+                "scm_client_id": client_id,
+                "scm_client_secret": client_secret,
+                "scm_tsg_id": tsg_id,
+                "scm_scope": scope,
+            }
+        )
+
+        return access_token
+    except Exception as e:
+        raise Exception(f"Failed to generate or validate SCM access token: {str(e)}")
+
+
+def get_scm_ui_base_url(is_staging):
+    if is_staging:
+        return "https://stratacloudmanager.qa.appsvc.paloaltonetworks.com"
+    return "https://stratacloudmanager.paloaltonetworks.com"
+
+
+def get_scm_alert_url(alert_id, is_staging):
+    return f"{get_scm_ui_base_url(is_staging)}/insights/iot-security/alerts/security-alerts/alert-detail?id={alert_id}"
+
+
+def get_scm_vuln_url(vuln, is_staging):
+    vulnerability_name = vuln.get("vulnerability_name", "").replace(" ", "%20")
+    device_id = vuln.get("deviceid", "")
+    return f"{get_scm_ui_base_url(is_staging)}/insights/iot-security/assets/assets/overview/{device_id}?vulnerabilityname={vulnerability_name}"
 
 
 def test_module(client):
@@ -399,6 +472,8 @@ def fetch_incidents(client, last_run, is_test=False):
     last_alerts_fetch = last_run.get("last_alerts_fetch")
     last_vulns_fetch = last_run.get("last_vulns_fetch")
     max_fetch = client.max_fetch
+    is_scm = demisto.params().get("is_scm", False)
+    is_staging = demisto.params().get("is_staging", False)
 
     incidents = []
 
@@ -432,13 +507,18 @@ def fetch_incidents(client, last_run, is_test=False):
         for alert in alerts:
             alert_date_epoch = datetime.strptime(alert["date"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC).timestamp()
             alert_id = alert["zb_ticketid"].replace("alert-", "")
+            if is_scm:
+                iot_incident_url = get_scm_alert_url(alert_id, is_staging)
+            else:
+                iot_incident_url = f'{demisto.params()["url"]}/guardian/policies/alert?id={alert_id}'
+
             incident = {
                 "name": alert["name"],
                 "type": "IoT Alert",
                 "occurred": alert["date"],
                 "rawJSON": json.dumps(alert),
                 "details": alert.get("description", ""),
-                "CustomFields": {"iotincidenturl": f'{demisto.params()["url"]}/guardian/policies/alert?id={alert_id}'},
+                "CustomFields": {"iotincidenturl": iot_incident_url},
             }
             incidents.append(incident)
 
@@ -486,16 +566,22 @@ def fetch_incidents(client, last_run, is_test=False):
 
             vuln_date_epoch = datetime.strptime(detected_date, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC).timestamp()
             vuln_name_encoded = vuln["vulnerability_name"].replace(" ", "+")
+
+            if is_scm:
+                iot_incident_url = get_scm_vuln_url(vuln, is_staging)
+            else:
+                iot_incident_url = (
+                    f'{demisto.params()["url"]}/guardian/monitor/inventory/device/'
+                    f'{vuln["deviceid"]}?index=0&vuln=true&vulname={vuln_name_encoded}'
+                )
+
             incident = {
                 "name": vuln["name"],
                 "type": "IoT Vulnerability",
                 "occurred": detected_date,
                 "rawJSON": json.dumps(vuln),
                 "details": f'Device {vuln["name"]} at IP {vuln["ip"]}: {vuln["vulnerability_name"]}',
-                "CustomFields": {
-                    "iotincidenturl": f'{demisto.params()["url"]}/guardian/monitor/inventory/device/'
-                    f'{vuln["deviceid"]}?index=0&vuln=true&vulname={vuln_name_encoded}'
-                },
+                "CustomFields": {"iotincidenturl": iot_incident_url},
             }
             incidents.append(incident)
 
@@ -520,6 +606,12 @@ def main():
     access_key_id = demisto.params().get("credentials", {}).get("identifier") or demisto.params().get("access_key_id")
     secret_access_key = demisto.params().get("credentials", {}).get("password") or demisto.params().get("secret_access_key")
 
+    is_scm = demisto.params().get("is_scm", False)
+    is_staging = demisto.params().get("is_staging", False)
+    tsg_id = demisto.params().get("tsg_id")
+    client_id = demisto.params().get("client_id")
+    client_secret = demisto.params().get("client_secret")
+
     api_timeout = 60
     try:
         api_timeout = int(demisto.params().get("api_timeout", "60"))
@@ -540,12 +632,23 @@ def main():
     except ValueError:
         return_error("Maximum number of incidents per fetch needs to be an integer")
 
-    # get the service API url
-    base_url = urljoin(demisto.params()["url"], "/pub/v4.0")
-
     verify_certificate = not demisto.params().get("insecure", False)
 
     proxy = demisto.params().get("proxy", False)
+
+    if is_scm:
+        token_base_url = "https://auth.qa.appsvc.paloaltonetworks.com" if is_staging else "https://auth.apps.paloaltonetworks.com"
+        base_url = (
+            "https://qa.api.sase.paloaltonetworks.com/iot/pub/v1"
+            if is_staging
+            else "https://api.strata.paloaltonetworks.com/iot/pub/v1"
+        )
+        access_token = get_scm_access_token(token_base_url, tsg_id, client_id, client_secret, verify_certificate, proxy)
+        headers = {"Authorization": f"Bearer {access_token}"}
+    else:
+        # get the service API url
+        base_url = urljoin(demisto.params()["url"], "/pub/v4.0")
+        headers = {"X-Key-Id": access_key_id, "X-Access-Key": secret_access_key}
 
     demisto.info(f"Command being called is {demisto.command()}")
     try:
@@ -558,7 +661,8 @@ def main():
             verify=verify_certificate,
             proxy=proxy,
             ok_codes=(200,),
-            headers={"X-Key-Id": access_key_id, "X-Access-Key": secret_access_key},
+            headers=headers,
+            is_scm=is_scm,
         )
 
         if demisto.command() == "test-module":
