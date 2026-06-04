@@ -93,65 +93,76 @@ VEGA_TIMELINE_ALERT_SEVERITY_LABELS: dict[int, str] = {
     4: "Critical",
 }
 
-BACKFILL_HISTORY_MIN_DAYS = 0
-BACKFILL_HISTORY_MAX_DAYS = 365
-DEFAULT_BACKFILL_HISTORY_DAYS = 30
+BACKFILL_DAYS_MIN = 0
+BACKFILL_DAYS_MAX = 365
+DEFAULT_BACKFILL_DAYS = 30
 GET_ALERTS_FETCH_LIMIT = None  # Set to None for production (unlimited alert fetch)
 
 
-def parse_backfill_history(
-    backfill_history: str | int | None,
+def _parse_backfill_days(backfill_days: str | int | float | None) -> int | None:
+    """Parse a backfill day count from integration params."""
+    if backfill_days is None or str(backfill_days).strip() == "":
+        return None
+    try:
+        return int(float(str(backfill_days).strip()))
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_to_midnight_utc(value: datetime) -> datetime:
+    """Return the same calendar date at 00:00:00 UTC."""
+    return value.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def parse_backfill_days(
+    backfill_days: str | int | None,
     legacy_first_fetch: str | None = None,
 ) -> str:
     """Convert a backfill day count to an ISO 8601 UTC timestamp for the first fetch.
 
     Args:
-        backfill_history: Days before today (0 = start of today UTC, max 365).
+        backfill_days: Days before today (0 = start of today UTC, max 365).
         legacy_first_fetch: Deprecated relative time string from older instances (e.g. "30 days").
 
     Returns:
         An ISO 8601 UTC timestamp string, e.g. "2026-01-01T00:00:00Z".
     """
-    days: int | None = None
-    if backfill_history is not None and str(backfill_history).strip() != "":
-        try:
-            days = int(backfill_history)
-        except (TypeError, ValueError):
-            days = None
+    days = _parse_backfill_days(backfill_days)
 
     if days is None and legacy_first_fetch:
         parsed = arg_to_datetime(legacy_first_fetch, is_utc=True)
         if parsed:
-            return parsed.strftime("%Y-%m-%dT%H:%M:%SZ")  # type: ignore[union-attr]
+            start = _normalize_to_midnight_utc(parsed)  # type: ignore[arg-type]
+            return start.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     if days is None:
-        days = DEFAULT_BACKFILL_HISTORY_DAYS
+        days = DEFAULT_BACKFILL_DAYS
 
-    days = max(BACKFILL_HISTORY_MIN_DAYS, min(BACKFILL_HISTORY_MAX_DAYS, days))
-    now = datetime.now(UTC)
-    start = (now - timedelta(days=days)).replace(hour=0, minute=0, second=0, microsecond=0)
+    days = max(BACKFILL_DAYS_MIN, min(BACKFILL_DAYS_MAX, days))
+    today_start = _normalize_to_midnight_utc(datetime.now(UTC))
+    start = today_start - timedelta(days=days)
     return start.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def validate_backfill_history_days(backfill_history: str | int | None) -> None:
-    """Validate that backfill_history is an integer between 0 and 365 inclusive.
+def validate_backfill_days(backfill_days: str | int | None) -> None:
+    """Validate that backfill_days is an integer between 0 and 365 inclusive.
 
     Args:
-        backfill_history: Days before today (0 = start of today UTC, max 365).
+        backfill_days: Days before today (0 = start of today UTC, max 365).
 
     Raises:
         ValueError: If the value is not an integer or is outside the allowed range.
     """
-    if backfill_history is None or str(backfill_history).strip() == "":
+    if backfill_days is None or str(backfill_days).strip() == "":
         return
 
     try:
-        days = int(backfill_history)
+        days = int(backfill_days)
     except (TypeError, ValueError):
-        raise ValueError("backfill_history must be an integer between 0 and 365.")
+        raise ValueError("backfill_days must be an integer between 0 and 365.")
 
-    if days < BACKFILL_HISTORY_MIN_DAYS or days > BACKFILL_HISTORY_MAX_DAYS:
-        raise ValueError("backfill_history must be between 0 and 365.")
+    if days < BACKFILL_DAYS_MIN or days > BACKFILL_DAYS_MAX:
+        raise ValueError("backfill_days must be between 0 and 365.")
 
 
 class Client(BaseClient):
@@ -235,8 +246,8 @@ class Client(BaseClient):
 
         return response
 
-    def test_connection(self, backfill_history: str | int | None = None) -> dict:
-        validate_backfill_history_days(backfill_history)
+    def test_connection(self, backfill_days: str | int | None = None) -> dict:
+        validate_backfill_days(backfill_days)
 
         try:
             login_res: dict = self._http_request(
@@ -406,6 +417,25 @@ def _format_bullet_list(value: Any) -> Any:
     if not items:
         return value
     return "\n".join(f"• {item}" for item in items)
+
+
+VEGA_EMPTY_FIELD_DISPLAY = "N/A"
+
+
+def _empty_to_na(value: Any) -> str:
+    """Return a display placeholder when a Vega text field is missing or blank."""
+    if value is None:
+        return VEGA_EMPTY_FIELD_DISPLAY
+    text = str(value).strip()
+    return text if text else VEGA_EMPTY_FIELD_DISPLAY
+
+
+def _format_vega_detection_query_for_display(value: Any) -> str:
+    """Format a detection SQL query for markdown display, or N/A when empty."""
+    query = _empty_to_na(value)
+    if query == VEGA_EMPTY_FIELD_DISPLAY:
+        return query
+    return f"```sql\n{query}\n```"
 
 
 def _mitre_item_label(item: dict) -> str:
@@ -767,6 +797,10 @@ def _apply_vega_entity_link(raw: dict, integration_url: str | None = None) -> No
 
 def _format_raw_entity_for_xsoar(raw: dict) -> None:
     """Format display-oriented list fields in raw entity data before XSOAR ingestion."""
+    if raw.get("vegaEntityType") == "Vega Alert":
+        raw["detectionDescription"] = _empty_to_na(raw.get("detectionDescription"))
+        raw["detectionQuery"] = _format_vega_detection_query_for_display(raw.get("detectionQuery"))
+
     if "dataSources" in raw:
         raw["dataSources"] = _format_bullet_list(raw.get("dataSources"))
 
@@ -851,6 +885,46 @@ def incident_to_xsoar_incident(incident: dict, timeline_events: list[dict] | Non
     return xsoar_incident
 
 
+def _normalize_entity_id(entity: dict, id_key: str = "id") -> str:
+    """Return a stable string ID for deduplication."""
+    entity_id = entity.get(id_key)
+    if entity_id is None or entity_id == "":
+        return ""
+    return str(entity_id)
+
+
+def _parse_entity_created_at(created_at: Any) -> datetime | None:
+    """Parse a Vega createdAt value to UTC datetime."""
+    if not created_at:
+        return None
+    return arg_to_datetime(str(created_at), is_utc=True)  # type: ignore[return-value]
+
+
+def _format_fetch_timestamp(created_at: datetime) -> str:
+    """Format a datetime as the canonical ISO 8601 timestamp stored in last_run."""
+    return created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _load_seen_ids(last_run: dict, seen_key: str, legacy_ids_key: str) -> set[str]:
+    """Load cumulative seen IDs, including legacy boundary IDs from older last_run objects."""
+    seen_ids: set[str] = set()
+    for entity_id in last_run.get(seen_key, []):
+        if entity_id is not None and entity_id != "":
+            seen_ids.add(str(entity_id))
+    for entity_id in last_run.get(legacy_ids_key, []):
+        if entity_id is not None and entity_id != "":
+            seen_ids.add(str(entity_id))
+    return seen_ids
+
+
+def _register_seen_entities(entities: list[dict], seen_ids: set[str], id_key: str = "id") -> None:
+    """Add all fetched entity IDs to the cumulative seen set."""
+    for entity in entities:
+        entity_id = _normalize_entity_id(entity, id_key)
+        if entity_id:
+            seen_ids.add(entity_id)
+
+
 def _fetch_paginated_entities(
     fetch_func: Callable[..., dict],
     entities_key: str,
@@ -917,6 +991,9 @@ def _update_fetch_state(
 ) -> tuple[str, list[str]]:
     """Calculate next-run last_fetch and last_ids from a paginated API response.
 
+    Uses parsed UTC datetimes for comparisons so mixed timestamp formats (e.g. with/without
+    milliseconds) do not break cursor advancement or boundary ID tracking.
+
     Args:
         fetched_entities: All entities returned across paginated API calls.
         previous_last_fetch: ISO 8601 timestamp from the previous run.
@@ -930,21 +1007,63 @@ def _update_fetch_state(
     if not fetched_entities:
         return previous_last_fetch, previous_last_ids
 
-    max_time = max(entity.get(time_key, "") for entity in fetched_entities)
-    ids_at_max: list[str] = []
+    parsed_entities: list[tuple[dict, datetime]] = []
     for entity in fetched_entities:
-        if entity.get(time_key) == max_time:
-            entity_id = entity.get(id_key)
-            if entity_id:
-                ids_at_max.append(str(entity_id))
+        parsed_time = _parse_entity_created_at(entity.get(time_key))
+        if parsed_time is not None:
+            parsed_entities.append((entity, parsed_time))
 
-    if max_time > previous_last_fetch:
+    if not parsed_entities:
+        return previous_last_fetch, previous_last_ids
+
+    max_dt = max(parsed_time for _, parsed_time in parsed_entities)
+    max_time = _format_fetch_timestamp(max_dt)
+    previous_dt = _parse_entity_created_at(previous_last_fetch)
+    previous_last_ids_normalized = [str(entity_id) for entity_id in previous_last_ids if entity_id]
+
+    ids_at_max: list[str] = []
+    for entity, parsed_time in parsed_entities:
+        if parsed_time == max_dt:
+            entity_id = _normalize_entity_id(entity, id_key)
+            if entity_id:
+                ids_at_max.append(entity_id)
+
+    if previous_dt is None or max_dt > previous_dt:
         return max_time, ids_at_max
-    if max_time == previous_last_fetch:
-        return max_time, list(set(previous_last_ids + ids_at_max))
+    if max_dt == previous_dt:
+        return max_time, list(set(previous_last_ids_normalized + ids_at_max))
 
     # Edge case: API returned entities older than last_fetch (inclusive from filter).
-    return previous_last_fetch, list(set(previous_last_ids + ids_at_max))
+    return previous_last_fetch, list(set(previous_last_ids_normalized + ids_at_max))
+
+
+def _should_use_stored_fetch_cursor(
+    last_run: dict,
+    last_fetch_key: str,
+    backfill_days: str | int | None,
+) -> bool:
+    """Return True when an incremental fetch cursor from last_run should be reused."""
+    stored_backfill = last_run.get("vega_backfill_days")
+    if stored_backfill is None or str(stored_backfill) != str(backfill_days):
+        return False
+    stored_fetch = last_run.get(last_fetch_key)
+    return stored_fetch not in (None, "")
+
+
+def _resolve_fetch_from_time(
+    last_run: dict,
+    last_fetch_key: str,
+    first_fetch_time: str,
+    backfill_days: str | int | None,
+) -> str:
+    """Resolve the Vega API `from` timestamp for the current fetch run."""
+    if _should_use_stored_fetch_cursor(last_run, last_fetch_key, backfill_days):
+        stored = str(last_run[last_fetch_key])
+        demisto.debug(f"Vega {last_fetch_key}: using stored cursor from_time={stored}")
+        return stored
+
+    demisto.debug(f"Vega {last_fetch_key}: using backfill from_time={first_fetch_time}")
+    return first_fetch_time
 
 
 def fetch_incidents_command(
@@ -959,6 +1078,7 @@ def fetch_incidents_command(
     incident_statuses: list[str] | None,
     incident_verdicts: list[str] | None,
     first_fetch_time: str,
+    backfill_days: str | int | None,
     integration_url: str | None = None,
 ) -> tuple[dict, list[dict]]:
     """Fetch alerts and/or incidents from Vega and return them as XSOAR incidents.
@@ -976,17 +1096,21 @@ def fetch_incidents_command(
         incident_statuses: Filter incidents by status.
         incident_verdicts: Filter incidents by verdict.
         first_fetch_time: ISO 8601 timestamp to use as the start time on the first run.
+        backfill_days: Configured backfill day count used to anchor first-fetch cursors.
 
     Returns:
         A tuple of (next_run, xsoar_incidents).
     """
     xsoar_incidents: list[dict] = []
     next_run: dict = dict(last_run)
+    next_run["vega_backfill_days"] = str(backfill_days)
 
-    alerts_last_fetch = last_run.get("alerts_last_fetch") or first_fetch_time
-    incidents_last_fetch = last_run.get("incidents_last_fetch") or first_fetch_time
+    alerts_last_fetch = _resolve_fetch_from_time(last_run, "alerts_last_fetch", first_fetch_time, backfill_days)
+    incidents_last_fetch = _resolve_fetch_from_time(last_run, "incidents_last_fetch", first_fetch_time, backfill_days)
     alerts_last_ids: list[str] = last_run.get("alerts_last_ids", [])
     incidents_last_ids: list[str] = last_run.get("incidents_last_ids", [])
+    alerts_seen_ids = _load_seen_ids(last_run, "alerts_seen_ids", "alerts_last_ids")
+    incidents_seen_ids = _load_seen_ids(last_run, "incidents_seen_ids", "incidents_last_ids")
 
     if fetch_alerts:
         demisto.debug("Fetching Vega alerts...")
@@ -1000,16 +1124,24 @@ def fetch_incidents_command(
                 verdicts=alert_verdicts,
                 from_time=alerts_last_fetch,
             )
-            demisto.debug(f"Fetched {len(alerts)} alerts from Vega.")
+            demisto.debug(f"Fetched {len(alerts)} alerts from Vega. Seen IDs before dedup: {len(alerts_seen_ids)}.")
 
+            new_alerts = 0
             for alert in alerts:
-                alert_id = alert.get("id", "")
-                if alert_id in alerts_last_ids:
+                alert_id = _normalize_entity_id(alert)
+                if not alert_id or alert_id in alerts_seen_ids:
                     continue
                 xsoar_incidents.append(alert_to_incident(alert, integration_url=integration_url))
+                new_alerts += 1
 
+            _register_seen_entities(alerts, alerts_seen_ids)
+            next_run["alerts_seen_ids"] = sorted(alerts_seen_ids)
             next_run["alerts_last_fetch"], next_run["alerts_last_ids"] = _update_fetch_state(
                 alerts, alerts_last_fetch, alerts_last_ids
+            )
+            demisto.debug(
+                f"Vega alerts ingest: {new_alerts} new, {len(alerts) - new_alerts} skipped as duplicates. "
+                f"Total seen IDs: {len(alerts_seen_ids)}."
             )
 
         except Exception as e:
@@ -1027,11 +1159,12 @@ def fetch_incidents_command(
                 verdicts=incident_verdicts,
                 from_time=incidents_last_fetch,
             )
-            demisto.debug(f"Fetched {len(incidents)} incidents from Vega.")
+            demisto.debug(f"Fetched {len(incidents)} incidents from Vega. Seen IDs before dedup: {len(incidents_seen_ids)}.")
 
+            new_incidents = 0
             for incident in incidents:
-                incident_id = incident.get("id", "")
-                if incident_id in incidents_last_ids:
+                incident_id = _normalize_entity_id(incident)
+                if not incident_id or incident_id in incidents_seen_ids:
                     continue
                 timeline_events: list[dict] = []
                 if incident_id:
@@ -1046,9 +1179,16 @@ def fetch_incidents_command(
                     except Exception as details_error:
                         demisto.debug(f"Could not fetch incident details for Vega incident {incident_id}: {details_error}")
                 xsoar_incidents.append(incident_to_xsoar_incident(incident, timeline_events=timeline_events))
+                new_incidents += 1
 
+            _register_seen_entities(incidents, incidents_seen_ids)
+            next_run["incidents_seen_ids"] = sorted(incidents_seen_ids)
             next_run["incidents_last_fetch"], next_run["incidents_last_ids"] = _update_fetch_state(
                 incidents, incidents_last_fetch, incidents_last_ids
+            )
+            demisto.debug(
+                f"Vega incidents ingest: {new_incidents} new, {len(incidents) - new_incidents} skipped as duplicates. "
+                f"Total seen IDs: {len(incidents_seen_ids)}."
             )
 
         except Exception as e:
@@ -1059,9 +1199,9 @@ def fetch_incidents_command(
     return next_run, xsoar_incidents
 
 
-def test_module(client: Client, backfill_history: str | int | None = None):
+def test_module(client: Client, backfill_days: str | int | None = None):
     try:
-        client.test_connection(backfill_history)
+        client.test_connection(backfill_days)
         return "ok"
     except Exception as e:
         return str(e)
@@ -1097,8 +1237,9 @@ def main() -> None:
         incident_statuses = argToList(params.get("incident_statuses")) or None
         incident_verdicts = argToList(params.get("incident_verdicts")) or None
 
-        first_fetch_time = parse_backfill_history(
-            params.get("backfill_history"),
+        backfill_days = params.get("backfill_days")
+        first_fetch_time = parse_backfill_days(
+            backfill_days,
             legacy_first_fetch=params.get("first_fetch"),
         )
 
@@ -1111,7 +1252,7 @@ def main() -> None:
         )
 
         if command == "test-module":
-            result = test_module(client, params.get("backfill_history"))
+            result = test_module(client, backfill_days)
             return_results(result)
 
         elif command == "fetch-incidents":
@@ -1128,6 +1269,7 @@ def main() -> None:
                 incident_statuses=incident_statuses,
                 incident_verdicts=incident_verdicts,
                 first_fetch_time=first_fetch_time,
+                backfill_days=backfill_days,
                 integration_url=base_url,
             )
             demisto.setLastRun(next_run)

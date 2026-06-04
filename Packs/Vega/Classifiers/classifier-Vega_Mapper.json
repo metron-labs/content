@@ -37,29 +37,7 @@
                     "simple": "detectionDescription"
                 },
                 "Vega Detection Query": {
-                    "complex": {
-                        "filters": [],
-                        "root": "detectionQuery",
-                        "transformers": [
-                            {
-                                "args": {
-                                    "prefix": {
-                                        "isContext": false,
-                                        "value": {
-                                            "simple": "```sql\n"
-                                        }
-                                    },
-                                    "suffix": {
-                                        "isContext": false,
-                                        "value": {
-                                            "simple": "\n```"
-                                        }
-                                    }
-                                },
-                                "operator": "concat"
-                            }
-                        ]
-                    }
+                    "simple": "detectionQuery"
                 },
                 "Vega Event Count": {
                     "simple": "eventCount"

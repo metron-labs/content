@@ -456,7 +456,7 @@
 					},
 					{
 						"displayType": "CARD",
-						"h": 3,
+						"h": 5,
 						"hideItemTitleOnlyOne": false,
 						"hideName": true,
 						"i": "js3vpk9qph-d0e83c11-c991-4691-9d9e-4cf0b5a1c046",
@@ -515,7 +515,7 @@
 						"static": false,
 						"w": 3,
 						"x": 0,
-						"y": 6
+						"y": 8
 					}
 				],
 				"type": "custom"

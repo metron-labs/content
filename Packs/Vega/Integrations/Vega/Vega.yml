@@ -53,7 +53,7 @@ configuration:
     additionalinfo: >-
       Number of days before today to fetch alerts and incidents on the first run.
       Use 0 for today only. Valid range is 0–365.
-    name: backfill_history
+    name: backfill_days
     type: 1
     section: Vega Entities
     required: true

@@ -13,12 +13,15 @@ from Vega import (
     _format_key_findings_html,
     _format_raw_entity_for_xsoar,
     _format_timeline_events_html,
+    _load_seen_ids,
+    _normalize_entity_id,
+    _resolve_fetch_from_time,
     _update_fetch_state,
     alert_to_incident,
     fetch_incidents_command,
     incident_to_xsoar_incident,
-    parse_backfill_history,
-    validate_backfill_history_days,
+    parse_backfill_days,
+    validate_backfill_days,
     test_module as vega_test_module,
     main as vega_main,
 )
@@ -165,8 +168,10 @@ def test_url_normalization():
 
 
 FIRST_FETCH_TIME = "2026-01-01T00:00:00Z"
+BACKFILL_DAYS = "30"
 TIMESTAMP_T1 = "2026-06-01T10:00:00Z"
 TIMESTAMP_T2 = "2026-06-01T11:00:00Z"
+CURRENT_TIME_CURSOR = "2026-06-04T17:00:00Z"
 
 
 def test_update_fetch_state_preserves_ids_when_all_dupes():
@@ -202,6 +207,100 @@ def test_update_fetch_state_merges_ids_at_same_timestamp():
 
     assert last_fetch == TIMESTAMP_T1
     assert set(last_ids) == {"alert-a", "alert-c"}
+
+
+def test_update_fetch_state_handles_mixed_timestamp_formats():
+    """Alerts with the same instant but different string formats share one boundary."""
+    previous_ids = ["alert-a"]
+    fetched = [
+        {"id": "alert-a", "createdAt": "2026-06-01T10:00:00Z"},
+        {"id": "alert-b", "createdAt": "2026-06-01T10:00:00.000Z"},
+    ]
+
+    last_fetch, last_ids = _update_fetch_state(fetched, "2026-06-01T10:00:00Z", previous_ids)
+
+    assert last_fetch == TIMESTAMP_T1
+    assert set(last_ids) == {"alert-a", "alert-b"}
+
+
+def test_normalize_entity_id_coerces_numeric_ids():
+    assert _normalize_entity_id({"id": 12345}) == "12345"
+    assert _normalize_entity_id({"id": "12345"}) == "12345"
+
+
+def test_load_seen_ids_merges_legacy_last_ids():
+    last_run = {
+        "alerts_seen_ids": ["alert-1"],
+        "alerts_last_ids": ["alert-2", 12345],
+    }
+    seen = _load_seen_ids(last_run, "alerts_seen_ids", "alerts_last_ids")
+    assert seen == {"alert-1", "alert-2", "12345"}
+
+
+def test_fetch_incidents_command_dedup_numeric_id_with_seen_ids(mocker):
+    mocker.patch.object(demisto, "debug")
+    mock_client = mocker.Mock()
+    numeric_id = 987654321
+    mock_client.get_alerts.return_value = {
+        "alerts": [
+            {"id": numeric_id, "name": "Numeric ID Alert", "severity": "LOW", "createdAt": TIMESTAMP_T1},
+        ],
+        "total": 1,
+        "limit": 200,
+        "offset": 0,
+    }
+    mock_client.get_incidents.return_value = {"incidents": [], "total": 0, "limit": 200, "offset": 0}
+
+    last_run = {"alerts_seen_ids": [str(numeric_id)]}
+
+    next_run, incidents = fetch_incidents_command(
+        client=mock_client,
+        last_run=last_run,
+        fetch_alerts=True,
+        fetch_incidents=False,
+        alert_severities=None,
+        alert_statuses=None,
+        alert_verdicts=None,
+        incident_severities=None,
+        incident_statuses=None,
+        incident_verdicts=None,
+        first_fetch_time=FIRST_FETCH_TIME,
+        backfill_days=BACKFILL_DAYS,
+    )
+
+    assert incidents == []
+    assert str(numeric_id) in next_run["alerts_seen_ids"]
+
+
+def test_resolve_fetch_from_time_uses_backfill_when_cursor_not_anchored():
+    last_run = {"incidents_last_fetch": CURRENT_TIME_CURSOR}
+
+    assert (
+        _resolve_fetch_from_time(
+            last_run,
+            "incidents_last_fetch",
+            FIRST_FETCH_TIME,
+            BACKFILL_DAYS,
+        )
+        == FIRST_FETCH_TIME
+    )
+
+
+def test_resolve_fetch_from_time_uses_stored_cursor_when_backfill_matches():
+    last_run = {
+        "vega_backfill_days": BACKFILL_DAYS,
+        "incidents_last_fetch": CURRENT_TIME_CURSOR,
+    }
+
+    assert (
+        _resolve_fetch_from_time(
+            last_run,
+            "incidents_last_fetch",
+            FIRST_FETCH_TIME,
+            BACKFILL_DAYS,
+        )
+        == CURRENT_TIME_CURSOR
+    )
 
 
 def test_update_fetch_state_advances_to_newer_timestamp():
@@ -289,6 +388,7 @@ def test_fetch_incidents_command_no_duplicate_reingest(mocker):
     mock_client.get_incidents.return_value = {"incidents": [], "total": 0, "limit": 200, "offset": 0}
 
     last_run = {
+        "vega_backfill_days": BACKFILL_DAYS,
         "alerts_last_fetch": TIMESTAMP_T1,
         "alerts_last_ids": ["alert-1"],
     }
@@ -305,11 +405,13 @@ def test_fetch_incidents_command_no_duplicate_reingest(mocker):
         incident_statuses=None,
         incident_verdicts=None,
         first_fetch_time=FIRST_FETCH_TIME,
+        backfill_days=BACKFILL_DAYS,
     )
 
     assert incidents == []
     assert next_run["alerts_last_fetch"] == TIMESTAMP_T1
     assert set(next_run["alerts_last_ids"]) == {"alert-1"}
+    assert "alert-1" in next_run["alerts_seen_ids"]
 
 
 def test_fetch_incidents_command_pagination(mocker):
@@ -344,51 +446,85 @@ def test_fetch_incidents_command_pagination(mocker):
         incident_statuses=None,
         incident_verdicts=None,
         first_fetch_time=FIRST_FETCH_TIME,
+        backfill_days=BACKFILL_DAYS,
     )
 
     assert len(incidents) == 2
     assert mock_client.get_incidents.call_count == 2
+    assert mock_client.get_incidents.call_args_list[0].kwargs["from_time"] == FIRST_FETCH_TIME
     assert next_run["incidents_last_fetch"] == TIMESTAMP_T2
     assert next_run["incidents_last_ids"] == ["inc-2"]
 
 
-def test_parse_backfill_history_today(mocker):
+def test_fetch_incidents_command_uses_backfill_when_last_run_cursor_not_anchored(mocker):
+    mocker.patch.object(demisto, "debug")
+    mock_client = mocker.Mock()
+    mock_client.get_incidents.return_value = {"incidents": [], "total": 0, "limit": 200, "offset": 0}
+    mock_client.get_alerts.return_value = {"alerts": [], "total": 0, "limit": 200, "offset": 0}
+
+    last_run = {"incidents_last_fetch": CURRENT_TIME_CURSOR}
+
+    fetch_incidents_command(
+        client=mock_client,
+        last_run=last_run,
+        fetch_alerts=False,
+        fetch_incidents=True,
+        alert_severities=None,
+        alert_statuses=None,
+        alert_verdicts=None,
+        incident_severities=None,
+        incident_statuses=None,
+        incident_verdicts=None,
+        first_fetch_time=FIRST_FETCH_TIME,
+        backfill_days=BACKFILL_DAYS,
+    )
+
+    assert mock_client.get_incidents.call_args.kwargs["from_time"] == FIRST_FETCH_TIME
+
+
+def test_parse_backfill_days_today(mocker):
     fixed_now = datetime(2026, 6, 2, 15, 30, 0, tzinfo=UTC)
     mocker.patch("Vega.datetime", wraps=datetime)
     mocker.patch("Vega.datetime.now", return_value=fixed_now)
 
-    assert parse_backfill_history(0) == "2026-06-02T00:00:00Z"
+    assert parse_backfill_days(0) == "2026-06-02T00:00:00Z"
 
 
-def test_parse_backfill_history_days(mocker):
+def test_parse_backfill_days_days(mocker):
     fixed_now = datetime(2026, 6, 2, 15, 30, 0, tzinfo=UTC)
     mocker.patch("Vega.datetime", wraps=datetime)
     mocker.patch("Vega.datetime.now", return_value=fixed_now)
 
-    assert parse_backfill_history(7) == "2026-05-26T00:00:00Z"
+    assert parse_backfill_days(7) == "2026-05-26T00:00:00Z"
 
 
-def test_parse_backfill_history_defaults(mocker):
+def test_parse_backfill_days_defaults(mocker):
     fixed_now = datetime(2026, 6, 2, 15, 30, 0, tzinfo=UTC)
     mocker.patch("Vega.datetime", wraps=datetime)
     mocker.patch("Vega.datetime.now", return_value=fixed_now)
 
-    assert parse_backfill_history(None) == "2026-05-03T00:00:00Z"
+    assert parse_backfill_days(None) == "2026-05-03T00:00:00Z"
 
 
-def test_validate_backfill_history_days_rejects_out_of_range():
+def test_validate_backfill_days_rejects_out_of_range():
     with pytest.raises(ValueError, match="between 0 and 365"):
-        validate_backfill_history_days(500)
+        validate_backfill_days(500)
     with pytest.raises(ValueError, match="between 0 and 365"):
-        validate_backfill_history_days(-5)
+        validate_backfill_days(-5)
     with pytest.raises(ValueError, match="must be an integer"):
-        validate_backfill_history_days("not-a-number")
+        validate_backfill_days("not-a-number")
 
 
-def test_parse_backfill_history_legacy_first_fetch():
-    result = parse_backfill_history(None, legacy_first_fetch="7 days")
+def test_parse_backfill_days_parses_decimal_string():
+    assert parse_backfill_days("30.0") == parse_backfill_days(30)
+
+
+def test_parse_backfill_days_legacy_first_fetch():
+    result = parse_backfill_days(None, legacy_first_fetch="7 days")
+    assert result.endswith("T00:00:00Z")
     parsed = datetime.strptime(result, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-    assert (datetime.now(UTC) - parsed).days >= 6
+    today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+    assert (today_start - parsed).days == 7
 
 
 def test_format_bullet_list():
@@ -430,12 +566,48 @@ def test_format_raw_entity_for_xsoar_alert():
     alert = {
         "id": "alert-1",
         "name": "Test Alert",
+        "vegaEntityType": "Vega Alert",
         "dataSources": ["CloudTrail", "GuardDuty"],
     }
     _format_raw_entity_for_xsoar(alert)
 
     assert alert["dataSources"] == "• CloudTrail\n• GuardDuty"
-    assert set(alert.keys()) == {"id", "name", "dataSources"}
+    assert alert["detectionDescription"] == "N/A"
+    assert alert["detectionQuery"] == "N/A"
+    assert set(alert.keys()) == {
+        "id",
+        "name",
+        "vegaEntityType",
+        "dataSources",
+        "detectionDescription",
+        "detectionQuery",
+    }
+
+
+def test_format_raw_entity_for_xsoar_alert_detection_fields():
+    alert = {
+        "id": "alert-1",
+        "vegaEntityType": "Vega Alert",
+        "detectionDescription": "  ",
+        "detectionQuery": "SELECT * FROM events",
+    }
+    _format_raw_entity_for_xsoar(alert)
+
+    assert alert["detectionDescription"] == "N/A"
+    assert alert["detectionQuery"] == "```sql\nSELECT * FROM events\n```"
+
+
+def test_format_raw_entity_for_xsoar_alert_empty_detection_fields():
+    alert = {
+        "id": "alert-1",
+        "vegaEntityType": "Vega Alert",
+        "detectionDescription": None,
+        "detectionQuery": "",
+    }
+    _format_raw_entity_for_xsoar(alert)
+
+    assert alert["detectionDescription"] == "N/A"
+    assert alert["detectionQuery"] == "N/A"
 
 
 def test_format_mitre_attack():
@@ -515,6 +687,8 @@ def test_alert_to_incident_formats_raw_json():
     assert raw["dataSources"] == "• CloudTrail"
     assert raw["vegaEntityType"] == "Vega Alert"
     assert raw["link"] == "https://app.vega.io/incidents/alerts/investigation/alert-1"
+    assert raw["detectionDescription"] == "N/A"
+    assert raw["detectionQuery"] == "N/A"
     assert set(raw.keys()) == {
         "id",
         "name",
@@ -523,6 +697,8 @@ def test_alert_to_incident_formats_raw_json():
         "dataSources",
         "vegaEntityType",
         "link",
+        "detectionDescription",
+        "detectionQuery",
     }
 
 
@@ -651,6 +827,7 @@ def test_fetch_incidents_command_fetches_timeline_details(mocker):
         incident_statuses=None,
         incident_verdicts=None,
         first_fetch_time=FIRST_FETCH_TIME,
+        backfill_days=BACKFILL_DAYS,
     )
 
     assert len(incidents) == 1
