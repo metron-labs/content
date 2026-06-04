@@ -10,7 +10,7 @@ from Vega import (
     Client,
     _fetch_paginated_entities,
     _format_bullet_list,
-    _format_incident_findings,
+    _format_key_findings_html,
     _format_raw_entity_for_xsoar,
     _format_timeline_events_html,
     _update_fetch_state,
@@ -398,7 +398,7 @@ def test_format_bullet_list():
     assert _format_bullet_list("already formatted") == "already formatted"
 
 
-def test_format_incident_findings_numbered_and_highlighted():
+def test_format_key_findings_html_dark_theme_layout():
     findings = [
         "Suspicious activity from 10.0.0.1",
         "Domain evil.com contacted by host",
@@ -406,9 +406,24 @@ def test_format_incident_findings_numbered_and_highlighted():
     assets = ["10.0.0.1"]
     observables = ["evil.com"]
 
-    result = _format_incident_findings(findings, assets, observables)
+    result = _format_key_findings_html(findings, assets, observables)
 
-    assert result == ("1. Suspicious activity from `10.0.0.1`\n" "2. Domain `evil.com` contacted by host")
+    assert "background:#000000" in result
+    assert "Key findings</div>" in result
+    assert "See Investigation" not in result
+    assert "border-radius:999px" in result
+    assert "10.0.0.1" in result
+    assert "evil.com" in result
+    assert ">1</div>" in result
+    assert ">2</div>" in result
+    assert "border-bottom:1px solid #333333" in result
+
+
+def test_format_key_findings_html_empty_state():
+    result = _format_key_findings_html([], [], [])
+
+    assert "No key findings are available" in result
+    assert "background:#000000" in result
 
 
 def test_format_raw_entity_for_xsoar_alert():
@@ -480,7 +495,10 @@ def test_format_raw_entity_for_xsoar_incident():
     assert incident["dataSources"] == "• CloudTrail"
     assert incident["assets"] == "• i-12345"
     assert incident["observables"] == "• 10.0.0.1"
-    assert incident["incidentFindings"] == "1. Instance `i-12345` connected to `10.0.0.1`"
+    assert "vegaIncidentFindings" in incident
+    assert "background:#000000" in incident["vegaIncidentFindings"]
+    assert "i-12345" in incident["vegaIncidentFindings"]
+    assert "10.0.0.1" in incident["vegaIncidentFindings"]
 
 
 def test_alert_to_incident_formats_raw_json():
@@ -523,7 +541,10 @@ def test_incident_to_xsoar_incident_formats_raw_json():
 
     assert raw["assets"] == "• host-1"
     assert raw["observables"] == "• host-1"
-    assert raw["incidentFindings"] == "1. Activity detected on `host-1`"
+    assert "vegaIncidentFindings" in raw
+    assert "Activity detected on" in raw["vegaIncidentFindings"]
+    assert "host-1" in raw["vegaIncidentFindings"]
+    assert xsoar_incident["CustomFields"]["vegaincidentfindings"]
     assert "link" not in raw
 
 
@@ -613,7 +634,8 @@ def test_fetch_incidents_command_fetches_timeline_details(mocker):
                 "dataSources": [],
                 "alert": None,
             }
-        ]
+        ],
+        "keyFindings": ["Detail finding from Vega."],
     }
     mock_client.get_alerts.return_value = {"alerts": [], "total": 0, "limit": 200, "offset": 0}
 
@@ -635,6 +657,21 @@ def test_fetch_incidents_command_fetches_timeline_details(mocker):
     mock_client.get_incident_details.assert_called_once_with("inc-1")
     raw = json.loads(incidents[0]["rawJSON"])
     assert raw["timelineEvents"][0]["summary"] == "Timeline summary."
+    assert raw["keyFindings"] == ["Detail finding from Vega."]
+    assert "Detail finding from Vega." in raw["vegaIncidentFindings"]
+
+
+def test_format_raw_entity_for_xsoar_prefers_key_findings():
+    incident = {
+        "incidentFindings": ["List finding"],
+        "keyFindings": ["Detail finding"],
+        "assets": [],
+        "observables": [],
+    }
+    _format_raw_entity_for_xsoar(incident)
+
+    assert "Detail finding" in incident["vegaIncidentFindings"]
+    assert "List finding" not in incident["vegaIncidentFindings"]
 
 
 def test_alert_to_incident_normalizes_api_link():

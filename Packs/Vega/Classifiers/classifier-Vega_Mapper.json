@@ -112,7 +112,7 @@
                     "simple": "incidentSummary"
                 },
                 "Vega Incident Findings": {
-                    "simple": "incidentFindings"
+                    "simple": "vegaIncidentFindings"
                 },
                 "Vega Assets": {
                     "simple": "assets"

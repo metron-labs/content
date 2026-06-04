@@ -366,13 +366,13 @@
 				"sections": [
 					{
 						"displayType": "ROW",
-						"h": 6,
+						"h": 8,
 						"hideItemTitleOnlyOne": true,
-						"hideName": false,
+						"hideName": true,
 						"i": "js3vpk9qph-field-changed-js3vpk9qph-86737c20-f759-48a9-a23b-952f97514846",
 						"items": [
 							{
-								"endCol": 4,
+								"endCol": 6,
 								"fieldId": "vegaincidentfindings",
 								"height": 106,
 								"id": "2136f6f3-5f17-45e6-acc1-84a43e4f26de",
@@ -382,9 +382,9 @@
 							}
 						],
 						"maxW": 3,
-						"minH": 1,
+						"minH": 4,
 						"moved": false,
-						"name": "Key Finding",
+						"name": "Key findings",
 						"static": false,
 						"w": 2,
 						"x": 0,

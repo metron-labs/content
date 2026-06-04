@@ -96,7 +96,7 @@ VEGA_TIMELINE_ALERT_SEVERITY_LABELS: dict[int, str] = {
 BACKFILL_HISTORY_MIN_DAYS = 0
 BACKFILL_HISTORY_MAX_DAYS = 365
 DEFAULT_BACKFILL_HISTORY_DAYS = 30
-GET_ALERTS_FETCH_LIMIT = 200  # Set to None for production (unlimited alert fetch)
+GET_ALERTS_FETCH_LIMIT = None  # Set to None for production (unlimited alert fetch)
 
 
 def parse_backfill_history(
@@ -513,6 +513,14 @@ _TIMELINE_PILL_STYLE = (
     "font-size:11px;line-height:1.4;white-space:normal;max-width:100%;"
 )
 
+_VEGA_DARK_UI_FONT = "-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif"
+
+_KEY_FINDINGS_NUMBER_STYLE = (
+    "display:flex;align-items:center;justify-content:center;flex-shrink:0;"
+    "width:28px;height:28px;background:#141414;border:1px solid #333333;"
+    "border-radius:8px;color:#9ca3af;font-size:12px;font-weight:600;"
+)
+
 
 def _timeline_data_source_label(source: dict) -> str:
     """Build the full display name for a timeline data source."""
@@ -642,45 +650,85 @@ def _build_vega_incident_custom_fields(raw: dict) -> dict[str, str]:
     timeline_html = raw.get("vegaTimelineEvents")
     if timeline_html:
         custom_fields["vegatimelineevents"] = str(timeline_html)
+    findings_html = raw.get("vegaIncidentFindings")
+    if findings_html:
+        custom_fields["vegaincidentfindings"] = str(findings_html)
     return custom_fields
 
 
-def _highlight_values_in_text(text: str, values: set[str]) -> str:
-    """Wrap occurrences of known asset/observable values in backticks."""
-    if not text or not values:
-        return text
-    result = text
+def _finding_text(finding: Any) -> str:
+    """Normalize a single finding entry to display text."""
+    if isinstance(finding, dict):
+        return json.dumps(finding)
+    return str(finding).strip()
+
+
+def _normalize_findings_list(findings: Any) -> list[str]:
+    """Extract non-empty finding strings from API data."""
+    if findings is None or not isinstance(findings, list):
+        return []
+    texts: list[str] = []
+    for finding in findings:
+        text = _finding_text(finding)
+        if text:
+            texts.append(text)
+    return texts
+
+
+def _highlight_values_in_html(text: str, values: set[str]) -> str:
+    """Wrap occurrences of known asset/observable values in timeline-style pills."""
+    escaped = _escape_html(text)
+    if not values:
+        return escaped
+    result = escaped
     for value in sorted(values, key=len, reverse=True):
-        if not value or f"`{value}`" in result:
+        if not value:
             continue
-        result = result.replace(value, f"`{value}`")
+        escaped_value = _escape_html(value)
+        if escaped_value not in result:
+            continue
+        pill = f"<span style='{_TIMELINE_PILL_STYLE}'>{escaped_value}</span>"
+        result = result.replace(escaped_value, pill)
     return result
 
 
-def _format_incident_findings(
-    findings: Any,
-    assets: Any,
-    observables: Any,
-) -> Any:
-    """Format incident findings as a numbered list with asset/observable highlights."""
-    if findings is None or not isinstance(findings, list) or not findings:
-        return findings
+def _key_finding_item_html(number: int, text: str, highlight_values: set[str], is_last: bool) -> str:
+    """Render one numbered key finding row (screenshot-style layout, dark theme)."""
+    body = _highlight_values_in_html(text, highlight_values)
+    border = "" if is_last else "border-bottom:1px solid #333333;"
+    return (
+        f"<div style='display:flex;gap:14px;padding:16px 0;{border}align-items:flex-start;'>"
+        f"<div style='{_KEY_FINDINGS_NUMBER_STYLE}'>{number}</div>"
+        f"<p style='margin:0;flex:1;color:#e5e5e5;font-size:13px;line-height:1.65;'>{body}</p>"
+        f"</div>"
+    )
 
+
+def _format_key_findings_html(findings: Any, assets: Any, observables: Any) -> str:
+    """Render Vega key findings as HTML (black background, numbered list, entity pills)."""
+    finding_texts = _normalize_findings_list(findings)
     highlight_values = set(_normalize_list_items(assets) + _normalize_list_items(observables))
-    formatted_findings: list[str] = []
-    for index, finding in enumerate(findings, start=1):
-        if isinstance(finding, dict):
-            text = json.dumps(finding)
-        else:
-            text = str(finding).strip()
-        if not text:
-            continue
-        text = _highlight_values_in_text(text, highlight_values)
-        formatted_findings.append(f"{index}. {text}")
+    header = "<div style='font-size:15px;font-weight:600;margin-bottom:4px;color:#ffffff;'>" "Key findings</div>"
+    container_style = f"background:#000000;color:#ffffff;padding:16px;" f"font-family:{_VEGA_DARK_UI_FONT};"
 
-    if not formatted_findings:
-        return findings
-    return "\n".join(formatted_findings)
+    if not finding_texts:
+        return (
+            f"<div style='{container_style}'>"
+            f"{header}"
+            f"<p style='margin:8px 0 0;color:#9ca3af;font-size:13px;'>"
+            f"No key findings are available for this incident.</p></div>"
+        )
+
+    rows = [
+        _key_finding_item_html(
+            index,
+            text,
+            highlight_values,
+            is_last=index == len(finding_texts),
+        )
+        for index, text in enumerate(finding_texts, start=1)
+    ]
+    return f"<div style='{container_style}'>{header}{''.join(rows)}</div>"
 
 
 def _api_to_app_url(url: str) -> str:
@@ -722,8 +770,9 @@ def _format_raw_entity_for_xsoar(raw: dict) -> None:
         raw["assets"] = _format_bullet_list(assets)
     if "observables" in raw:
         raw["observables"] = _format_bullet_list(observables)
-    if "incidentFindings" in raw:
-        raw["incidentFindings"] = _format_incident_findings(raw.get("incidentFindings"), assets, observables)
+    findings_source = raw.get("keyFindings") or raw.get("incidentFindings")
+    if findings_source is not None:
+        raw["vegaIncidentFindings"] = _format_key_findings_html(findings_source, assets, observables)
     _apply_vega_mitre_attack_format(raw)
 
 
@@ -984,8 +1033,11 @@ def fetch_incidents_command(
                         fetched_events = details.get("timelineEvents")
                         if isinstance(fetched_events, list):
                             timeline_events = [event for event in fetched_events if isinstance(event, dict)]
+                        key_findings = details.get("keyFindings")
+                        if isinstance(key_findings, list) and key_findings:
+                            incident["keyFindings"] = key_findings
                     except Exception as details_error:
-                        demisto.debug(f"Could not fetch timeline for Vega incident {incident_id}: {details_error}")
+                        demisto.debug(f"Could not fetch incident details for Vega incident {incident_id}: {details_error}")
                 xsoar_incidents.append(incident_to_xsoar_incident(incident, timeline_events=timeline_events))
 
             next_run["incidents_last_fetch"], next_run["incidents_last_ids"] = _update_fetch_state(
