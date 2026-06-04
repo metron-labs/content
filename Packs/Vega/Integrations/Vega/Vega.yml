@@ -78,10 +78,10 @@ configuration:
     required: false
     options:
       - OPEN
-      - IN_PROGRESS
-      - PEER_REVIEW
+      - IN PROGRESS
+      - PEER REVIEW
       - RESOLVED
-    defaultvalue: OPEN,IN_PROGRESS,PEER_REVIEW,RESOLVED
+    defaultvalue: OPEN,IN PROGRESS,PEER REVIEW,RESOLVED
   - display: Alert Verdicts to fetch
     additionalinfo: Filter alerts by verdict. If empty, all verdicts are fetched.
     name: alert_verdicts
@@ -116,14 +116,14 @@ configuration:
     options:
       - NEW
       - INVESTIGATING
-      - ON_HOLD
-      - EXTERNAL_ESCALATION
+      - ON HOLD
+      - EXTERNAL ESCALATION
       - RESOLVED
       - REOPENED
-      - REVIEW_RECOMMENDED
-      - RESPONSE_REQUIRED
-      - UNDER_REVIEW
-    defaultvalue: NEW,INVESTIGATING,ON_HOLD,EXTERNAL_ESCALATION,RESOLVED,REOPENED,REVIEW_RECOMMENDED,RESPONSE_REQUIRED,UNDER_REVIEW
+      - REVIEW RECOMMENDED
+      - RESPONSE REQUIRED
+      - UNDER REVIEW
+    defaultvalue: NEW,INVESTIGATING,ON HOLD,EXTERNAL ESCALATION,RESOLVED,REOPENED,REVIEW RECOMMENDED,RESPONSE REQUIRED,UNDER REVIEW
   - display: Incident Verdicts to fetch
     additionalinfo: Filter incidents by verdict. If empty, all verdicts are fetched.
     name: incident_verdicts

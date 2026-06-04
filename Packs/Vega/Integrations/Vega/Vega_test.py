@@ -1,5 +1,7 @@
 from datetime import datetime, UTC
 
+import requests
+
 import demistomock as demisto
 from CommonServerPython import *
 from CommonServerUserPython import *
@@ -22,6 +24,16 @@ from Vega import (
     incident_to_xsoar_incident,
     parse_backfill_days,
     validate_backfill_days,
+    filter_alert_severities,
+    filter_alert_statuses,
+    filter_alert_verdicts,
+    filter_incident_severities,
+    filter_incident_statuses,
+    filter_incident_verdicts,
+    TEST_CONNECTION_ACCESS_KEY_ERROR,
+    TEST_CONNECTION_ACCESS_KEY_ID_ERROR,
+    TEST_CONNECTION_BASE_URL_ERROR,
+    TEST_CONNECTION_URL_ERROR,
     test_module as vega_test_module,
     main as vega_main,
 )
@@ -104,7 +116,7 @@ def test_test_module_incorrect_access_key_id(requests_mock, mocker):
         access_key="test-key",
         access_key_id="test-key-id",
     )
-    assert vega_test_module(client) == "Incorrect Access Key ID. Please Check your Credentials"
+    assert vega_test_module(client) == TEST_CONNECTION_ACCESS_KEY_ID_ERROR
 
 
 def test_test_module_incorrect_access_key(requests_mock, mocker):
@@ -121,7 +133,44 @@ def test_test_module_incorrect_access_key(requests_mock, mocker):
         access_key="wrong-key",
         access_key_id="test-key-id",
     )
-    assert vega_test_module(client) == "Incorrect Access Key. Please Check your Credentials."
+    assert vega_test_module(client) == TEST_CONNECTION_ACCESS_KEY_ERROR
+
+
+def test_test_module_connection_error(requests_mock, mocker):
+    mocker.patch.object(demisto, "getIntegrationContext", return_value={})
+    mocker.patch.object(demisto, "setIntegrationContext")
+    mocker.patch.object(demisto, "info")
+
+    requests_mock.post(
+        f"{BASE_URL}/api/v1/login_machine",
+        exc=requests.exceptions.ConnectionError("Failed to establish a new connection"),
+    )
+
+    client = Client(
+        base_url=BASE_URL,
+        verify=False,
+        proxy=False,
+        access_key="test-key",
+        access_key_id="test-key-id",
+    )
+    assert vega_test_module(client) == TEST_CONNECTION_URL_ERROR
+
+
+def test_test_module_wrong_url_not_found(requests_mock, mocker):
+    mocker.patch.object(demisto, "getIntegrationContext", return_value={})
+    mocker.patch.object(demisto, "setIntegrationContext")
+    mocker.patch.object(demisto, "info")
+
+    requests_mock.post(f"{BASE_URL}/api/v1/login_machine", status_code=404, text="Not Found")
+
+    client = Client(
+        base_url=BASE_URL,
+        verify=False,
+        proxy=False,
+        access_key="test-key",
+        access_key_id="test-key-id",
+    )
+    assert vega_test_module(client) == TEST_CONNECTION_BASE_URL_ERROR
 
 
 def test_main_invalid_entities(mocker):
@@ -504,6 +553,49 @@ def test_parse_backfill_days_defaults(mocker):
     mocker.patch("Vega.datetime.now", return_value=fixed_now)
 
     assert parse_backfill_days(None) == "2026-05-03T00:00:00Z"
+
+
+def test_filter_alert_statuses_maps_display_and_ignores_invalid():
+    assert filter_alert_statuses(["OPEN", "IN PROGRESS", "PEER REVIEW", "RESOLVED"]) == [
+        "OPEN",
+        "IN_PROGRESS",
+        "PEER_REVIEW",
+        "RESOLVED",
+    ]
+    assert filter_alert_statuses(["IN_PROGRESS", "open"]) == ["IN_PROGRESS", "OPEN"]
+    assert filter_alert_statuses(["OPEN", "not-a-status", ""]) == ["OPEN"]
+    assert filter_alert_statuses(["garbage"]) is None
+    assert filter_alert_statuses(None) is None
+
+
+def test_filter_incident_statuses_maps_display_and_ignores_invalid():
+    assert filter_incident_statuses(["NEW", "ON HOLD", "UNDER REVIEW"]) == [
+        "NEW",
+        "ON_HOLD",
+        "UNDER_REVIEW",
+    ]
+    assert filter_incident_statuses(["EXTERNAL_ESCALATION", "review recommended"]) == [
+        "EXTERNAL_ESCALATION",
+        "REVIEW_RECOMMENDED",
+    ]
+    assert filter_incident_statuses(["NEW", "invalid"]) == ["NEW"]
+    assert filter_incident_statuses([]) is None
+
+
+def test_filter_severities_accepts_valid_and_ignores_invalid():
+    assert filter_alert_severities(["LOW", "HIGH", "critical"]) == ["LOW", "HIGH", "CRITICAL"]
+    assert filter_incident_severities(["MEDIUM", "invalid", ""]) == ["MEDIUM"]
+    assert filter_alert_severities(["garbage"]) is None
+    assert filter_incident_severities(None) is None
+
+
+def test_filter_verdicts_accepts_valid_and_ignores_invalid():
+    assert filter_alert_verdicts(["MALICIOUS", "N/A", "benign"]) == ["MALICIOUS", "NA", "BENIGN"]
+    assert filter_incident_verdicts(["SUSPICIOUS", "INCONCLUSIVE", "not-a-verdict"]) == [
+        "SUSPICIOUS",
+        "INCONCLUSIVE",
+    ]
+    assert filter_alert_verdicts([]) is None
 
 
 def test_validate_backfill_days_rejects_out_of_range():

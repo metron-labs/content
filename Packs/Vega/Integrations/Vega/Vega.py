@@ -98,6 +98,72 @@ BACKFILL_DAYS_MAX = 365
 DEFAULT_BACKFILL_DAYS = 30
 GET_ALERTS_FETCH_LIMIT = None  # Set to None for production (unlimited alert fetch)
 
+VALID_ALERT_STATUSES = frozenset({"OPEN", "IN_PROGRESS", "PEER_REVIEW", "RESOLVED"})
+ALERT_STATUS_DISPLAY_TO_API: dict[str, str] = {
+    "OPEN": "OPEN",
+    "IN PROGRESS": "IN_PROGRESS",
+    "PEER REVIEW": "PEER_REVIEW",
+    "RESOLVED": "RESOLVED",
+}
+
+VALID_INCIDENT_STATUSES = frozenset(
+    {
+        "NEW",
+        "INVESTIGATING",
+        "ON_HOLD",
+        "EXTERNAL_ESCALATION",
+        "RESOLVED",
+        "REOPENED",
+        "REVIEW_RECOMMENDED",
+        "RESPONSE_REQUIRED",
+        "UNDER_REVIEW",
+    }
+)
+INCIDENT_STATUS_DISPLAY_TO_API: dict[str, str] = {
+    "NEW": "NEW",
+    "INVESTIGATING": "INVESTIGATING",
+    "ON HOLD": "ON_HOLD",
+    "EXTERNAL ESCALATION": "EXTERNAL_ESCALATION",
+    "RESOLVED": "RESOLVED",
+    "REOPENED": "REOPENED",
+    "REVIEW RECOMMENDED": "REVIEW_RECOMMENDED",
+    "RESPONSE REQUIRED": "RESPONSE_REQUIRED",
+    "UNDER REVIEW": "UNDER_REVIEW",
+}
+
+VALID_SEVERITIES = frozenset({"LOW", "MEDIUM", "HIGH", "CRITICAL"})
+VALID_VERDICTS = frozenset({"MALICIOUS", "SUSPICIOUS", "BENIGN", "INCONCLUSIVE", "NA"})
+VERDICT_DISPLAY_TO_API: dict[str, str] = {
+    "MALICIOUS": "MALICIOUS",
+    "SUSPICIOUS": "SUSPICIOUS",
+    "BENIGN": "BENIGN",
+    "INCONCLUSIVE": "INCONCLUSIVE",
+    "NA": "NA",
+    "N/A": "NA",
+}
+
+_CONNECTION_ERROR_MARKERS = (
+    "connection timeout error",
+    "verify that the server url",
+    "connection error",
+    "ssl certificate verification failed",
+    "proxy error",
+    "max retries error",
+    "name or service not known",
+    "nodename nor servname",
+    "failed to establish a new connection",
+    "temporary failure in name resolution",
+    "read timed out",
+)
+_URL_UNREACHABLE_STATUS_CODES = frozenset({404, 405, 502, 503, 504})
+_AUTH_FAILURE_STATUS_CODES = frozenset({401, 403})
+TEST_CONNECTION_URL_ERROR = (
+    "Unable to connect to the Vega API. Please verify the Base URL is correct " "and reachable from the Cortex XSOAR engine."
+)
+TEST_CONNECTION_BASE_URL_ERROR = "Unable to reach the Vega API at the configured Base URL. Please verify the Base URL is correct."
+TEST_CONNECTION_ACCESS_KEY_ERROR = "Incorrect Access Key. Please check your credentials."
+TEST_CONNECTION_ACCESS_KEY_ID_ERROR = "Incorrect Access Key ID. Please check your credentials."
+
 
 def _parse_backfill_days(backfill_days: str | int | float | None) -> int | None:
     """Parse a backfill day count from integration params."""
@@ -163,6 +229,107 @@ def validate_backfill_days(backfill_days: str | int | None) -> None:
 
     if days < BACKFILL_DAYS_MIN or days > BACKFILL_DAYS_MAX:
         raise ValueError("backfill_days must be between 0 and 365.")
+
+
+def _filter_fetch_values(
+    values: list[str] | None,
+    valid_api_values: frozenset[str],
+    display_to_api: dict[str, str] | None = None,
+) -> list[str] | None:
+    """Keep only recognized fetch filters and map UI labels to Vega API enum values.
+
+    Unknown or custom multi-select values are ignored. When provided, display_to_api
+    maps human-readable labels to API values; values already in valid_api_values are
+    also accepted (e.g. legacy underscore-separated statuses).
+    """
+    if not values:
+        return None
+
+    label_map = display_to_api or {}
+    api_values: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        if raw is None or not str(raw).strip():
+            continue
+        token = str(raw).strip().upper()
+        api_value = label_map.get(token)
+        if api_value is None and token in valid_api_values:
+            api_value = token
+        if api_value and api_value in valid_api_values and api_value not in seen:
+            seen.add(api_value)
+            api_values.append(api_value)
+
+    return api_values or None
+
+
+def filter_alert_statuses(values: list[str] | None) -> list[str] | None:
+    """Validate alert status filters and return Vega API status values."""
+    return _filter_fetch_values(values, VALID_ALERT_STATUSES, ALERT_STATUS_DISPLAY_TO_API)
+
+
+def filter_incident_statuses(values: list[str] | None) -> list[str] | None:
+    """Validate incident status filters and return Vega API status values."""
+    return _filter_fetch_values(values, VALID_INCIDENT_STATUSES, INCIDENT_STATUS_DISPLAY_TO_API)
+
+
+def filter_alert_severities(values: list[str] | None) -> list[str] | None:
+    """Validate alert severity filters and return Vega API severity values."""
+    return _filter_fetch_values(values, VALID_SEVERITIES)
+
+
+def filter_incident_severities(values: list[str] | None) -> list[str] | None:
+    """Validate incident severity filters and return Vega API severity values."""
+    return _filter_fetch_values(values, VALID_SEVERITIES)
+
+
+def filter_alert_verdicts(values: list[str] | None) -> list[str] | None:
+    """Validate alert verdict filters and return Vega API verdict values."""
+    return _filter_fetch_values(values, VALID_VERDICTS, VERDICT_DISPLAY_TO_API)
+
+
+def filter_incident_verdicts(values: list[str] | None) -> list[str] | None:
+    """Validate incident verdict filters and return Vega API verdict values."""
+    return _filter_fetch_values(values, VALID_VERDICTS, VERDICT_DISPLAY_TO_API)
+
+
+def _http_status_code(exc: Exception) -> int | None:
+    """Return the HTTP status code from a DemistoException, if present."""
+    if isinstance(exc, DemistoException) and exc.res is not None:
+        return exc.res.status_code
+    return None
+
+
+def _is_connection_or_url_error(exc: Exception) -> bool:
+    """Return True when the failure is likely caused by an invalid or unreachable Base URL."""
+    message = str(exc).lower()
+    if any(marker in message for marker in _CONNECTION_ERROR_MARKERS):
+        return True
+    status_code = _http_status_code(exc)
+    return status_code in _URL_UNREACHABLE_STATUS_CODES if status_code is not None else False
+
+
+def _test_connection_login_error_message(exc: Exception) -> str:
+    """Map login_machine failures to a user-facing test-connection message."""
+    if _is_connection_or_url_error(exc):
+        if _http_status_code(exc) == 404:
+            return TEST_CONNECTION_BASE_URL_ERROR
+        return TEST_CONNECTION_URL_ERROR
+    status_code = _http_status_code(exc)
+    if status_code in _AUTH_FAILURE_STATUS_CODES:
+        return TEST_CONNECTION_ACCESS_KEY_ERROR
+    return TEST_CONNECTION_ACCESS_KEY_ERROR
+
+
+def _test_connection_query_error_message(exc: Exception) -> str:
+    """Map getAccessKey query failures to a user-facing test-connection message."""
+    if _is_connection_or_url_error(exc):
+        if _http_status_code(exc) == 404:
+            return TEST_CONNECTION_BASE_URL_ERROR
+        return TEST_CONNECTION_URL_ERROR
+    status_code = _http_status_code(exc)
+    if status_code in _AUTH_FAILURE_STATUS_CODES:
+        return TEST_CONNECTION_ACCESS_KEY_ID_ERROR
+    return TEST_CONNECTION_ACCESS_KEY_ID_ERROR
 
 
 class Client(BaseClient):
@@ -257,10 +424,12 @@ class Client(BaseClient):
                 resp_type="json",
                 ok_codes=(200,),
             )
-        except Exception:
-            raise ValueError("Incorrect Access Key. Please Check your Credentials.")
+        except Exception as exc:
+            raise ValueError(_test_connection_login_error_message(exc)) from exc
 
         session_jwt: str = login_res.get("session_jwt", "") if login_res else ""
+        if not session_jwt:
+            raise ValueError("Authentication failed: no session token received. " "Please verify the Access Key and Base URL.")
 
         query_data: dict = {
             "query": (
@@ -271,21 +440,24 @@ class Client(BaseClient):
             "variables": {"id": self.access_key_id},
         }
 
-        query_res = self._http_request(
-            method="POST",
-            url_suffix="query",
-            headers=self._auth_headers(session_jwt),
-            json_data=query_data,
-            resp_type="json",
-            ok_codes=(200,),
-        )
+        try:
+            query_res = self._http_request(
+                method="POST",
+                url_suffix="query",
+                headers=self._auth_headers(session_jwt),
+                json_data=query_data,
+                resp_type="json",
+                ok_codes=(200,),
+            )
+        except Exception as exc:
+            raise ValueError(_test_connection_query_error_message(exc)) from exc
 
         errors = query_res.get("errors")
         data = query_res.get("data") or {}
         get_access_key = data.get("getAccessKey")
 
         if errors or get_access_key is None:
-            raise ValueError("Incorrect Access Key ID. Please Check your Credentials")
+            raise ValueError(TEST_CONNECTION_ACCESS_KEY_ID_ERROR)
 
         roles = get_access_key.get("roles") or []
 
@@ -1230,12 +1402,12 @@ def main() -> None:
             raise ValueError("At least one of 'Fetch Alerts' or 'Fetch Incidents' must be checked.")
 
         # Parse filter parameters
-        alert_severities = argToList(params.get("alert_severities")) or None
-        alert_statuses = argToList(params.get("alert_statuses")) or None
-        alert_verdicts = argToList(params.get("alert_verdicts")) or None
-        incident_severities = argToList(params.get("incident_severities")) or None
-        incident_statuses = argToList(params.get("incident_statuses")) or None
-        incident_verdicts = argToList(params.get("incident_verdicts")) or None
+        alert_severities = filter_alert_severities(argToList(params.get("alert_severities")) or None)
+        alert_statuses = filter_alert_statuses(argToList(params.get("alert_statuses")) or None)
+        alert_verdicts = filter_alert_verdicts(argToList(params.get("alert_verdicts")) or None)
+        incident_severities = filter_incident_severities(argToList(params.get("incident_severities")) or None)
+        incident_statuses = filter_incident_statuses(argToList(params.get("incident_statuses")) or None)
+        incident_verdicts = filter_incident_verdicts(argToList(params.get("incident_verdicts")) or None)
 
         backfill_days = params.get("backfill_days")
         first_fetch_time = parse_backfill_days(
