@@ -374,7 +374,7 @@
 							{
 								"endCol": 4,
 								"fieldId": "vegaincidentfindings",
-								"height": 52,
+								"height": 106,
 								"id": "2136f6f3-5f17-45e6-acc1-84a43e4f26de",
 								"index": 0,
 								"sectionItemType": "field",
@@ -415,11 +415,13 @@
 								"startCol": 0
 							},
 							{
+								"dropEffect": "move",
 								"endCol": 2,
-								"fieldId": "verdict",
+								"fieldId": "vegaverdict",
 								"height": 53,
-								"id": "a5ad0dc4-2bd1-4656-84f9-c4d7c03f7db1",
+								"id": "71b4b7df-cdad-4eb3-a4a4-2e17cfcc9657",
 								"index": 2,
+								"listId": "js3vpk9qph-fab95442-5b26-47f3-970d-4b89dbfd88b8",
 								"sectionItemType": "field",
 								"startCol": 0
 							},
@@ -453,10 +455,10 @@
 						"y": 0
 					},
 					{
-						"displayType": "ROW",
+						"displayType": "CARD",
 						"h": 3,
-						"hideItemTitleOnlyOne": true,
-						"hideName": false,
+						"hideItemTitleOnlyOne": false,
+						"hideName": true,
 						"i": "js3vpk9qph-d0e83c11-c991-4691-9d9e-4cf0b5a1c046",
 						"items": [
 							{
@@ -465,6 +467,17 @@
 								"height": 53,
 								"id": "d66df1ef-0fda-48ad-b41a-dfef01125267",
 								"index": 0,
+								"sectionItemType": "field",
+								"startCol": 0
+							},
+							{
+								"dropEffect": "move",
+								"endCol": 2,
+								"fieldId": "vegaobservables",
+								"height": 53,
+								"id": "598c9b32-d078-4e1a-9e08-4919cbbd9ccc",
+								"index": 1,
+								"listId": "js3vpk9qph-d0e83c11-c991-4691-9d9e-4cf0b5a1c046",
 								"sectionItemType": "field",
 								"startCol": 0
 							}
@@ -482,37 +495,11 @@
 						"displayType": "ROW",
 						"h": 7,
 						"hideItemTitleOnlyOne": true,
-						"hideName": false,
-						"i": "js3vpk9qph-3038823d-d212-4810-901f-68ee05e66c73",
-						"items": [
-							{
-								"endCol": 2,
-								"fieldId": "vegaobservables",
-								"height": 26,
-								"id": "bda4ad94-f198-4e08-98a2-b04dfe4991aa",
-								"index": 0,
-								"sectionItemType": "field",
-								"startCol": 0
-							}
-						],
-						"maxW": 3,
-						"minH": 1,
-						"moved": false,
-						"name": "Vega Observables",
-						"static": false,
-						"w": 1,
-						"x": 2,
-						"y": 6
-					},
-					{
-						"displayType": "ROW",
-						"h": 7,
-						"hideItemTitleOnlyOne": true,
 						"hideName": true,
 						"i": "js3vpk9qph-vega-timeline-events-section",
 						"items": [
 							{
-								"endCol": 4,
+								"endCol": 6,
 								"fieldId": "vegatimelineevents",
 								"height": 106,
 								"id": "a8f3c2e1-4b5d-6e7f-8a9b-0c1d2e3f4a5b",
@@ -526,7 +513,7 @@
 						"moved": false,
 						"name": "Investigation Timeline",
 						"static": false,
-						"w": 2,
+						"w": 3,
 						"x": 0,
 						"y": 6
 					}

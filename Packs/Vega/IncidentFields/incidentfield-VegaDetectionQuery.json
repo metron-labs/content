@@ -5,7 +5,7 @@
     "ownerOnly": false,
     "description": "The raw query used by the detection rule to identify this alert.",
     "cliName": "vegadetectionquery",
-    "type": "longText",
+    "type": "markdown",
     "closeForm": false,
     "editForm": false,
     "required": false,
