@@ -283,7 +283,11 @@ def get_scm_alert_url(alert_id, is_staging):
 def get_scm_vuln_url(vuln, is_staging):
     vulnerability_name = vuln.get("vulnerability_name", "").replace(" ", "%20")
     device_id = vuln.get("deviceid", "")
-    return f"{get_scm_ui_base_url(is_staging)}/insights/iot-security/assets/assets/overview/{device_id}?vulnerabilityname={vulnerability_name}"
+    return (
+        f"{get_scm_ui_base_url(is_staging)}"
+        f"/insights/iot-security/assets/assets/overview/{device_id}"
+        f"?vulnerabilityname={vulnerability_name}"
+    )
 
 
 def test_module(client):
