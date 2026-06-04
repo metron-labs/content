@@ -198,6 +198,13 @@ class Client(BaseClient):
         self._session_jwt = session_jwt
         return session_jwt
 
+    def _auth_headers(self, session_jwt: str) -> dict[str, str]:
+        """Build authentication headers for authenticated Vega API requests."""
+        return {
+            "JWTSessionToken": session_jwt,
+            "X-Vega-Key-Id": self.access_key_id,
+        }
+
     def _graphql_request(self, query: str, variables: dict | None = None) -> dict:
         """Execute a GraphQL query against the Vega API.
 
@@ -216,7 +223,7 @@ class Client(BaseClient):
         response: dict = self._http_request(
             method="POST",
             url_suffix="query",
-            headers={"JWTSessionToken": session_jwt},
+            headers=self._auth_headers(session_jwt),
             json_data=json_data,
             resp_type="json",
             ok_codes=(200,),
@@ -256,7 +263,7 @@ class Client(BaseClient):
         query_res = self._http_request(
             method="POST",
             url_suffix="query",
-            headers={"JWTSessionToken": session_jwt},
+            headers=self._auth_headers(session_jwt),
             json_data=query_data,
             resp_type="json",
             ok_codes=(200,),
