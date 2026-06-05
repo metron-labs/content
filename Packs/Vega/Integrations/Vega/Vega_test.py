@@ -929,6 +929,7 @@ def test_incident_to_xsoar_incident_formats_raw_json():
     assert "Activity detected on" in raw["vegaIncidentFindings"]
     assert "host-1" in raw["vegaIncidentFindings"]
     assert xsoar_incident["CustomFields"]["vegaincidentfindings"]
+    assert xsoar_incident["CustomFields"]["vegacreatedat"] == TIMESTAMP_T1
     assert "link" not in raw
 
 
@@ -1055,6 +1056,8 @@ def test_format_raw_entity_for_xsoar_prefers_key_findings():
     }
     _format_raw_entity_for_xsoar(incident)
 
+    assert incident["assets"] == "No assets present."
+    assert incident["observables"] == "No observables present."
     assert "Detail finding" in incident["vegaIncidentFindings"]
     assert "List finding" not in incident["vegaIncidentFindings"]
 

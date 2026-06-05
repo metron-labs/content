@@ -30,6 +30,9 @@
                 "Vega Data Sources": {
                     "simple": "dataSources"
                 },
+                "Vega Created At": {
+                    "simple": "createdAt"
+                },
                 "Vega Detection Source": {
                     "simple": "detectionSource"
                 },
@@ -82,6 +85,9 @@
                 },
                 "Vega Created By": {
                     "simple": "createdBy"
+                },
+                "Vega Created At": {
+                    "simple": "createdAt"
                 },
                 "Vega Last Updated": {
                     "simple": "lastUpdated"

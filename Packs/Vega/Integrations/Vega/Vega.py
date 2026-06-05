@@ -581,17 +581,19 @@ def _normalize_list_items(value: Any) -> list[str]:
     return items
 
 
-def _format_bullet_list(value: Any) -> Any:
+def _format_bullet_list(value: Any, empty_display: str | None = None) -> Any:
     """Format a list field as newline-separated bullet points."""
     if value is None or not isinstance(value, list) or not value:
-        return value
+        return empty_display if empty_display is not None else value
     items = _normalize_list_items(value)
     if not items:
-        return value
+        return empty_display if empty_display is not None else value
     return "\n".join(f"• {item}" for item in items)
 
 
 VEGA_EMPTY_FIELD_DISPLAY = "N/A"
+VEGA_NO_ASSETS_DISPLAY = "No assets present."
+VEGA_NO_OBSERVABLES_DISPLAY = "No observables present."
 
 
 def _empty_to_na(value: Any) -> str:
@@ -856,6 +858,9 @@ def _format_timeline_events_html(timeline_events: list[dict]) -> str:
 def _build_vega_incident_custom_fields(raw: dict) -> dict[str, str]:
     """Build CustomFields for Vega incidents (set directly on ingest, not via mapper)."""
     custom_fields: dict[str, str] = {}
+    created_at = raw.get("createdAt")
+    if created_at:
+        custom_fields["vegacreatedat"] = str(created_at)
     timeline_html = raw.get("vegaTimelineEvents")
     if timeline_html:
         custom_fields["vegatimelineevents"] = str(timeline_html)
@@ -980,9 +985,9 @@ def _format_raw_entity_for_xsoar(raw: dict) -> None:
     observables = raw.get("observables")
 
     if "assets" in raw:
-        raw["assets"] = _format_bullet_list(assets)
+        raw["assets"] = _format_bullet_list(assets, VEGA_NO_ASSETS_DISPLAY)
     if "observables" in raw:
-        raw["observables"] = _format_bullet_list(observables)
+        raw["observables"] = _format_bullet_list(observables, VEGA_NO_OBSERVABLES_DISPLAY)
     findings_source = raw.get("keyFindings") or raw.get("incidentFindings")
     if findings_source is not None:
         raw["vegaIncidentFindings"] = _format_key_findings_html(findings_source, assets, observables)

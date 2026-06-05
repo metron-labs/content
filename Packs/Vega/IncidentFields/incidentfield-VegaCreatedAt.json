@@ -3,7 +3,7 @@
     "version": -1,
     "name": "Vega Created At",
     "ownerOnly": false,
-    "description": "The timestamp when this Vega alert was created.",
+    "description": "The timestamp when this Vega alert or incident was created.",
     "cliName": "vegacreatedat",
     "type": "shortText",
     "closeForm": false,
@@ -18,7 +18,8 @@
     "group": 0,
     "hidden": false,
     "associatedTypes": [
-        "Vega Alert"
+        "Vega Alert",
+        "Vega Incident"
     ],
     "associatedToAll": false,
     "unmapped": true,

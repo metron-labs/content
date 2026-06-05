@@ -372,9 +372,9 @@
 						"i": "js3vpk9qph-field-changed-js3vpk9qph-86737c20-f759-48a9-a23b-952f97514846",
 						"items": [
 							{
-								"endCol": 6,
+								"endCol": 4,
 								"fieldId": "vegaincidentfindings",
-								"height": 106,
+								"height": 52,
 								"id": "2136f6f3-5f17-45e6-acc1-84a43e4f26de",
 								"index": 0,
 								"sectionItemType": "field",
@@ -407,10 +407,19 @@
 							},
 							{
 								"endCol": 2,
+								"fieldId": "vegacreatedat",
+								"height": 53,
+								"id": "c8f4e2a1-9b3d-4f7e-a6c5-1d2e3f4a5b6c",
+								"index": 1,
+								"sectionItemType": "field",
+								"startCol": 0
+							},
+							{
+								"endCol": 2,
 								"fieldId": "severity",
 								"height": 53,
 								"id": "c9000510-fa11-4568-a9a8-c0b2b362638e",
-								"index": 1,
+								"index": 2,
 								"sectionItemType": "field",
 								"startCol": 0
 							},
@@ -420,7 +429,7 @@
 								"fieldId": "vegaverdict",
 								"height": 53,
 								"id": "71b4b7df-cdad-4eb3-a4a4-2e17cfcc9657",
-								"index": 2,
+								"index": 3,
 								"listId": "js3vpk9qph-fab95442-5b26-47f3-970d-4b89dbfd88b8",
 								"sectionItemType": "field",
 								"startCol": 0
@@ -430,7 +439,7 @@
 								"fieldId": "vegastatus",
 								"height": 53,
 								"id": "19a38271-38da-4261-bd27-947a28a0a2ed",
-								"index": 3,
+								"index": 4,
 								"sectionItemType": "field",
 								"startCol": 0
 							},
@@ -439,7 +448,7 @@
 								"fieldId": "externallink",
 								"height": 53,
 								"id": "0aaefba2-9893-4edc-bcda-562d402d2b90",
-								"index": 4,
+								"index": 5,
 								"sectionItemType": "field",
 								"startCol": 0
 							}
@@ -456,7 +465,7 @@
 					},
 					{
 						"displayType": "CARD",
-						"h": 5,
+						"h": 3,
 						"hideItemTitleOnlyOne": false,
 						"hideName": true,
 						"i": "js3vpk9qph-d0e83c11-c991-4691-9d9e-4cf0b5a1c046",
@@ -489,7 +498,7 @@
 						"static": false,
 						"w": 1,
 						"x": 2,
-						"y": 3
+						"y": 5
 					},
 					{
 						"displayType": "ROW",
@@ -516,6 +525,49 @@
 						"w": 3,
 						"x": 0,
 						"y": 8
+					},
+					{
+						"displayType": "CARD",
+						"h": 2,
+						"hideName": true,
+						"i": "js3vpk9qph-08fbf591-b28b-4665-a558-8ad4519f25f6",
+						"items": [
+							{
+								"endCol": 2,
+								"fieldId": "vegacreatedat",
+								"height": 53,
+								"id": "8a832e52-de6b-48b1-ae4e-880b41614a06",
+								"index": 0,
+								"sectionItemType": "field",
+								"startCol": 0
+							},
+							{
+								"endCol": 2,
+								"fieldId": "vegadatasources",
+								"height": 53,
+								"id": "a618b688-c7e2-4d94-a86b-9aff7a9a8891",
+								"index": 1,
+								"sectionItemType": "field",
+								"startCol": 0
+							},
+							{
+								"endCol": 2,
+								"fieldId": "vegalastupdated",
+								"height": 26,
+								"id": "bce6c176-69ef-4c64-9021-e56936a962b2",
+								"index": 2,
+								"sectionItemType": "field",
+								"startCol": 0
+							}
+						],
+						"maxW": 3,
+						"minH": 1,
+						"moved": false,
+						"name": "New Section",
+						"static": false,
+						"w": 1,
+						"x": 2,
+						"y": 3
 					}
 				],
 				"type": "custom"
