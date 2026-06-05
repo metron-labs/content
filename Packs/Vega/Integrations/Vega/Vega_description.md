@@ -18,7 +18,6 @@ It retrieves a JSON Web Token (`session_jwt`) and caches it in integration conte
 ### Ingestion Settings
 
 You can configure the integration to fetch alerts, incidents, or both using the **Vega Entities to fetch** parameter.
-- **Alerts**: Fetches Vega alerts. You can filter the fetched alerts by specific severities (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), statuses (`New`, `Investigating`, `On Hold`, `External Escalation`, `Resolved`, `Reopened`, `Review Recommended`, `Response Required`, `Under Review`), and verdicts (`Malicious`, `Suspicious`, `Benign`, `Inconclusive`, `N/A`).
+- **Alerts**: Fetches Vega alerts. You can filter the fetched alerts by specific severities (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), statuses (`Open`,`In Progress`, `Peer Review`, `Resolved`), and verdicts (`Malicious`, `Suspicious`, `Benign`, `Inconclusive`, `N/A`).
 - **Incidents**: Fetches Vega incidents. You can filter the fetched incidents by specific severities (`LOW`, `MEDIUM`, `HIGH`, `CRITICAL`), statuses (`New`, `Investigating`, `On Hold`, `External Escalation`, `Resolved`, `Reopened`, `Review Recommended`, `Response Required`, `Under Review`), and verdicts (`Malicious`, `Suspicious`, `Benign`, `Inconclusive`, `N/A`).
-
 - **Backfill Days**: Select how many days before today to retrieve alerts and incidents on the very first run (0–365). Use `0` for today only; the default is `30`.

@@ -1209,15 +1209,41 @@ def _update_fetch_state(
     return previous_last_fetch, list(set(previous_last_ids_normalized + ids_at_max))
 
 
+def _build_fetch_filter_fingerprint(
+    severities: list[str] | None,
+    statuses: list[str] | None,
+    verdicts: list[str] | None,
+) -> str:
+    """Build a stable fingerprint for fetch filter parameters."""
+    payload = {
+        "severities": sorted(severities or []),
+        "statuses": sorted(statuses or []),
+        "verdicts": sorted(verdicts or []),
+    }
+    return json.dumps(payload, sort_keys=True)
+
+
 def _should_use_stored_fetch_cursor(
     last_run: dict,
     last_fetch_key: str,
     backfill_days: str | int | None,
+    fetch_config_key: str | None = None,
+    current_fetch_config: str | None = None,
 ) -> bool:
     """Return True when an incremental fetch cursor from last_run should be reused."""
     stored_backfill = last_run.get("vega_backfill_days")
     if stored_backfill is None or str(stored_backfill) != str(backfill_days):
         return False
+
+    if fetch_config_key and current_fetch_config is not None:
+        stored_config = last_run.get(fetch_config_key)
+        if stored_config is not None and stored_config != current_fetch_config:
+            demisto.debug(
+                f"Vega {last_fetch_key}: fetch filters changed (stored={stored_config}, current={current_fetch_config}), "
+                "re-running backfill window."
+            )
+            return False
+
     stored_fetch = last_run.get(last_fetch_key)
     return stored_fetch not in (None, "")
 
@@ -1227,9 +1253,17 @@ def _resolve_fetch_from_time(
     last_fetch_key: str,
     first_fetch_time: str,
     backfill_days: str | int | None,
+    fetch_config_key: str | None = None,
+    current_fetch_config: str | None = None,
 ) -> str:
     """Resolve the Vega API `from` timestamp for the current fetch run."""
-    if _should_use_stored_fetch_cursor(last_run, last_fetch_key, backfill_days):
+    if _should_use_stored_fetch_cursor(
+        last_run,
+        last_fetch_key,
+        backfill_days,
+        fetch_config_key=fetch_config_key,
+        current_fetch_config=current_fetch_config,
+    ):
         stored = str(last_run[last_fetch_key])
         demisto.debug(f"Vega {last_fetch_key}: using stored cursor from_time={stored}")
         return stored
@@ -1277,8 +1311,25 @@ def fetch_incidents_command(
     next_run: dict = dict(last_run)
     next_run["vega_backfill_days"] = str(backfill_days)
 
-    alerts_last_fetch = _resolve_fetch_from_time(last_run, "alerts_last_fetch", first_fetch_time, backfill_days)
-    incidents_last_fetch = _resolve_fetch_from_time(last_run, "incidents_last_fetch", first_fetch_time, backfill_days)
+    alerts_fetch_config = _build_fetch_filter_fingerprint(alert_severities, alert_statuses, alert_verdicts)
+    incidents_fetch_config = _build_fetch_filter_fingerprint(incident_severities, incident_statuses, incident_verdicts)
+
+    alerts_last_fetch = _resolve_fetch_from_time(
+        last_run,
+        "alerts_last_fetch",
+        first_fetch_time,
+        backfill_days,
+        fetch_config_key="alerts_fetch_config",
+        current_fetch_config=alerts_fetch_config,
+    )
+    incidents_last_fetch = _resolve_fetch_from_time(
+        last_run,
+        "incidents_last_fetch",
+        first_fetch_time,
+        backfill_days,
+        fetch_config_key="incidents_fetch_config",
+        current_fetch_config=incidents_fetch_config,
+    )
     alerts_last_ids: list[str] = last_run.get("alerts_last_ids", [])
     incidents_last_ids: list[str] = last_run.get("incidents_last_ids", [])
     alerts_seen_ids = _load_seen_ids(last_run, "alerts_seen_ids", "alerts_last_ids")
@@ -1311,6 +1362,7 @@ def fetch_incidents_command(
             next_run["alerts_last_fetch"], next_run["alerts_last_ids"] = _update_fetch_state(
                 alerts, alerts_last_fetch, alerts_last_ids
             )
+            next_run["alerts_fetch_config"] = alerts_fetch_config
             demisto.debug(
                 f"Vega alerts ingest: {new_alerts} new, {len(alerts) - new_alerts} skipped as duplicates. "
                 f"Total seen IDs: {len(alerts_seen_ids)}."
@@ -1358,6 +1410,7 @@ def fetch_incidents_command(
             next_run["incidents_last_fetch"], next_run["incidents_last_ids"] = _update_fetch_state(
                 incidents, incidents_last_fetch, incidents_last_ids
             )
+            next_run["incidents_fetch_config"] = incidents_fetch_config
             demisto.debug(
                 f"Vega incidents ingest: {new_incidents} new, {len(incidents) - new_incidents} skipped as duplicates. "
                 f"Total seen IDs: {len(incidents_seen_ids)}."

@@ -39,6 +39,48 @@ configuration:
     display: Incidents Fetch Interval
     defaultvalue: "5"
     required: true
+  - display: Fetch time budget (seconds)
+    additionalinfo: >-
+      Maximum seconds per fetch run spent on getAlertsEvents and getIncidentsDetails calls.
+      XSOAR fetch jobs typically time out around 5 minutes; keep this below 300. Default is 240.
+    name: fetch_time_budget_seconds
+    type: 0
+    section: Collect
+    required: false
+    defaultvalue: "240"
+  - display: Fetch alert events
+    additionalinfo: >-
+      When enabled, each new alert triggers a getAlertsEvents API call (slow; subject to Vega rate limits).
+      Disable during large backfills to avoid fetch timeouts.
+    name: fetch_alert_events
+    type: 8
+    section: Alerts
+    required: false
+    defaultvalue: "true"
+  - display: Max alert event fetches per run
+    additionalinfo: >-
+      Maximum getAlertsEvents calls per fetch run. Additional new alerts are still ingested without event tables.
+    name: max_alert_events_fetches_per_run
+    type: 0
+    section: Alerts
+    required: false
+    defaultvalue: "25"
+  - display: Fetch incident details
+    additionalinfo: >-
+      When enabled, each new Vega incident triggers a getIncidentsDetails call for timeline and key findings.
+    name: fetch_incident_details
+    type: 8
+    section: Incidents
+    required: false
+    defaultvalue: "true"
+  - display: Max incident detail fetches per run
+    additionalinfo: >-
+      Maximum getIncidentsDetails calls per fetch run. Additional new incidents are still ingested without details.
+    name: max_incident_details_fetches_per_run
+    type: 0
+    section: Incidents
+    required: false
+    defaultvalue: "25"
   - display: Vega Entities to fetch
     additionalinfo: Select the Vega entities to fetch as XSOAR incidents.
     name: vega_entities

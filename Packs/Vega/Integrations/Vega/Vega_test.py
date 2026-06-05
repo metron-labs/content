@@ -10,6 +10,7 @@ import pytest
 from Vega import (
     _format_mitre_attack,
     Client,
+    _build_fetch_filter_fingerprint,
     _fetch_paginated_entities,
     _format_bullet_list,
     _format_key_findings_html,
@@ -350,6 +351,121 @@ def test_resolve_fetch_from_time_uses_stored_cursor_when_backfill_matches():
         )
         == CURRENT_TIME_CURSOR
     )
+
+
+def test_resolve_fetch_from_time_resets_when_fetch_filters_change():
+    previous_config = _build_fetch_filter_fingerprint(["HIGH"], None, None)
+    current_config = _build_fetch_filter_fingerprint(["HIGH", "MEDIUM"], None, None)
+    last_run = {
+        "vega_backfill_days": BACKFILL_DAYS,
+        "alerts_last_fetch": CURRENT_TIME_CURSOR,
+        "alerts_fetch_config": previous_config,
+    }
+
+    assert (
+        _resolve_fetch_from_time(
+            last_run,
+            "alerts_last_fetch",
+            FIRST_FETCH_TIME,
+            BACKFILL_DAYS,
+            fetch_config_key="alerts_fetch_config",
+            current_fetch_config=current_config,
+        )
+        == FIRST_FETCH_TIME
+    )
+
+
+def test_fetch_incidents_command_backfills_new_alerts_when_filters_expand(mocker):
+    mocker.patch.object(demisto, "debug")
+    mock_client = mocker.Mock()
+    mock_client.get_alerts.return_value = {
+        "alerts": [
+            {"id": "alert-high", "name": "High Alert", "severity": "HIGH", "createdAt": TIMESTAMP_T1},
+            {"id": "alert-medium", "name": "Medium Alert", "severity": "MEDIUM", "createdAt": TIMESTAMP_T2},
+        ],
+        "total": 2,
+        "limit": 200,
+        "offset": 0,
+    }
+    mock_client.get_incidents.return_value = {"incidents": [], "total": 0, "limit": 200, "offset": 0}
+
+    previous_config = _build_fetch_filter_fingerprint(["HIGH"], None, None)
+    last_run = {
+        "vega_backfill_days": BACKFILL_DAYS,
+        "alerts_last_fetch": CURRENT_TIME_CURSOR,
+        "alerts_last_ids": ["alert-high"],
+        "alerts_seen_ids": ["alert-high"],
+        "alerts_fetch_config": previous_config,
+    }
+
+    next_run, incidents = fetch_incidents_command(
+        client=mock_client,
+        last_run=last_run,
+        fetch_alerts=True,
+        fetch_incidents=False,
+        alert_severities=["HIGH", "MEDIUM"],
+        alert_statuses=None,
+        alert_verdicts=None,
+        incident_severities=None,
+        incident_statuses=None,
+        incident_verdicts=None,
+        first_fetch_time=FIRST_FETCH_TIME,
+        backfill_days=BACKFILL_DAYS,
+    )
+
+    assert mock_client.get_alerts.call_args.kwargs["from_time"] == FIRST_FETCH_TIME
+    assert len(incidents) == 1
+    assert incidents[0]["name"] == "Medium Alert"
+    assert "alert-high" in next_run["alerts_seen_ids"]
+    assert "alert-medium" in next_run["alerts_seen_ids"]
+    assert next_run["alerts_fetch_config"] == _build_fetch_filter_fingerprint(["HIGH", "MEDIUM"], None, None)
+
+
+def test_fetch_incidents_command_backfills_new_incidents_when_filters_expand(mocker):
+    mocker.patch.object(demisto, "debug")
+    mock_client = mocker.Mock()
+    mock_client.get_alerts.return_value = {"alerts": [], "total": 0, "limit": 200, "offset": 0}
+    mock_client.get_incidents.return_value = {
+        "incidents": [
+            {"id": "inc-1", "name": "Known Incident", "severity": "HIGH", "createdAt": TIMESTAMP_T1},
+            {"id": "inc-2", "name": "New Verdict Match", "severity": "LOW", "createdAt": TIMESTAMP_T2},
+        ],
+        "total": 2,
+        "limit": 200,
+        "offset": 0,
+    }
+    mock_client.get_incident_details.return_value = {"timelineEvents": []}
+
+    previous_config = _build_fetch_filter_fingerprint(None, None, ["MALICIOUS"])
+    last_run = {
+        "vega_backfill_days": BACKFILL_DAYS,
+        "incidents_last_fetch": CURRENT_TIME_CURSOR,
+        "incidents_last_ids": ["inc-1"],
+        "incidents_seen_ids": ["inc-1"],
+        "incidents_fetch_config": previous_config,
+    }
+
+    next_run, incidents = fetch_incidents_command(
+        client=mock_client,
+        last_run=last_run,
+        fetch_alerts=False,
+        fetch_incidents=True,
+        alert_severities=None,
+        alert_statuses=None,
+        alert_verdicts=None,
+        incident_severities=None,
+        incident_statuses=None,
+        incident_verdicts=["MALICIOUS", "SUSPICIOUS"],
+        first_fetch_time=FIRST_FETCH_TIME,
+        backfill_days=BACKFILL_DAYS,
+    )
+
+    assert mock_client.get_incidents.call_args.kwargs["from_time"] == FIRST_FETCH_TIME
+    assert len(incidents) == 1
+    assert incidents[0]["name"] == "New Verdict Match"
+    assert "inc-1" in next_run["incidents_seen_ids"]
+    assert "inc-2" in next_run["incidents_seen_ids"]
+    assert next_run["incidents_fetch_config"] == _build_fetch_filter_fingerprint(None, None, ["MALICIOUS", "SUSPICIOUS"])
 
 
 def test_update_fetch_state_advances_to_newer_timestamp():
