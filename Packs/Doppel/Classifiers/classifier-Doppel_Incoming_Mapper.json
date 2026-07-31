@@ -18,8 +18,8 @@
 				"Alert tags": {
 					"simple": "tags"
 				},
-				"Audit Logs": {
-					"simple": "audit_logs.[]."
+				"Doppel Audit Logs": {
+					"simple": "audit_logs"
 				},
 				"Block Indicators Status": {
 					"simple": "entity_state"
@@ -92,8 +92,8 @@
 				"Alert tags": {
 					"simple": "tags"
 				},
-				"Audit Logs": {
-					"simple": "audit_logs.[]."
+				"Doppel Audit Logs": {
+					"simple": "audit_logs"
 				},
 				"Block Indicators Status": {
 					"simple": "entity_state"
@@ -188,8 +188,8 @@
 				"Alert tags": {
 					"simple": "tags"
 				},
-				"Audit Logs": {
-					"simple": "audit_logs.[]."
+				"Doppel Audit Logs": {
+					"simple": "audit_logs"
 				},
 				"Block Indicators Status": {
 					"simple": "entity_state"
@@ -262,8 +262,8 @@
 				"Alert tags": {
 					"simple": "tags"
 				},
-				"Audit Logs": {
-					"simple": "audit_logs.[]."
+				"Doppel Audit Logs": {
+					"simple": "audit_logs"
 				},
 				"Block Indicators Status": {
 					"simple": "entity_state"
@@ -358,8 +358,8 @@
 				"Alert tags": {
 					"simple": "tags"
 				},
-				"Audit Logs": {
-					"simple": "audit_logs.[]."
+				"Doppel Audit Logs": {
+					"simple": "audit_logs"
 				},
 				"Block Indicators Status": {
 					"simple": "entity_state"
@@ -432,8 +432,8 @@
 				"Alert tags": {
 					"simple": "tags"
 				},
-				"Audit Logs": {
-					"simple": "audit_logs.[]."
+				"Doppel Audit Logs": {
+					"simple": "audit_logs"
 				},
 				"Block Indicators Status": {
 					"simple": "entity_state"
@@ -528,8 +528,8 @@
 				"Alert tags": {
 					"simple": "tags"
 				},
-				"Audit Logs": {
-					"simple": "audit_logs.[]."
+				"Doppel Audit Logs": {
+					"simple": "audit_logs"
 				},
 				"Block Indicators Status": {
 					"simple": "entity_state"
@@ -599,8 +599,8 @@
 				"Alert Source": {
 					"simple": "source"
 				},
-				"Audit Logs": {
-					"simple": "audit_logs.[]."
+				"Doppel Audit Logs": {
+					"simple": "audit_logs"
 				},
 				"Block Indicators Status": {
 					"simple": "entity_state"

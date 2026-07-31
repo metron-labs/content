@@ -622,7 +622,17 @@
 						"h": 4,
 						"hideName": false,
 						"i": "chtyrfjhpp-07b54ffa-28e8-4216-b4d2-1d0590a0affe",
-						"items": [],
+						"items": [
+							{
+								"endCol": 4,
+								"fieldId": "doppelauditlogs",
+								"height": 150,
+								"id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+								"index": 0,
+								"sectionItemType": "field",
+								"startCol": 0
+							}
+						],
 						"maxW": 3,
 						"minH": 1,
 						"moved": false,
