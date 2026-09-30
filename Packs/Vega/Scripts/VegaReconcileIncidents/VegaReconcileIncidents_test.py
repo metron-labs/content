@@ -53,7 +53,6 @@ def test_reconcile_all_alerts_present(mocker):
             "start_time": "2026-09-01T00:00:00Z",
             "end_time": "2026-09-30T23:59:59Z",
             "object_type": "both",
-            "create_missing": "false",
         }
     )
     outputs = result.outputs
@@ -61,7 +60,11 @@ def test_reconcile_all_alerts_present(mocker):
     assert outputs["Alerts"]["TotalInXSOAR"] == 2
     assert outputs["Alerts"]["MissingCount"] == 0
     assert outputs["Alerts"]["MissingIDs"] == []
+    assert outputs["MissingAlertIDs"] == []
+    assert outputs["MissingAlertIDsCSV"] == ""
     assert outputs["Incidents"]["TotalInVega"] == 0
+    assert "CreateMissing" not in outputs
+    assert "Recovered" not in (result.readable_output or "")
 
 
 def test_reconcile_missing_alerts_report_only(mocker):
@@ -71,43 +74,21 @@ def test_reconcile_missing_alerts_report_only(mocker):
         return_value=[{"id": "a-1"}, {"id": "a-2"}, {"id": "a-3"}],
     )
     mocker.patch.object(reconcile, "_query_xsoar_ids_for_vega_ids", return_value={"a-1"})
-    recover = mocker.patch.object(reconcile, "_recover_missing_alerts")
 
     result = reconcile.reconcile_incidents(
         {
             "start_time": "2026-09-01T00:00:00Z",
             "end_time": "2026-09-30T23:59:59Z",
             "object_type": "alerts",
-            "create_missing": "false",
         }
     )
     assert result.outputs["Alerts"]["MissingCount"] == 2
     assert result.outputs["Alerts"]["MissingIDs"] == ["a-2", "a-3"]
-    assert result.outputs["Alerts"]["RecoveredCount"] == 0
-    recover.assert_not_called()
+    assert result.outputs["Alerts"]["MissingIDsCSV"] == "a-2,a-3"
+    assert result.outputs["MissingAlertIDs"] == ["a-2", "a-3"]
+    assert result.outputs["MissingAlertIDsCSV"] == "a-2,a-3"
+    assert "a-2,a-3" in (result.readable_output or "")
     assert "Incidents" not in result.outputs
-
-
-def test_reconcile_missing_alerts_create_true(mocker):
-    mocker.patch.object(
-        reconcile,
-        "_fetch_vega_alerts",
-        return_value=[{"id": "a-1"}, {"id": "a-2"}],
-    )
-    mocker.patch.object(reconcile, "_query_xsoar_ids_for_vega_ids", return_value={"a-1"})
-    mocker.patch.object(reconcile, "_recover_missing_alerts", return_value=(["a-2"], []))
-
-    result = reconcile.reconcile_incidents(
-        {
-            "start_time": "2026-09-01T00:00:00Z",
-            "end_time": "2026-09-30T23:59:59Z",
-            "object_type": "alerts",
-            "create_missing": "true",
-        }
-    )
-    assert result.outputs["Alerts"]["RecoveredCount"] == 1
-    assert result.outputs["Alerts"]["RecoveredIDs"] == ["a-2"]
-    assert result.outputs["Alerts"]["FailedCount"] == 0
 
 
 def test_reconcile_incidents_object_type(mocker):
@@ -117,18 +98,17 @@ def test_reconcile_incidents_object_type(mocker):
         return_value=[{"id": "i-1"}, {"id": "i-2"}],
     )
     mocker.patch.object(reconcile, "_query_xsoar_ids_for_vega_ids", return_value={"i-1"})
-    mocker.patch.object(reconcile, "_recover_missing_incidents", return_value=(["i-2"], []))
 
     result = reconcile.reconcile_incidents(
         {
             "start_time": "2026-09-01T00:00:00Z",
             "end_time": "2026-09-15T00:00:00Z",
             "object_type": "incidents",
-            "create_missing": "true",
         }
     )
     assert result.outputs["Incidents"]["MissingIDs"] == ["i-2"]
-    assert result.outputs["Incidents"]["RecoveredCount"] == 1
+    assert result.outputs["MissingIncidentIDs"] == ["i-2"]
+    assert result.outputs["MissingIncidentIDsCSV"] == "i-2"
     assert "Alerts" not in result.outputs
 
 
@@ -146,6 +126,8 @@ def test_reconcile_empty_vega_results(mocker):
     )
     assert result.outputs["Alerts"]["TotalInVega"] == 0
     assert result.outputs["Incidents"]["TotalInVega"] == 0
+    assert result.outputs["MissingAlertIDsCSV"] == ""
+    assert result.outputs["MissingIncidentIDsCSV"] == ""
     assert query.call_count == 2
 
 
@@ -158,11 +140,11 @@ def test_reconcile_empty_xsoar_results(mocker):
             "start_time": "2026-09-01T00:00:00Z",
             "end_time": "2026-09-30T23:59:59Z",
             "object_type": "alerts",
-            "create_missing": "false",
         }
     )
     assert result.outputs["Alerts"]["TotalInXSOAR"] == 0
     assert result.outputs["Alerts"]["MissingIDs"] == ["a-1"]
+    assert result.outputs["MissingAlertIDsCSV"] == "a-1"
 
 
 def test_query_xsoar_ids_batches_and_extracts(mocker):
@@ -187,88 +169,6 @@ def test_execute_command_raises_on_error(mocker):
     mocker.patch.object(reconcile, "get_error", return_value="boom")
     with pytest.raises(DemistoException, match="failed"):
         reconcile._execute_command("vega-get-alerts", {})
-
-
-def test_recover_missing_alerts_creates_once(mocker):
-    mocker.patch.object(reconcile, "_query_xsoar_ids_for_vega_ids", side_effect=[set(), set()])
-    mocker.patch.object(
-        reconcile,
-        "_execute_command",
-        return_value=[
-            _ok_entry(
-                entry_context={
-                    "Vega.Alert": [
-                        {
-                            "id": "a-missing",
-                            "xsoarIncident": {
-                                "name": "Alert",
-                                "type": "Vega Alert",
-                                "rawJSON": "{}",
-                                "CustomFields": {"alertid": "a-missing"},
-                            },
-                        }
-                    ]
-                }
-            )
-        ],
-    )
-    create = mocker.patch.object(reconcile, "_create_xsoar_incident", return_value="100")
-    recovered, failed = reconcile._recover_missing_alerts(["a-missing"], "2026-09-01T00:00:00Z")
-    assert recovered == ["a-missing"]
-    assert failed == []
-    create.assert_called_once()
-
-
-def test_recover_missing_alerts_partial_failure(mocker):
-    mocker.patch.object(reconcile, "_query_xsoar_ids_for_vega_ids", return_value=set())
-    mocker.patch.object(
-        reconcile,
-        "_execute_command",
-        return_value=[
-            _ok_entry(
-                entry_context={
-                    "Vega.Alert": [
-                        {
-                            "id": "a-ok",
-                            "xsoarIncident": {"name": "ok", "type": "Vega Alert", "rawJSON": "{}"},
-                        }
-                    ]
-                }
-            )
-        ],
-    )
-
-    def create_side_effect(prepared):
-        if prepared.get("name") == "ok":
-            return "1"
-        raise DemistoException("create failed")
-
-    mocker.patch.object(reconcile, "_create_xsoar_incident", side_effect=create_side_effect)
-    # Second ID missing from Vega response -> failed
-    recovered, failed = reconcile._recover_missing_alerts(["a-ok", "a-missing"], None)
-    assert recovered == ["a-ok"]
-    assert failed == ["a-missing"]
-
-
-def test_recover_skips_duplicate_when_present_before_create(mocker):
-    # First batch presence check: empty. Final per-id check: already present.
-    mocker.patch.object(reconcile, "_query_xsoar_ids_for_vega_ids", side_effect=[set(), {"a-1"}])
-    mocker.patch.object(
-        reconcile,
-        "_execute_command",
-        return_value=[
-            _ok_entry(
-                entry_context={
-                    "Vega.Alert": [{"id": "a-1", "xsoarIncident": {"name": "Alert", "type": "Vega Alert", "rawJSON": "{}"}}]
-                }
-            )
-        ],
-    )
-    create = mocker.patch.object(reconcile, "_create_xsoar_incident")
-    recovered, failed = reconcile._recover_missing_alerts(["a-1"], None)
-    assert recovered == ["a-1"]
-    assert failed == []
-    create.assert_not_called()
 
 
 def test_main_returns_error(mocker):

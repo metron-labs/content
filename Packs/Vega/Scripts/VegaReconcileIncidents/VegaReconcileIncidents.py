@@ -14,7 +14,7 @@ XSOAR_TYPE_INCIDENT = "Vega Incident"
 ALERT_ID_FIELD = "alertid"
 INCIDENT_ID_FIELD = "vegaincidentid"
 
-# Wide fromdate so recovered incidents (created later in XSOAR) are still found by Vega ID.
+# Wide fromdate so incidents created later in XSOAR are still found by Vega ID.
 XSOAR_SEARCH_FROMDATE = "50 years ago"
 XSOAR_ID_QUERY_BATCH_SIZE = 50
 DEFAULT_SEARCH_LIMIT = 10000
@@ -209,181 +209,55 @@ def _fetch_vega_incidents(start_time: str, end_time: str) -> list[dict[str, Any]
     return _extract_vega_entities_from_get_command(results, "Vega.Incident")
 
 
-def _create_xsoar_incident(prepared: dict[str, Any]) -> str | None:
-    """Create one XSOAR incident from a prepared Vega mapping payload."""
-    create_args: dict[str, Any] = {
-        "name": prepared.get("name"),
-        "type": prepared.get("type"),
-        "severity": prepared.get("severity"),
-        "occurred": prepared.get("occurred"),
-        "rawJSON": prepared.get("rawJSON"),
-    }
-    custom_fields = prepared.get("CustomFields")
-    if isinstance(custom_fields, dict):
-        create_args["CustomFields"] = custom_fields
-    for mirror_key in ("dbotMirrorId", "dbotMirrorDirection", "dbotMirrorInstance"):
-        if prepared.get(mirror_key) is not None:
-            create_args[mirror_key] = prepared.get(mirror_key)
-
-    results = _execute_command("createNewIncident", create_args)
-    created_id = None
-    for entry in results:
-        entry_context = entry.get("EntryContext") or {}
-        if isinstance(entry_context, dict):
-            created_id = entry_context.get("CreatedIncidentID") or created_id
-        contents = entry.get("Contents")
-        if isinstance(contents, dict) and contents.get("id"):
-            created_id = contents.get("id")
-    return str(created_id) if created_id else None
-
-
-def _recover_missing_alerts(missing_ids: list[str], from_time: str | None) -> tuple[list[str], list[str]]:
-    """Recover missing Vega alerts into XSOAR using the integration mapping."""
-    if not missing_ids:
-        return [], []
-
-    recovered: list[str] = []
-    failed: list[str] = []
-    # Re-check immediately before creation to reduce duplicates from concurrent runs.
-    already_present = _query_xsoar_ids_for_vega_ids(XSOAR_TYPE_ALERT, ALERT_ID_FIELD, set(missing_ids))
-    to_create = [entity_id for entity_id in missing_ids if entity_id not in already_present]
-
-    for start in range(0, len(to_create), XSOAR_ID_QUERY_BATCH_SIZE):
-        chunk = to_create[start : start + XSOAR_ID_QUERY_BATCH_SIZE]
-        args: dict[str, Any] = {
-            "alert_ids": ",".join(chunk),
-            "prepare_incident": "true",
-        }
-        if from_time:
-            args["from_time"] = from_time
-        try:
-            results = _execute_command("vega-get-alerts", args)
-        except Exception as exc:
-            demisto.error(f"Vega reconciliation: failed to fetch missing alerts {chunk}: {exc}")
-            failed.extend(chunk)
-            continue
-
-        entities = _extract_vega_entities_from_get_command(results, "Vega.Alert")
-        by_id = {_normalize_id(entity.get("id")): entity for entity in entities if _normalize_id(entity.get("id"))}
-        for entity_id in chunk:
-            entity = by_id.get(entity_id)
-            if not entity:
-                failed.append(entity_id)
-                continue
-            prepared = entity.get("xsoarIncident")
-            if not isinstance(prepared, dict):
-                failed.append(entity_id)
-                continue
-            # Final per-ID check before create.
-            if _query_xsoar_ids_for_vega_ids(XSOAR_TYPE_ALERT, ALERT_ID_FIELD, {entity_id}):
-                recovered.append(entity_id)
-                continue
-            try:
-                _create_xsoar_incident(prepared)
-                recovered.append(entity_id)
-            except Exception as exc:
-                demisto.error(f"Vega reconciliation: failed to create alert {entity_id}: {exc}")
-                failed.append(entity_id)
-    return recovered, failed
-
-
-def _recover_missing_incidents(missing_ids: list[str], from_time: str | None) -> tuple[list[str], list[str]]:
-    """Recover missing Vega incidents into XSOAR using the integration mapping."""
-    if not missing_ids:
-        return [], []
-
-    recovered: list[str] = []
-    failed: list[str] = []
-    already_present = _query_xsoar_ids_for_vega_ids(XSOAR_TYPE_INCIDENT, INCIDENT_ID_FIELD, set(missing_ids))
-    to_create = [entity_id for entity_id in missing_ids if entity_id not in already_present]
-
-    for start in range(0, len(to_create), XSOAR_ID_QUERY_BATCH_SIZE):
-        chunk = to_create[start : start + XSOAR_ID_QUERY_BATCH_SIZE]
-        args: dict[str, Any] = {
-            "incident_ids": ",".join(chunk),
-            "prepare_incident": "true",
-        }
-        if from_time:
-            args["from_time"] = from_time
-        try:
-            results = _execute_command("vega-get-incidents", args)
-        except Exception as exc:
-            demisto.error(f"Vega reconciliation: failed to fetch missing incidents {chunk}: {exc}")
-            failed.extend(chunk)
-            continue
-
-        entities = _extract_vega_entities_from_get_command(results, "Vega.Incident")
-        by_id = {_normalize_id(entity.get("id")): entity for entity in entities if _normalize_id(entity.get("id"))}
-        for entity_id in chunk:
-            entity = by_id.get(entity_id)
-            if not entity:
-                failed.append(entity_id)
-                continue
-            prepared = entity.get("xsoarIncident")
-            if not isinstance(prepared, dict):
-                failed.append(entity_id)
-                continue
-            if _query_xsoar_ids_for_vega_ids(XSOAR_TYPE_INCIDENT, INCIDENT_ID_FIELD, {entity_id}):
-                recovered.append(entity_id)
-                continue
-            try:
-                _create_xsoar_incident(prepared)
-                recovered.append(entity_id)
-            except Exception as exc:
-                demisto.error(f"Vega reconciliation: failed to create incident {entity_id}: {exc}")
-                failed.append(entity_id)
-    return recovered, failed
-
-
 def _reconcile_object_type(
     *,
     object_label: str,
     incident_type: str,
     id_field: str,
     entities: list[dict[str, Any]],
-    create_missing: bool,
-    from_time: str,
-    recover_fn,
 ) -> dict[str, Any]:
-    """Compare one Vega object type against XSOAR and optionally recover missing objects."""
+    """Compare one Vega object type against XSOAR and report missing IDs."""
     vega_ids, invalid = _collect_vega_ids(entities)
     if invalid:
         demisto.info(f"Vega reconciliation: skipped {len(invalid)} {object_label} without a valid id.")
 
     xsoar_ids = _query_xsoar_ids_for_vega_ids(incident_type, id_field, vega_ids)
     missing_ids = sorted(vega_ids - xsoar_ids)
-
-    recovered: list[str] = []
-    failed: list[str] = []
-    if create_missing and missing_ids:
-        recovered, failed = recover_fn(missing_ids, from_time)
+    missing_ids_csv = ",".join(missing_ids)
 
     return {
         "TotalInVega": len(vega_ids),
         "TotalInXSOAR": len(xsoar_ids),
         "MissingCount": len(missing_ids),
         "MissingIDs": missing_ids,
-        "RecoveredCount": len(recovered),
-        "RecoveredIDs": recovered,
-        "FailedCount": len(failed),
-        "FailedIDs": failed,
+        "MissingIDsCSV": missing_ids_csv,
         "InvalidCount": len(invalid),
     }
+
+
+def _format_missing_ids_block(title: str, missing_ids: list[str]) -> str:
+    """Format a copyable missing-ID list for the War Room."""
+    if not missing_ids:
+        return f"{title}:\n(none)"
+    csv_list = ",".join(missing_ids)
+    lines = "\n".join(missing_ids)
+    return (
+        f"{title}:\n"
+        f"Count: {len(missing_ids)}\n"
+        f"Copyable CSV (for command args):\n{csv_list}\n"
+        f"One ID per line:\n{lines}"
+    )
 
 
 def _format_section(title: str, stats: dict[str, Any] | None) -> str:
     """Format one object-type section of the reconciliation report."""
     if stats is None:
         return f"{title}:\nSkipped"
-    missing_preview = ", ".join(stats.get("MissingIDs") or []) or "(none)"
     return (
         f"{title}:\n"
         f"Found in Vega:        {stats.get('TotalInVega', 0)}\n"
         f"Found in XSOAR:       {stats.get('TotalInXSOAR', 0)}\n"
-        f"Missing:              {stats.get('MissingCount', 0)}\n"
-        f"Recovered:            {stats.get('RecoveredCount', 0)}\n"
-        f"Failed to Recover:    {stats.get('FailedCount', 0)}\n"
-        f"Missing IDs:          {missing_preview}"
+        f"Missing:              {stats.get('MissingCount', 0)}"
     )
 
 
@@ -392,7 +266,6 @@ def reconcile_incidents(args: dict[str, Any]) -> CommandResults:
     start_time = _require_time_arg(args, "start_time")
     end_time = _require_time_arg(args, "end_time")
     object_type = _parse_object_type(args)
-    create_missing = argToBoolean(args.get("create_missing", False))
 
     alerts_stats: dict[str, Any] | None = None
     incidents_stats: dict[str, Any] | None = None
@@ -404,9 +277,6 @@ def reconcile_incidents(args: dict[str, Any]) -> CommandResults:
             incident_type=XSOAR_TYPE_ALERT,
             id_field=ALERT_ID_FIELD,
             entities=alert_entities,
-            create_missing=create_missing,
-            from_time=start_time,
-            recover_fn=_recover_missing_alerts,
         )
 
     if object_type in (OBJECT_TYPE_INCIDENTS, OBJECT_TYPE_BOTH):
@@ -416,16 +286,21 @@ def reconcile_incidents(args: dict[str, Any]) -> CommandResults:
             incident_type=XSOAR_TYPE_INCIDENT,
             id_field=INCIDENT_ID_FIELD,
             entities=incident_entities,
-            create_missing=create_missing,
-            from_time=start_time,
-            recover_fn=_recover_missing_incidents,
         )
+
+    missing_alert_ids = list((alerts_stats or {}).get("MissingIDs") or [])
+    missing_incident_ids = list((incidents_stats or {}).get("MissingIDs") or [])
+    missing_alert_ids_csv = ",".join(missing_alert_ids)
+    missing_incident_ids_csv = ",".join(missing_incident_ids)
 
     outputs: dict[str, Any] = {
         "StartTime": start_time,
         "EndTime": end_time,
         "ObjectType": object_type,
-        "CreateMissing": create_missing,
+        "MissingAlertIDs": missing_alert_ids,
+        "MissingAlertIDsCSV": missing_alert_ids_csv,
+        "MissingIncidentIDs": missing_incident_ids,
+        "MissingIncidentIDsCSV": missing_incident_ids_csv,
     }
     if alerts_stats is not None:
         outputs["Alerts"] = alerts_stats
@@ -436,7 +311,12 @@ def reconcile_incidents(args: dict[str, Any]) -> CommandResults:
         "### Vega Reconciliation Results\n\n"
         f"Time Range:\n{start_time} → {end_time}\n\n"
         f"{_format_section('Vega Alerts', alerts_stats)}\n\n"
-        f"{_format_section('Vega Incidents', incidents_stats)}"
+        f"{_format_section('Vega Incidents', incidents_stats)}\n\n"
+        f"{_format_missing_ids_block('Missing Vega Alert IDs', missing_alert_ids)}\n\n"
+        f"{_format_missing_ids_block('Missing Vega Incident IDs', missing_incident_ids)}\n\n"
+        "Use the copyable CSV lists with follow-up commands, for example:\n"
+        "`!vega-get-alerts alert_ids=<MissingAlertIDsCSV> prepare_incident=true`\n"
+        "`!vega-get-incidents incident_ids=<MissingIncidentIDsCSV> prepare_incident=true`"
     )
     return CommandResults(
         readable_output=readable,

@@ -10,7 +10,7 @@ tags:
 - Vega
 comment: >-
   Reconcile Vega alerts and incidents against Cortex XSOAR for a Vega source-system time range.
-  Reports missing XSOAR incidents and optionally recovers them using the existing Vega mapping.
+  Reports missing XSOAR incidents and returns copyable missing ID lists for follow-up creation commands.
 enabled: true
 args:
 - name: start_time
@@ -27,15 +27,6 @@ args:
   - incidents
   - both
   defaultValue: both
-- name: create_missing
-  description: >-
-    When true, create XSOAR incidents for Vega objects that are missing.
-    When false, only report missing objects. Default is false.
-  auto: PREDEFINED
-  predefined:
-  - "true"
-  - "false"
-  defaultValue: "false"
 outputs:
 - contextPath: Vega.Reconciliation.StartTime
   description: Reconciliation start time (Vega source time).
@@ -46,9 +37,18 @@ outputs:
 - contextPath: Vega.Reconciliation.ObjectType
   description: Object types included in the run (alerts, incidents, or both).
   type: String
-- contextPath: Vega.Reconciliation.CreateMissing
-  description: Whether missing objects were recovered during the run.
-  type: Boolean
+- contextPath: Vega.Reconciliation.MissingAlertIDs
+  description: List of Vega alert API ids missing from XSOAR.
+  type: String
+- contextPath: Vega.Reconciliation.MissingAlertIDsCSV
+  description: Comma-separated Vega alert API ids missing from XSOAR (copyable for alert_ids).
+  type: String
+- contextPath: Vega.Reconciliation.MissingIncidentIDs
+  description: List of Vega incident API ids missing from XSOAR.
+  type: String
+- contextPath: Vega.Reconciliation.MissingIncidentIDsCSV
+  description: Comma-separated Vega incident API ids missing from XSOAR (copyable for incident_ids).
+  type: String
 - contextPath: Vega.Reconciliation.Alerts.TotalInVega
   description: Number of unique Vega alerts found in the time range.
   type: Number
@@ -61,17 +61,8 @@ outputs:
 - contextPath: Vega.Reconciliation.Alerts.MissingIDs
   description: Vega alert API ids missing from XSOAR.
   type: String
-- contextPath: Vega.Reconciliation.Alerts.RecoveredCount
-  description: Number of missing Vega alerts recovered into XSOAR.
-  type: Number
-- contextPath: Vega.Reconciliation.Alerts.RecoveredIDs
-  description: Vega alert API ids successfully recovered.
-  type: String
-- contextPath: Vega.Reconciliation.Alerts.FailedCount
-  description: Number of missing Vega alerts that failed recovery.
-  type: Number
-- contextPath: Vega.Reconciliation.Alerts.FailedIDs
-  description: Vega alert API ids that failed recovery.
+- contextPath: Vega.Reconciliation.Alerts.MissingIDsCSV
+  description: Comma-separated Vega alert API ids missing from XSOAR.
   type: String
 - contextPath: Vega.Reconciliation.Incidents.TotalInVega
   description: Number of unique Vega incidents found in the time range.
@@ -85,17 +76,8 @@ outputs:
 - contextPath: Vega.Reconciliation.Incidents.MissingIDs
   description: Vega incident API ids missing from XSOAR.
   type: String
-- contextPath: Vega.Reconciliation.Incidents.RecoveredCount
-  description: Number of missing Vega incidents recovered into XSOAR.
-  type: Number
-- contextPath: Vega.Reconciliation.Incidents.RecoveredIDs
-  description: Vega incident API ids successfully recovered.
-  type: String
-- contextPath: Vega.Reconciliation.Incidents.FailedCount
-  description: Number of missing Vega incidents that failed recovery.
-  type: Number
-- contextPath: Vega.Reconciliation.Incidents.FailedIDs
-  description: Vega incident API ids that failed recovery.
+- contextPath: Vega.Reconciliation.Incidents.MissingIDsCSV
+  description: Comma-separated Vega incident API ids missing from XSOAR.
   type: String
 scripttarget: 0
 runonce: false
