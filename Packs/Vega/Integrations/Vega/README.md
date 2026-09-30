@@ -34,6 +34,71 @@ This is the default integration for this content pack when configured by the Dat
 You can execute these commands from the CLI, as part of an automation, or in a playbook.
 After you successfully execute a command, a DBot message appears in the War Room with the command details.
 
+### vega-get-alerts
+
+***
+Fetch Vega alerts by API id and/or created-at time range. Results are paginated internally. Use prepare_incident=true when recovering missing XSOAR incidents so the existing Vega to XSOAR mapping is reused.
+
+#### Base Command
+
+`vega-get-alerts`
+
+#### Input
+
+| **Argument Name** | **Description** | **Required** |
+| --- | --- | --- |
+| alert_ids | A comma-separated list of Vega alert API ids (UUIDs) to fetch. When omitted, alerts are returned by the time range filters. | Optional |
+| alert_id | A single Vega alert API id (UUID). Deprecated alias for alert_ids. | Optional |
+| from_time | Inclusive start of the Vega alert created-at time range (ISO-8601 UTC). Alias start_time is also accepted. | Optional |
+| to_time | Inclusive end of the Vega alert created-at time range (ISO-8601 UTC). Alias end_time is also accepted. | Optional |
+| limit | Maximum number of alerts to return. When omitted, all matching alerts are returned with pagination. | Optional |
+| prepare_incident | When true, each result includes an xsoarIncident payload built with the same mapping used by fetch-incidents. Use this for reconciliation recovery. Default is false. | Optional |
+
+#### Context Output
+
+| **Path** | **Type** | **Description** |
+| --- | --- | --- |
+| Vega.Alert.id | String | Vega alert API id \(UUID\). |
+| Vega.Alert.vegaAlertId | String | Vega alert display id. |
+| Vega.Alert.name | String | Vega alert name. |
+| Vega.Alert.createdAt | Date | Vega alert created-at timestamp. |
+| Vega.Alert.severity | String | Vega alert severity. |
+| Vega.Alert.status | String | Vega alert status. |
+| Vega.Alert.verdict | String | Vega alert verdict. |
+| Vega.Alert.xsoarIncident | Unknown | XSOAR incident payload prepared with the same mapping as fetch-incidents \(when prepare_incident=true\). |
+
+### vega-get-incidents
+
+***
+Fetch Vega incidents by API id and/or created-at time range. Results are paginated internally. Use prepare_incident=true when recovering missing XSOAR incidents so the existing Vega to XSOAR mapping is reused.
+
+#### Base Command
+
+`vega-get-incidents`
+
+#### Input
+
+| **Argument Name** | **Description** | **Required** |
+| --- | --- | --- |
+| incident_ids | A comma-separated list of Vega incident API ids \(UUIDs\) to fetch. When omitted, incidents are returned by the time range filters. | Optional |
+| incident_id | A single Vega incident API id \(UUID\). Deprecated alias for incident_ids. | Optional |
+| from_time | Inclusive start of the Vega incident created-at time range \(ISO-8601 UTC\). Alias start_time is also accepted. | Optional |
+| to_time | Inclusive end of the Vega incident created-at time range \(ISO-8601 UTC\). Alias end_time is also accepted. | Optional |
+| limit | Maximum number of incidents to return. When omitted, all matching incidents are returned with pagination. | Optional |
+| prepare_incident | When true, each result includes an xsoarIncident payload built with the same mapping used by fetch-incidents. Use this for reconciliation recovery. Default is false. | Optional |
+
+#### Context Output
+
+| **Path** | **Type** | **Description** |
+| --- | --- | --- |
+| Vega.Incident.id | String | Vega incident API id \(UUID\). |
+| Vega.Incident.name | String | Vega incident name. |
+| Vega.Incident.createdAt | Date | Vega incident created-at timestamp. |
+| Vega.Incident.severity | String | Vega incident severity. |
+| Vega.Incident.status | String | Vega incident status. |
+| Vega.Incident.verdict | String | Vega incident verdict. |
+| Vega.Incident.xsoarIncident | Unknown | XSOAR incident payload prepared with the same mapping as fetch-incidents \(when prepare_incident=true\). |
+
 ### vega-get-alert-events
 
 ***

@@ -38,11 +38,38 @@ Leverage Cortex XSOAR playbooks together with Vega's recommended actions to auto
 
 The integration provides commands that allow playbooks and analysts to interact directly with the Vega platform, including:
 
+- Retrieve Vega alerts and incidents by id or time range
 - Update Vega alerts
 - Update Vega incidents
 - Retrieve alert events
 - Synchronise investigation status
 - Manage incident lifecycle from Cortex XSOAR
+
+### Vega Reconciliation
+
+The **VegaReconcileIncidents** automation verifies that Vega Alerts and/or Vega Incidents for a selected Vega source-system time range have corresponding Cortex XSOAR incidents.
+
+| Input | Description |
+| --- | --- |
+| `start_time` | Inclusive Vega created-at range start (ISO-8601 UTC). Required. |
+| `end_time` | Inclusive Vega created-at range end (ISO-8601 UTC). Required. |
+| `object_type` | `alerts`, `incidents`, or `both` (default). |
+| `create_missing` | `false` (default) reports only; `true` recovers missing XSOAR incidents. |
+
+Comparison uses immutable Vega API IDs:
+
+- Alerts: `alertid`
+- Incidents: `vegaincidentid`
+
+The range is based on Vega created-at (`vegacreatedat`), not XSOAR incident creation time. Recovered incidents therefore remain discoverable for historical Vega ranges.
+
+Example:
+
+```
+!VegaReconcileIncidents start_time="2026-09-01T00:00:00Z" end_time="2026-09-30T23:59:59Z" object_type=both create_missing=false
+```
+
+Dependencies: Vega integration commands `vega-get-alerts` and `vega-get-incidents`, plus `SearchIncidentsV2` and `createNewIncident`.
 
 ### Custom Incident Experience
 
@@ -77,6 +104,7 @@ This Content Pack includes:
 - Incident Fetching
 - Alert Fetching
 - Bidirectional Mirroring
+- Vega Reconciliation Automation
 - Custom Incident Layouts
 - Investigation Commands
 - Sample Automation Playbooks

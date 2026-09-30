@@ -1,0 +1,115 @@
+commonfields:
+  id: VegaReconcileIncidents
+  version: -1
+name: VegaReconcileIncidents
+script: ''
+type: python
+subtype: python3
+fromversion: 6.10.0
+tags:
+- Vega
+comment: >-
+  Reconcile Vega alerts and incidents against Cortex XSOAR for a Vega source-system time range.
+  Reports missing XSOAR incidents and optionally recovers them using the existing Vega mapping.
+enabled: true
+args:
+- name: start_time
+  required: true
+  description: Inclusive start of the Vega source created-at time range (ISO-8601 UTC).
+- name: end_time
+  required: true
+  description: Inclusive end of the Vega source created-at time range (ISO-8601 UTC).
+- name: object_type
+  description: Which Vega object types to reconcile.
+  auto: PREDEFINED
+  predefined:
+  - alerts
+  - incidents
+  - both
+  defaultValue: both
+- name: create_missing
+  description: >-
+    When true, create XSOAR incidents for Vega objects that are missing.
+    When false, only report missing objects. Default is false.
+  auto: PREDEFINED
+  predefined:
+  - "true"
+  - "false"
+  defaultValue: "false"
+outputs:
+- contextPath: Vega.Reconciliation.StartTime
+  description: Reconciliation start time (Vega source time).
+  type: Date
+- contextPath: Vega.Reconciliation.EndTime
+  description: Reconciliation end time (Vega source time).
+  type: Date
+- contextPath: Vega.Reconciliation.ObjectType
+  description: Object types included in the run (alerts, incidents, or both).
+  type: String
+- contextPath: Vega.Reconciliation.CreateMissing
+  description: Whether missing objects were recovered during the run.
+  type: Boolean
+- contextPath: Vega.Reconciliation.Alerts.TotalInVega
+  description: Number of unique Vega alerts found in the time range.
+  type: Number
+- contextPath: Vega.Reconciliation.Alerts.TotalInXSOAR
+  description: Number of those Vega alerts already present in XSOAR.
+  type: Number
+- contextPath: Vega.Reconciliation.Alerts.MissingCount
+  description: Number of Vega alerts missing from XSOAR.
+  type: Number
+- contextPath: Vega.Reconciliation.Alerts.MissingIDs
+  description: Vega alert API ids missing from XSOAR.
+  type: String
+- contextPath: Vega.Reconciliation.Alerts.RecoveredCount
+  description: Number of missing Vega alerts recovered into XSOAR.
+  type: Number
+- contextPath: Vega.Reconciliation.Alerts.RecoveredIDs
+  description: Vega alert API ids successfully recovered.
+  type: String
+- contextPath: Vega.Reconciliation.Alerts.FailedCount
+  description: Number of missing Vega alerts that failed recovery.
+  type: Number
+- contextPath: Vega.Reconciliation.Alerts.FailedIDs
+  description: Vega alert API ids that failed recovery.
+  type: String
+- contextPath: Vega.Reconciliation.Incidents.TotalInVega
+  description: Number of unique Vega incidents found in the time range.
+  type: Number
+- contextPath: Vega.Reconciliation.Incidents.TotalInXSOAR
+  description: Number of those Vega incidents already present in XSOAR.
+  type: Number
+- contextPath: Vega.Reconciliation.Incidents.MissingCount
+  description: Number of Vega incidents missing from XSOAR.
+  type: Number
+- contextPath: Vega.Reconciliation.Incidents.MissingIDs
+  description: Vega incident API ids missing from XSOAR.
+  type: String
+- contextPath: Vega.Reconciliation.Incidents.RecoveredCount
+  description: Number of missing Vega incidents recovered into XSOAR.
+  type: Number
+- contextPath: Vega.Reconciliation.Incidents.RecoveredIDs
+  description: Vega incident API ids successfully recovered.
+  type: String
+- contextPath: Vega.Reconciliation.Incidents.FailedCount
+  description: Number of missing Vega incidents that failed recovery.
+  type: Number
+- contextPath: Vega.Reconciliation.Incidents.FailedIDs
+  description: Vega incident API ids that failed recovery.
+  type: String
+scripttarget: 0
+runonce: false
+dockerimage: demisto/python3:3.12.13.10404775
+dependson:
+  must:
+  - Vega|||vega-get-alerts
+  - Vega|||vega-get-incidents
+tests:
+- No tests (auto formatted)
+marketplaces:
+- xsoar
+- marketplacev2
+- platform
+supportedModules:
+- agentix
+- xsiam

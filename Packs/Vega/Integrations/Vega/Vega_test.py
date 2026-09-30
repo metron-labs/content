@@ -114,7 +114,10 @@ from Vega import (
     filter_incident_statuses,
     filter_incident_investigation_statuses,
     filter_incident_verdicts,
+    _build_alerts_query_variables,
     _build_incidents_query_variables,
+    get_alerts_command,
+    get_incidents_command,
     resolve_has_related_incidents,
     TEST_CONNECTION_ACCESS_KEY_ERROR,
     TEST_CONNECTION_ACCESS_KEY_ID_ERROR,
@@ -5187,3 +5190,100 @@ def test_test_module_rejects_invalid_lookback_minutes(mocker):
         vega_test_module(client, backfill_days=30, max_fetch=50, lookback_minutes="abc")
         == 'Invalid number: "lookback_minutes"="abc"'
     )
+
+
+def test_build_alerts_query_variables_includes_to_time():
+    variables = _build_alerts_query_variables(
+        from_time="2026-09-01T00:00:00Z",
+        to_time="2026-09-30T23:59:59Z",
+        alert_ids=["a-1"],
+        offset=0,
+    )
+    assert variables["from"] == "2026-09-01T00:00:00Z"
+    assert variables["to"] == "2026-09-30T23:59:59Z"
+    assert variables["alertIds"] == ["a-1"]
+
+
+def test_build_incidents_query_variables_includes_to_time():
+    variables = _build_incidents_query_variables(
+        from_time="2026-09-01T00:00:00Z",
+        to_time="2026-09-15T00:00:00Z",
+        incident_ids=["i-1"],
+        offset=0,
+    )
+    assert variables["from"] == "2026-09-01T00:00:00Z"
+    assert variables["to"] == "2026-09-15T00:00:00Z"
+    assert variables["incidentIds"] == ["i-1"]
+
+
+def test_get_alerts_command_by_time_range_and_dedupes(mocker):
+    mock_client = mocker.Mock()
+    mock_client.get_alerts.return_value = {
+        "alerts": [
+            {"id": "a-1", "name": "One", "createdAt": "2026-09-01T00:00:00Z", "vegaAlertId": "VEGA-1"},
+            {"id": "a-1", "name": "Dup", "createdAt": "2026-09-01T00:00:00Z", "vegaAlertId": "VEGA-1"},
+            {"id": "a-2", "name": "Two", "createdAt": "2026-09-02T00:00:00Z"},
+            {"name": "missing-id"},
+        ],
+        "total": 4,
+    }
+    result = get_alerts_command(
+        mock_client,
+        {"from_time": "2026-09-01T00:00:00Z", "to_time": "2026-09-30T23:59:59Z"},
+    )
+    assert isinstance(result.outputs, list)
+    assert [item["id"] for item in result.outputs] == ["a-1", "a-2"]
+    mock_client.get_alerts.assert_called()
+    assert mock_client.get_alerts.call_args.kwargs["from_time"] == "2026-09-01T00:00:00Z"
+    assert mock_client.get_alerts.call_args.kwargs["to_time"] == "2026-09-30T23:59:59Z"
+
+
+def test_get_alerts_command_by_ids_prepare_incident(mocker):
+    mock_client = mocker.Mock()
+    mock_client.get_alerts.return_value = {
+        "alerts": [{"id": "a-1", "name": "One", "createdAt": "2026-09-01T00:00:00Z", "severity": "HIGH"}],
+        "total": 1,
+    }
+    mocker.patch(
+        "Vega.alert_to_incident",
+        return_value={"name": "One", "type": "Vega Alert", "CustomFields": {"alertid": "a-1"}},
+    )
+    result = get_alerts_command(
+        mock_client,
+        {"alert_ids": "a-1", "prepare_incident": "true"},
+        integration_url="https://example.vega.com",
+    )
+    assert result.outputs[0]["id"] == "a-1"
+    assert result.outputs[0]["xsoarIncident"]["type"] == "Vega Alert"
+
+
+def test_get_incidents_command_by_ids_prepare_incident(mocker):
+    mock_client = mocker.Mock()
+    mock_client.get_incidents.return_value = {
+        "incidents": [{"id": "i-1", "name": "Inc", "createdAt": "2026-09-01T00:00:00Z"}],
+        "total": 1,
+    }
+    mocker.patch("Vega._fetch_incident_timeline_events", return_value=[])
+    mocker.patch(
+        "Vega.incident_to_xsoar_incident",
+        return_value={"name": "Inc", "type": "Vega Incident", "CustomFields": {"vegaincidentid": "i-1"}},
+    )
+    result = get_incidents_command(mock_client, {"incident_ids": "i-1", "prepare_incident": "true"})
+    assert result.outputs[0]["id"] == "i-1"
+    assert result.outputs[0]["xsoarIncident"]["CustomFields"]["vegaincidentid"] == "i-1"
+
+
+def test_get_alerts_command_empty_results(mocker):
+    mock_client = mocker.Mock()
+    mock_client.get_alerts.return_value = {"alerts": [], "total": 0}
+    result = get_alerts_command(mock_client, {"from_time": "2026-09-01T00:00:00Z", "to_time": "2026-09-02T00:00:00Z"})
+    assert result.outputs == []
+
+
+def test_build_vega_alert_custom_fields_sets_vegaalertid_and_alertid():
+    fields = _build_vega_alert_custom_fields(
+        {"id": "uuid-1", "vegaAlertId": "VEGA-9", "createdAt": "2026-09-01T00:00:00Z"}
+    )
+    assert fields["alertid"] == "uuid-1"
+    assert fields["vegaalertid"] == "VEGA-9"
+    assert fields["vegacreatedat"] == "2026-09-01T00:00:00Z"
