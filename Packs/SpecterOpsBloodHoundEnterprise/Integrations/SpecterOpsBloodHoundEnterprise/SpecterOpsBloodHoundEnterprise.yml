@@ -9,7 +9,7 @@ display: SpecterOps BloodHound Enterprise
 category: Vulnerability Management
 provider: SpecterOps
 description: Use the SpecterOpsBloodHoundEnterprise integration to retrieve attack path findings from BloodHound Enterprise to streamline incident creation and investigation.
-detaileddescription: BloodHound Enterprise reduces risk in Active Directory and Microsoft Azure environments by continuously identifying and quantifying attack paths that attackers use to escalate privileges. The SpecterOpsBloodHoundEnterprise integration automatically ingests attack path findings from BloodHound Enterprise into Cortex XSOAR, streamlining incident creation and investigation. Configure the integration by providing your BloodHound Enterprise domain, API token ID and key, and optionally configure proxy settings and finding filters. Enable incident fetching to automatically retrieve attack paths at your specified interval.
+detaileddescription: BloodHound Enterprise reduces risk in Active Directory and Microsoft Azure environments by continuously identifying and quantifying attack paths that attackers use to escalate privileges. The SpecterOpsBloodHoundEnterprise integration automatically ingests attack path findings from BloodHound Enterprise into Cortex XSOAR, streamlining incident creation and investigation. Configure the integration by providing your BloodHound Enterprise domain, API token ID and key, and optionally configure proxy settings and finding filters. Enable incident fetching to automatically retrieve attack paths at your specified interval. When Create indicators is enabled (default), principals on newly ingested attack paths are saved as User, Computer, or Group indicators.
 configuration:
 - section: Connect
   display: BloodHound Enterprise Domain
@@ -58,9 +58,13 @@ configuration:
   name: isFetch
   type: 8
   required: false
-  supportedModules:
-  - agentix
-  - xsiam
+- section: Collect
+  display: Create indicators
+  name: create_indicators
+  type: 8
+  defaultvalue: true
+  required: false
+  additionalinfo: When enabled (default), each fetch creates or updates User, Computer, and Group indicators for principals on newly ingested attack paths. Previously fetched paths and existing indicators are not changed.
 - section: Collect
   display: Incidents Fetch Interval
   name: incidentFetchInterval
@@ -68,17 +72,11 @@ configuration:
   type: 19
   required: false
   additionalinfo: The interval for fetching attack paths.
-  supportedModules:
-  - agentix
-  - xsiam
 - section: Collect
   display: Incident type
   name: incidentType
   type: 13
   required: false
-  supportedModules:
-  - agentix
-  - xsiam
 script:
   script: '-'
   commands:
@@ -145,6 +143,119 @@ script:
       description: Whether a path exists between the nodes (True or False).
       type: Boolean
     description: Checks if a path exists between the two nodes.
+  - name: bloodhound-principal-impact-get
+    arguments:
+    - name: name
+      required: true
+      description: Indicator value to resolve in BloodHound Enterprise.
+    - name: indicator_type
+      required: true
+      description: Indicator type. User, Computer, or Group.
+      predefined:
+      - User
+      - Computer
+      - Group
+    - name: view
+      required: true
+      description: risk returns the principal header, direct attack paths, and the per-domain count grid. radius returns the radius target list.
+      predefined:
+      - risk
+      - radius
+    outputs:
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Name
+      description: Principal name returned by BloodHound search.
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.ObjectID
+      description: BloodHound object ID of the principal.
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.PrincipalType
+      description: BloodHound type used for the lookup (User, Computer, or Group).
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.View
+      description: Requested view, risk or radius.
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Partial
+      description: True when paging stopped after retries and the result is incomplete.
+      type: Boolean
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.LastUpdated
+      description: Entity lastseen, or lastlogontimestamp when lastseen is empty. Returned for the risk view.
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.DirectAttackPaths
+      description: Direct relationship findings for the risk view.
+      type: Unknown
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.DirectAttackPaths.Domain
+      description: Environment name of a direct attack path.
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.DirectAttackPaths.AttackPath
+      description: Finding name of a direct attack path.
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.AttackPathCount
+      description: Number of direct relationship findings.
+      type: Number
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.TierZero
+      description: Yes when any direct finding is in the Tier Zero zone.
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.TierZeroDomains
+      description: Environment names of Tier Zero findings.
+      type: Unknown
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Rows
+      description: Per-domain count grid. Returned for the risk view.
+      type: Unknown
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Rows.Domain
+      description: Domain name for a grid row.
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Rows.T0
+      description: Y when the domain has a Tier Zero finding, otherwise N.
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Rows.AP
+      description: Direct attack-path count for the domain.
+      type: Number
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Rows.OOC
+      description: Outbound object control count for the domain.
+      type: Number
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Rows.AR
+      description: Admin rights count for the domain.
+      type: Number
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Rows.RDP
+      description: RDP rights count for the domain.
+      type: Number
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Rows.DCOM
+      description: DCOM rights count for the domain.
+      type: Number
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Rows.PS
+      description: PowerShell remoting count for the domain.
+      type: Number
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Rows.SQL
+      description: SQL admin count for the domain. Zero for computers and groups.
+      type: Number
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Rows.CD
+      description: Constrained delegation count for the domain. Zero for groups.
+      type: Number
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Rows.Sess
+      description: Session count for the domain.
+      type: Number
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Categories
+      description: Radius target blocks, one per control category with results. Returned for the radius view.
+      type: Unknown
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Categories.ControlCategory
+      description: Control category display name, for example Admin Rights.
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Categories.Returned
+      description: Total objects BloodHound reported for the control category.
+      type: Number
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Categories.Targets
+      description: First 100 targets for the control category.
+      type: Unknown
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Categories.Targets.Name
+      description: Target object name.
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Categories.Targets.Type
+      description: Target label, for example Computer.
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.Categories.Targets.Domain
+      description: Domain parsed from the target name. Empty when the name has no domain.
+      type: String
+    description: Returns BloodHound Enterprise risk details, including the domain grid, or the radius target list for one principal.
   type: python
   dockerimage: demisto/python3:3.12.13.10116658
   subtype: python3

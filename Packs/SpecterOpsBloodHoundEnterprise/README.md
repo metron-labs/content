@@ -110,6 +110,14 @@ This pack includes the following components:
   - Provides access to remediation guidance
   - Tracks investigation and remediation progress
 
+- **SpecterOpsBloodHoundEnterprise Indicator**: Layout for User, Computer, and Group indicators with **Update BHE Risk** and **Pull BHE Radius**
+
+### Indicators
+
+- **Create indicators** (integration setting, enabled by default): Creates or updates User, Computer, and Group indicators for principals on newly ingested attack paths
+- **bloodhound-principal-impact-get**: Returns principal risk details, the domain grid, or radius targets for layout scripts
+- **Update BHE Risk** / **Pull BHE Radius**: Load BloodHound Enterprise data into the indicator layout
+
 ## Setup and Configuration
 
 ### Prerequisites
@@ -128,6 +136,7 @@ This pack includes the following components:
    - **Finding Environment**: Filter by specific domains or use "all" for all environments
    - **Finding Category**: Filter by finding category or use "all" for all categories
    - **Fetch incidents**: Enable to automatically fetch attack paths
+   - **Create indicators**: Leave enabled (default) to save principals as User, Computer, and Group indicators on each fetch
    - **Incidents Fetch Interval**: Set the interval for fetching (default: 10 minutes)
    - **Incident type**: Set to "SpecterOpsBloodHoundEnterprise Attack Path"
 
@@ -159,6 +168,7 @@ Once configured with "Fetch incidents" enabled, the integration will:
 2. Retrieve new attack path findings
 3. Create incidents in Cortex XSOAR with all relevant details
 4. Include remediation guidance and affected principal information
+5. When **Create indicators** is enabled (default), save each new User, Computer, and Group principal as an indicator
 
 ### Manual Investigation Commands
 

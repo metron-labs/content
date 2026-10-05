@@ -13,6 +13,7 @@ This integration was integrated and tested with version 1.0.0 of SpecterOps Bloo
 | Finding Environment | The environment from which to fetch attack paths. Default is all. | False |
 | Finding Category | The category of attack paths to fetch. Default is all. | False |
 | Fetch incidents | Enable automatic fetching of attack path findings from BloodHound Enterprise. | False |
+| Create indicators | When enabled (default), each fetch creates or updates User, Computer, and Group indicators for principals on newly ingested attack paths. Previously fetched paths and existing indicators are not changed. | False |
 | Incidents Fetch Interval | The interval for fetching attack paths | False |
 | Incident type | The incident type to assign to fetched attack path findings. Recommended: SpecterOps BloodHound Enterprise Attack Path. | False |
 
@@ -124,6 +125,42 @@ Checks if a path exists between the two nodes.
 | **From Principal** | **To Principal** | **Status** | **Message** | **Path Exists** |
 | --- | --- | --- | --- | --- |
 | 12345678-1234-1234-1234-123456789abc | 87654321-4321-4321-4321-cba987654321 | success | Path exists between nodes. | True |
+
+### bloodhound-principal-impact-get
+
+***
+Returns BloodHound Enterprise risk details, including the domain grid, or the radius target list for one principal. The command uses the existing BloodHound Enterprise connection.
+
+#### Base Command
+
+`bloodhound-principal-impact-get`
+
+#### Input
+
+| **Argument Name** | **Description** | **Required** |
+| --- | --- | --- |
+| name | Indicator value to resolve in BloodHound Enterprise. | Required |
+| indicator_type | User, Computer, or Group. | Required |
+| view | risk or radius. | Required |
+
+#### Context Output
+
+| **Path** | **Type** | **Description** |
+| --- | --- | --- |
+| SpecterOpsBloodHoundEnterprise.Impact.Name | String | Principal name returned by BloodHound search. |
+| SpecterOpsBloodHoundEnterprise.Impact.ObjectID | String | BloodHound object ID of the principal. |
+| SpecterOpsBloodHoundEnterprise.Impact.PrincipalType | String | BloodHound type used for the lookup. |
+| SpecterOpsBloodHoundEnterprise.Impact.View | String | Requested view, risk or radius. |
+| SpecterOpsBloodHoundEnterprise.Impact.Partial | Boolean | True when paging stopped after retries. |
+| SpecterOpsBloodHoundEnterprise.Impact.LastUpdated | String | Entity last seen time. Returned for the risk view. |
+| SpecterOpsBloodHoundEnterprise.Impact.AttackPathCount | Number | Number of direct relationship findings. |
+| SpecterOpsBloodHoundEnterprise.Impact.TierZero | String | Yes or No. |
+| SpecterOpsBloodHoundEnterprise.Impact.Rows | Unknown | Per-domain count grid. Returned for the risk view. |
+| SpecterOpsBloodHoundEnterprise.Impact.Categories | Unknown | Radius target blocks. Returned for the radius view. |
+
+#### Command Example
+
+```!bloodhound-principal-impact-get name="alice@example.com" indicator_type="User" view="risk"```
 
 <~PLATFORM>
 

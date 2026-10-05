@@ -1,0 +1,22 @@
+args: []
+comment: Refreshes the BloodHound Enterprise radius targets on the open indicator.
+commonfields:
+  id: SpecterOpsBloodHoundEnterprisePullRadius
+  version: -1
+dockerimage: demisto/python3:3.12.13.9059085
+enabled: true
+name: SpecterOpsBloodHoundEnterprisePullRadius
+runonce: false
+script: ''
+scripttarget: 0
+subtype: python3
+tags:
+- indicator-action-button
+timeout: 10m0s
+type: python
+dependson:
+  must:
+  - bloodhound-principal-impact-get
+fromversion: 6.10.0
+tests:
+- No tests (auto formatted)

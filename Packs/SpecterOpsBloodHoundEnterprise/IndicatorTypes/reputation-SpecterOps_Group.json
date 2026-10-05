@@ -1,0 +1,22 @@
+{
+    "id": "SpecterOps Group",
+    "version": -1,
+    "fromVersion": "6.10.0",
+    "regex": "",
+    "details": "Group",
+    "reputationScriptName": "",
+    "reputationCommand": "",
+    "enhancementScriptNames": [],
+    "system": false,
+    "locked": false,
+    "disabled": false,
+    "file": false,
+    "updateAfter": 0,
+    "mergeContext": false,
+    "formatScript": "",
+    "contextPath": "",
+    "contextValue": "",
+    "excludedBrands": [],
+    "expiration": 0,
+    "layout": "SpecterOpsBloodHoundEnterprise Indicator"
+}

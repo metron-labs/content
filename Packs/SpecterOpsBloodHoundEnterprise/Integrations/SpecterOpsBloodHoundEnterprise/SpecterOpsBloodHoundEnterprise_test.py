@@ -4,6 +4,7 @@ SpecterOps BloodHound Enterprise integration for Cortex XSOAR - Unit Tests file
 
 from unittest.mock import Mock, patch
 from urllib.parse import urljoin
+import json
 import time
 import demistomock as demisto
 import pytest
@@ -57,7 +58,14 @@ from SpecterOpsBloodHoundEnterprise import (
     get_object_id,
     get_path_title,
     get_attack_path_details_page,
+    principal_impact_get,
     release_lock,
+    _domain_from_principal_name,
+    _object_domain,
+    _create_indicators_enabled,
+    _create_principal_indicators,
+    _indicators_from_incidents,
+    _param_enabled,
 )
 
 
@@ -1324,3 +1332,440 @@ class TestEdgeCases:
         attack_paths_info = {"finding1": {"title": "Finding 1"}}
         result = _group_attack_paths_by_domain(attack_path_details, domains, attack_paths_info)
         assert "unknown" in result
+
+
+OBJECT_ID = "11111111-1111-1111-1111-111111111111"
+
+
+def _principal(name="alice@example.com", obj_type="User"):
+    return {
+        "data": [
+            {
+                "objectid": OBJECT_ID,
+                "type": obj_type,
+                "name": name,
+                "distinguishedname": "",
+                "system_tags": "",
+            }
+        ]
+    }
+
+
+def _entity(timestamp="2026-07-02T00:23:21Z"):
+    return {"data": {"props": {"lastseen": timestamp}}}
+
+
+def _page(items, count=None):
+    return {"count": len(items) if count is None else count, "skip": 0, "limit": 100, "data": items}
+
+
+class TestPrincipalImpact:
+    def test_domain_from_name(self):
+        assert _domain_from_principal_name("user@a.example") == "a.example"
+        assert _domain_from_principal_name("host.b.example") == "b.example"
+        assert _domain_from_principal_name("PLAIN") == ""
+
+    def test_object_domain_uses_sid_then_known_suffix(self):
+        directory = {"S-1-5-21-1-2-3": "PHANTOM.CORP", "S-1-5-21-9-8-7": "GHOST.CORP"}
+        assert _object_domain({"name": "SRV01.CORP", "objectID": "S-1-5-21-1-2-3-1105"}, directory) == "PHANTOM.CORP"
+        assert _object_domain({"name": "DOMAIN ADMINS", "objectID": "S-1-5-21-9-8-7-512"}, directory) == "GHOST.CORP"
+        assert _object_domain({"name": "ADMINISTRATORS", "objectID": "PHANTOM.CORP-S-1-5-32-544"}, directory) == "PHANTOM.CORP"
+        assert _object_domain({"name": "HOST.SUB.GHOST.CORP", "objectID": "unknown"}, directory) == "GHOST.CORP"
+        assert _object_domain({"name": "SVC@CORP", "objectID": "S-1-5-21-5-5-5-1001"}, directory) == ""
+        assert _object_domain({"name": "DOMAIN ADMINS", "objectID": "S-1-5-21-5-5-5-512"}, directory) == ""
+        assert _object_domain({"name": "user@a.example"}, {}) == "a.example"
+
+    def test_risk_grid_groups_by_sid_domain(self, mock_client):
+        def side_effect(endpoint_key, **kwargs):
+            if endpoint_key == "principal_search":
+                return _principal()
+            if endpoint_key == "dictionary_types":
+                return _entity()
+            if endpoint_key == "available_domain":
+                return {"data": [{"id": "S-1-5-21-1-2-3", "name": "PHANTOM.CORP", "collected": True}]}
+            if endpoint_key == "attack_path_findings":
+                return _page([])
+            if kwargs["relation"] == "controllables":
+                return _page([{"name": "SRV01.CORP", "objectID": "S-1-5-21-1-2-3-1105"}])
+            return _page([])
+
+        mock_client._api_request = Mock(side_effect=side_effect)
+        result = principal_impact_get(mock_client, {"name": "alice@example.com", "indicator_type": "User", "view": "risk"})
+        assert [row["Domain"] for row in result["Rows"]] == ["PHANTOM.CORP"]
+        assert result["Rows"][0]["OOC"] == 1
+
+    def test_uncollected_sid_uses_entity_domain(self, mock_client):
+        def side_effect(endpoint_key, **kwargs):
+            if endpoint_key == "principal_search":
+                return _principal()
+            if endpoint_key == "dictionary_types":
+                return _entity()
+            if endpoint_key == "available_domain":
+                return {"data": [{"id": "S-1-5-21-1-2-3", "name": "PHANTOM.CORP", "collected": True}]}
+            if endpoint_key == "attack_path_findings":
+                return _page([])
+            if endpoint_key == "base":
+                return {"data": {"props": {"domain": "phantom.corp"}}}
+            if kwargs["relation"] == "controllables":
+                return _page([{"name": "SVC@CORP", "objectID": "S-1-5-21-9-9-9-1001"}])
+            return _page([])
+
+        mock_client._api_request = Mock(side_effect=side_effect)
+        result = principal_impact_get(mock_client, {"name": "alice@example.com", "indicator_type": "User", "view": "risk"})
+        assert [row["Domain"] for row in result["Rows"]] == ["PHANTOM.CORP"]
+        assert result["Rows"][0]["OOC"] == 1
+
+    def test_unresolved_entity_keeps_name_domain(self, mock_client):
+        def side_effect(endpoint_key, **kwargs):
+            if endpoint_key == "principal_search":
+                return _principal()
+            if endpoint_key == "dictionary_types":
+                return _entity()
+            if endpoint_key == "available_domain":
+                return {"data": [{"id": "S-1-5-21-1-2-3", "name": "PHANTOM.CORP", "collected": True}]}
+            if endpoint_key == "attack_path_findings":
+                return _page([])
+            if endpoint_key == "base":
+                return {"data": {"props": {}}}
+            if kwargs["relation"] == "controllables":
+                return _page([{"name": "SVC@CORP", "objectID": "S-1-5-21-9-9-9-1001"}] * 2)
+            return _page([])
+
+        mock_client._api_request = Mock(side_effect=side_effect)
+        result = principal_impact_get(mock_client, {"name": "alice@example.com", "indicator_type": "User", "view": "risk"})
+        assert [row["Domain"] for row in result["Rows"]] == ["CORP"]
+        assert result["Rows"][0]["OOC"] == 2
+
+    def test_search_returns_no_object(self, mock_client):
+        mock_client._api_request = Mock(return_value={"data": []})
+        with pytest.raises(BloodHoundException, match="object not found"):
+            principal_impact_get(mock_client, {"name": "missing", "indicator_type": "User", "view": "risk"})
+
+    def test_risk_with_no_relationship_findings(self, mock_client):
+        def side_effect(endpoint_key, **kwargs):
+            if endpoint_key == "principal_search":
+                assert kwargs["search_type"] == "User"
+                return _principal()
+            if endpoint_key == "dictionary_types":
+                return _entity()
+            return _page([])
+
+        mock_client._api_request = Mock(side_effect=side_effect)
+        result = principal_impact_get(
+            mock_client, {"name": "alice@example.com", "indicator_type": "User", "view": "risk"}
+        )
+        assert result["AttackPathCount"] == 0
+        assert result["TierZero"] == "No"
+        assert result["DirectAttackPaths"] == []
+        assert result["LastUpdated"] == "2026-07-02T00:23:21Z"
+        assert result["PrincipalType"] == "User"
+        assert result["Rows"] == []
+
+    def test_risk_with_two_findings_and_ignored_list_finding(self, mock_client):
+        findings = [
+            {
+                "finding": "T0MarkSensitive",
+                "environment_name": "A.EXAMPLE",
+                "zone_name": "Tier Zero",
+                "finding_type": "relationship",
+            },
+            {
+                "finding": "T0GenericWrite",
+                "environment_name": "B.EXAMPLE",
+                "zone_name": "Tier One",
+                "finding_type": "relationship",
+            },
+            {
+                "finding": "Kerberoasting",
+                "environment_name": "A.EXAMPLE",
+                "zone_name": "Tier Zero",
+                "finding_type": "list",
+            },
+        ]
+
+        def side_effect(endpoint_key, **kwargs):
+            if endpoint_key == "principal_search":
+                return _principal()
+            if endpoint_key == "dictionary_types":
+                return _entity()
+            if endpoint_key == "relationship_list":
+                return _page([])
+            return _page(findings)
+
+        mock_client._api_request = Mock(side_effect=side_effect)
+        result = principal_impact_get(mock_client, {"name": "alice@example.com", "indicator_type": "User", "view": "risk"})
+        assert result["AttackPathCount"] == 2
+        assert result["TierZero"] == "Yes"
+        assert result["TierZeroDomains"] == ["A.EXAMPLE"]
+        assert result["DirectAttackPaths"][0]["AttackPath"] == "T0MarkSensitive"
+        assert result["DirectAttackPaths"][1]["Domain"] == "B.EXAMPLE"
+        rows = {row["Domain"]: row for row in result["Rows"]}
+        assert rows["A.EXAMPLE"]["T0"] == "Y"
+        assert rows["A.EXAMPLE"]["AP"] == 1
+        assert rows["B.EXAMPLE"]["T0"] == "N"
+
+    def test_name_filter_empty_uses_object_id(self, mock_client):
+        finding = {
+            "finding": "T0MarkSensitive",
+            "environment_name": "A.EXAMPLE",
+            "zone_name": "Tier Zero",
+            "finding_type": "relationship",
+        }
+
+        def side_effect(endpoint_key, **kwargs):
+            if endpoint_key == "principal_search":
+                return _principal()
+            if endpoint_key == "dictionary_types":
+                return _entity()
+            if endpoint_key == "relationship_list":
+                return _page([])
+            query_string = kwargs["query_string"]
+            if OBJECT_ID in query_string:
+                return _page([finding])
+            return _page([])
+
+        mock_client._api_request = Mock(side_effect=side_effect)
+        result = principal_impact_get(mock_client, {"name": "alice@example.com", "indicator_type": "User", "view": "risk"})
+        assert result["AttackPathCount"] == 1
+        assert mock_client._api_request.call_count == 13
+
+    def test_risk_groups_domains_and_404_column(self, mock_client):
+        relations = set()
+
+        def side_effect(endpoint_key, **kwargs):
+            if endpoint_key == "principal_search":
+                return _principal()
+            if endpoint_key == "dictionary_types":
+                return _entity()
+            if endpoint_key == "attack_path_findings":
+                return _page([])
+            relation = kwargs["relation"]
+            relations.add(relation)
+            if relation == "admin-rights":
+                raise BloodHoundNotFoundException("missing")
+            return _page([{"name": "user@a.example"}, {"name": "host.b.example"}])
+
+        mock_client._api_request = Mock(side_effect=side_effect)
+        result = principal_impact_get(mock_client, {"name": "alice@example.com", "indicator_type": "User", "view": "risk"})
+        domains = {row["Domain"]: row for row in result["Rows"]}
+        assert set(domains) == {"a.example", "b.example"}
+        assert domains["a.example"]["OOC"] == 1
+        assert domains["a.example"]["AR"] == 0
+        assert domains["a.example"]["SQL"] == 1
+        assert "sql-admin-rights" in relations
+        assert "Categories" not in result
+
+    def test_computer_does_not_call_sql(self, mock_client):
+        relations = set()
+
+        def side_effect(endpoint_key, **kwargs):
+            if endpoint_key == "principal_search":
+                return _principal(name="HOST.a.example", obj_type="Computer")
+            if endpoint_key == "dictionary_types":
+                return _entity()
+            if endpoint_key == "attack_path_findings":
+                return _page([])
+            relations.add(kwargs["relation"])
+            return _page([{"name": "user@a.example"}])
+
+        mock_client._api_request = Mock(side_effect=side_effect)
+        result = principal_impact_get(
+            mock_client, {"name": "HOST.a.example", "indicator_type": "Computer", "view": "risk"}
+        )
+        assert "sql-admin-rights" not in relations
+        assert result["Rows"][0]["SQL"] == 0
+        assert result["Rows"][0]["AR"] == 1
+
+    def test_partial_page_keeps_counted_rows(self, mock_client):
+        def side_effect(endpoint_key, **kwargs):
+            if endpoint_key == "principal_search":
+                return _principal()
+            if endpoint_key == "dictionary_types":
+                return _entity()
+            if endpoint_key == "attack_path_findings":
+                return _page([])
+            if kwargs["relation"] == "controllables" and kwargs["skip"] == 0:
+                return {"count": 150, "skip": 0, "limit": 100, "data": [{"name": "user@a.example"}] * 100}
+            if kwargs["relation"] == "controllables":
+                raise BloodHoundRateLimitException("limited")
+            return _page([])
+
+        mock_client._api_request = Mock(side_effect=side_effect)
+        result = principal_impact_get(mock_client, {"name": "alice@example.com", "indicator_type": "User", "view": "risk"})
+        assert result["Partial"] is True
+        assert result["Rows"][0]["OOC"] == 100
+        assert result["Rows"][0]["AR"] == 0
+
+    def test_radius_returns_targets_and_skips_findings(self, mock_client):
+        endpoints = set()
+
+        def side_effect(endpoint_key, **kwargs):
+            endpoints.add(endpoint_key)
+            if endpoint_key == "principal_search":
+                return _principal()
+            if kwargs.get("relation") == "admin-rights":
+                return _page(
+                    [
+                        {"name": "HOST.a.example", "label": "Computer"},
+                        {"name": "PLAIN", "label": "Group"},
+                    ]
+                )
+            return _page([])
+
+        mock_client._api_request = Mock(side_effect=side_effect)
+        result = principal_impact_get(mock_client, {"name": "alice@example.com", "indicator_type": "User", "view": "radius"})
+        assert "attack_path_findings" not in endpoints
+        assert "dictionary_types" not in endpoints
+        assert "Rows" not in result
+        assert "LastUpdated" not in result
+        admin = next(item for item in result["Categories"] if item["ControlCategory"] == "Admin Rights")
+        assert admin["Returned"] == 2
+        assert admin["Targets"][0] == {"Name": "HOST.a.example", "Type": "Computer", "Domain": "a.example"}
+        assert admin["Targets"][1] == {"Name": "PLAIN", "Type": "Group", "Domain": ""}
+
+    def test_radius_caps_targets_at_one_page(self, mock_client):
+        skips = []
+
+        def side_effect(endpoint_key, **kwargs):
+            if endpoint_key == "principal_search":
+                return _principal()
+            if endpoint_key == "available_domain":
+                return {"data": []}
+            skips.append(kwargs.get("skip"))
+            if kwargs.get("relation") == "admin-rights":
+                return {
+                    "count": 150,
+                    "skip": 0,
+                    "limit": 100,
+                    "data": [{"name": f"host{index}.a.example", "label": "Computer"} for index in range(100)],
+                }
+            return _page([])
+
+        mock_client._api_request = Mock(side_effect=side_effect)
+        result = principal_impact_get(mock_client, {"name": "alice@example.com", "indicator_type": "User", "view": "radius"})
+        admin = next(item for item in result["Categories"] if item["ControlCategory"] == "Admin Rights")
+        assert admin["Returned"] == 150
+        assert len(admin["Targets"]) == 100
+        assert admin["Targets"][0]["Domain"] == "a.example"
+        assert set(skips) == {0}
+
+    def test_radius_computer_omits_sql(self, mock_client):
+        relations = set()
+
+        def side_effect(endpoint_key, **kwargs):
+            if endpoint_key == "principal_search":
+                return _principal(name="HOST.a.example", obj_type="Computer")
+            relations.add(kwargs["relation"])
+            return _page([{"name": "user@a.example", "label": "User"}])
+
+        mock_client._api_request = Mock(side_effect=side_effect)
+        result = principal_impact_get(
+            mock_client, {"name": "HOST.a.example", "indicator_type": "Computer", "view": "radius"}
+        )
+        names = [item["ControlCategory"] for item in result["Categories"]]
+        assert "sql-admin-rights" not in relations
+        assert "SQL Admin" not in names
+        assert "Admin Rights" in names
+
+
+def _incident(name, kind, impacted_name="", impacted_kind=""):
+    return {
+        "rawJSON": json.dumps(
+            {
+                "NonTierZeroPrincipalName": name,
+                "NonTierZeroPrincipalKind": kind,
+                "ImpactedPrincipalName": impacted_name,
+                "ImpactedPrincipalKind": impacted_kind,
+            }
+        )
+    }
+
+
+class TestCreatePrincipalIndicators:
+    def test_param_enabled_missing_create_indicators_is_false(self):
+        with patch("SpecterOpsBloodHoundEnterprise.demisto") as mock_demisto:
+            mock_demisto.params.return_value = {}
+            assert _param_enabled("create_indicators") is False
+
+    def test_false_and_blank_settings_are_off(self):
+        with patch("SpecterOpsBloodHoundEnterprise.demisto") as mock_demisto:
+            mock_demisto.params.return_value = {"create_indicators": False}
+            assert _param_enabled("create_indicators") is False
+            mock_demisto.params.return_value = {"create_indicators": ""}
+            assert _param_enabled("create_indicators") is False
+            mock_demisto.params.return_value = {"create_indicators": "false"}
+            assert _param_enabled("create_indicators") is False
+
+    def test_checked_setting_is_on(self):
+        with patch("SpecterOpsBloodHoundEnterprise.demisto") as mock_demisto:
+            mock_demisto.params.return_value = {"create_indicators": True}
+            assert _param_enabled("create_indicators") is True
+            mock_demisto.params.return_value = {"create_indicators": "true"}
+            assert _param_enabled("create_indicators") is True
+
+    def test_create_indicators_missing_param_defaults_on(self):
+        with patch("SpecterOpsBloodHoundEnterprise.demisto") as mock_demisto:
+            mock_demisto.params.return_value = {}
+            assert _create_indicators_enabled() is True
+
+    def test_create_indicators_blank_param_defaults_on(self):
+        with patch("SpecterOpsBloodHoundEnterprise.demisto") as mock_demisto:
+            mock_demisto.params.return_value = {"create_indicators": ""}
+            assert _create_indicators_enabled() is True
+            _create_principal_indicators([_incident("alice@phantom.corp", "User")])
+            mock_demisto.createIndicators.assert_called_once()
+
+    def test_maps_user_computer_and_group_and_skips_other_kinds(self):
+        incidents = [
+            _incident("alice@phantom.corp", "User", "DC01.phantom.corp", "Computer"),
+            _incident("ADMINS@phantom.corp", "Group", "az.user@tenant", "AZUser"),
+            _incident("  alice@phantom.corp  ", "user", "", ""),
+            _incident("", "User", " ", "Group"),
+        ]
+        indicators = _indicators_from_incidents(incidents)
+        assert indicators == [
+            {"value": "alice@phantom.corp", "type": "User"},
+            {"value": "DC01.phantom.corp", "type": "Computer"},
+            {"value": "ADMINS@phantom.corp", "type": "Group"},
+        ]
+
+    def test_same_name_with_two_types_stays_two_indicators(self):
+        incidents = [_incident("SHARED", "User", "SHARED", "Group")]
+        indicators = _indicators_from_incidents(incidents)
+        assert indicators == [
+            {"value": "SHARED", "type": "User"},
+            {"value": "SHARED", "type": "Group"},
+        ]
+
+    def test_disabled_fetch_does_not_create_indicators(self):
+        with patch("SpecterOpsBloodHoundEnterprise.demisto") as mock_demisto:
+            mock_demisto.params.return_value = {"create_indicators": False}
+            _create_principal_indicators([_incident("alice@phantom.corp", "User")])
+            mock_demisto.createIndicators.assert_not_called()
+
+    def test_missing_create_indicators_param_still_creates(self):
+        with patch("SpecterOpsBloodHoundEnterprise.demisto") as mock_demisto:
+            mock_demisto.params.return_value = {}
+            _create_principal_indicators([_incident("alice@phantom.corp", "User")])
+            mock_demisto.createIndicators.assert_called_once()
+
+    def test_create_uses_one_batch(self):
+        with patch("SpecterOpsBloodHoundEnterprise.demisto") as mock_demisto:
+            mock_demisto.params.return_value = {"create_indicators": True}
+            _create_principal_indicators([_incident("alice@phantom.corp", "User", "DC01.phantom.corp", "Computer")])
+            mock_demisto.createIndicators.assert_called_once_with(
+                [
+                    {"value": "alice@phantom.corp", "type": "User"},
+                    {"value": "DC01.phantom.corp", "type": "Computer"},
+                ],
+                noUpdate=False,
+            )
+
+    def test_create_failure_is_logged_and_does_not_raise(self):
+        with patch("SpecterOpsBloodHoundEnterprise.demisto") as mock_demisto:
+            mock_demisto.params.return_value = {"create_indicators": True}
+            mock_demisto.createIndicators.side_effect = RuntimeError("indicator service unavailable")
+            ok = _create_principal_indicators([_incident("alice@phantom.corp", "User")])
+            mock_demisto.error.assert_called_once()
+            assert ok is False
+            assert "lastRun" in mock_demisto.error.call_args[0][0]

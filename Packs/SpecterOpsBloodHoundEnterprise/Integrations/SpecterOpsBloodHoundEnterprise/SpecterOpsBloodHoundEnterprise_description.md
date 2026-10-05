@@ -16,6 +16,14 @@ Configure a SpecterOps BloodHound Enterprise integration instance by providing t
 - **(Required)** Select the **Fetches incidents** checkbox.
 - Set the **Incident Type** to SpecterOpsBloodHoundEnterprise Attack Path.
 - **(Required)** Choose the **Incidents Fetch Interval** for fetching attack paths (Default is 10 mins).
+- When **Create indicators** is enabled (default), fetch creates **User**, **Computer**, and **Group** indicators for principals on newly ingested attack paths.
+
+### Indicator layout
+
+On User, Computer, and Group indicators, use **Update BHE Risk** and **Pull BHE Radius** on the BloodHound Enterprise layout tab to load risk details and outbound control targets from BloodHound Enterprise.
+
+### Threat Intel: Delete vs Delete and exclude
+If indicators do not reappear after a fetch, check **Settings → Object setup → Indicators → Exclusion list**. **Delete and exclude** blocks the same values from being created again (including via fetch). Use **Delete** only when you want to clear test data and allow the next fetch to recreate indicators.
 
 ### Get the BloodHound Enterprise API Token ID and Token Key
 - Log in to your BloodHound Enterprise (BHE) tenant.

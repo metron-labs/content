@@ -8,6 +8,7 @@ import base64
 from datetime import datetime
 from urllib.parse import (  # type: ignore[assignment]
     urljoin,  # type: ignore[assignment]
+    quote,  # type: ignore[assignment]
     quote_plus,  # type: ignore[assignment]
     urlparse,  # type: ignore[assignment]
     urlunparse,  # type: ignore[assignment]
@@ -38,7 +39,66 @@ ENDPOINTS = {
     "short_description": ("/api/v2/assets/findings/{finding_type}/short_description.md"),
     "short_remediation": ("/api/v2/assets/findings/{finding_type}/short_remediation.md"),
     "long_remediation": ("/api/v2/assets/findings/{finding_type}/long_remediation.md"),
+    "principal_search": "/api/v2/search?q={query}&type={search_type}",
+    "attack_path_findings": "/api/v2/attack-paths/findings?{query_string}",
+    "relationship_list": "/api/v2/{family}/{object_id}/{relation}?type=list&limit={limit}&skip={skip}",
 }
+
+INDICATOR_SEARCH_TYPES = {
+    "User": "User",
+    "Computer": "Computer",
+    "Group": "Group",
+}
+# Must match indicator type ids in Settings → Indicators → Types (User / Computer / Group).
+INDICATOR_TYPES_BY_KIND = {
+    "user": "User",
+    "computer": "Computer",
+    "group": "Group",
+}
+INDICATOR_CREATE_BATCH = 2000
+PRINCIPAL_FAMILIES = {"User": "users", "Computer": "computers", "Group": "groups"}
+COUNT_COLUMNS = ["OOC", "AR", "RDP", "DCOM", "PS", "SQL", "CD", "Sess"]
+CONTROL_CATEGORIES = {
+    "OOC": "Outbound Object Control",
+    "AR": "Admin Rights",
+    "RDP": "RDP Rights",
+    "DCOM": "DCOM Rights",
+    "PS": "PowerShell Remoting",
+    "SQL": "SQL Admin",
+    "CD": "Constrained Delegation",
+    "Sess": "Sessions",
+}
+RELATION_PATHS = {
+    "User": {
+        "OOC": "controllables",
+        "AR": "admin-rights",
+        "RDP": "rdp-rights",
+        "DCOM": "dcom-rights",
+        "PS": "ps-remote-rights",
+        "SQL": "sql-admin-rights",
+        "CD": "constrained-delegation-rights",
+        "Sess": "sessions",
+    },
+    "Computer": {
+        "OOC": "controllables",
+        "AR": "admin-rights",
+        "RDP": "rdp-rights",
+        "DCOM": "dcom-rights",
+        "PS": "ps-remote-rights",
+        "CD": "constrained-delegation-rights",
+        "Sess": "sessions",
+    },
+    "Group": {
+        "OOC": "controllables",
+        "AR": "admin-rights",
+        "RDP": "rdp-rights",
+        "DCOM": "dcom-rights",
+        "PS": "ps-remote-rights",
+        "Sess": "sessions",
+    },
+}
+PAGE_LIMIT = 100
+TIER_ZERO_ZONE = "Tier Zero"
 
 # Errors code:
 BAD_REQUEST = 400
@@ -1254,6 +1314,98 @@ def create_incidents(
         return []
 
 
+def _param_enabled(name: str) -> bool:
+    """Return True when a checkbox integration param is explicitly enabled.
+
+    Missing, blank, or false-like values are off. create_indicators uses
+    _create_indicators_enabled() instead (missing or blank default to on).
+    """
+    value = demisto.params().get(name, False)
+    if value in (None, False, ""):
+        return False
+    try:
+        return bool(argToBoolean(value))
+    except ValueError:
+        return False
+
+
+def _create_indicators_enabled() -> bool:
+    """YAML defaultvalue for create_indicators is true; some tenants omit the key on fetch."""
+    params = demisto.params() or {}
+    if "create_indicators" not in params:
+        return True
+    value = params.get("create_indicators")
+    if value in (None, ""):
+        return True
+    return _param_enabled("create_indicators")
+
+
+def _indicators_from_incidents(incidents: list[dict]) -> list[dict]:
+    """User, Computer, and Group indicators for principals already stored on new incidents."""
+    seen = set()
+    indicators = []
+    for incident in incidents:
+        raw = incident.get("rawJSON")
+        if isinstance(raw, str):
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+        elif isinstance(raw, dict):
+            event = raw
+        else:
+            continue
+        pairs = (
+            (event.get("NonTierZeroPrincipalName"), event.get("NonTierZeroPrincipalKind")),
+            (event.get("ImpactedPrincipalName"), event.get("ImpactedPrincipalKind")),
+        )
+        for name, kind in pairs:
+            indicator_type = INDICATOR_TYPES_BY_KIND.get(str(kind or "").strip().casefold())
+            value = str(name or "").strip()
+            if not value or not indicator_type:
+                continue
+            key = (indicator_type, value.casefold())
+            if key in seen:
+                continue
+            seen.add(key)
+            indicators.append({"value": value, "type": indicator_type})
+    return indicators
+
+
+def _create_principal_indicators(incidents: list[dict]) -> bool:
+    """Create indicators for this fetch batch. Returns False if create was required and failed."""
+    params = demisto.params() or {}
+    create_param = params.get("create_indicators", "<missing>")
+    if not _create_indicators_enabled():
+        demisto.info(
+            f"BloodHound Enterprise indicator create skipped (create_indicators={create_param!r}, effective=off)."
+        )
+        return True
+    indicators = _indicators_from_incidents(incidents)
+    demisto.info(
+        f"BloodHound Enterprise indicator create: create_indicators={create_param!r}, "
+        f"incidents={len(incidents)}, candidates={len(indicators)}."
+    )
+    if not indicators:
+        demisto.info("BloodHound Enterprise indicator create: no principal candidates in this fetch batch.")
+        return True
+    try:
+        for chunk in batch(indicators, batch_size=INDICATOR_CREATE_BATCH):
+            # noUpdate=False: incident fetch is not a feed 304 run; new principals must be created on CRTX/XSOAR.
+            demisto.createIndicators(chunk, noUpdate=False)
+        demisto.info(f"BloodHound Enterprise submitted {len(indicators)} principal indicators to Threat Intel.")
+        demisto.debug(
+            f"Submitted {len(indicators)} BloodHound Enterprise indicators. Payload uses value and type only."
+        )
+        return True
+    except Exception as exc:
+        demisto.error(
+            "BloodHound Enterprise indicators were not created. This fetch will not advance lastRun or ingest "
+            f"incidents so the next run can retry. {exc}"
+        )
+        return False
+
+
 def fetch_incidents(bhe_client: Client):
     if not acquire_lock():
         demisto.info("[FETCH] Lock not acquired, sending empty incident list.")
@@ -1286,6 +1438,9 @@ def fetch_incidents(bhe_client: Client):
 
         # Create Incident
         incidents = create_incidents(bhe_client, attack_path_details, domains, attack_paths_info)
+        if not _create_principal_indicators(incidents):
+            demisto.incidents([])
+            return None
 
         if last_run is None:
             last_run = {}
@@ -1736,6 +1891,413 @@ def bhe_object_id_get_command(bhe_client: Client, args: dict) -> None:
     )
 
 
+def _domain_from_principal_name(name: str) -> str:
+    """Read a domain from a relationship name. BloodHound list items have no domain field."""
+    if not isinstance(name, str):
+        return ""
+    principal_name = name.strip()
+    if "@" in principal_name:
+        return principal_name.split("@", 1)[1].strip()
+    if "." in principal_name:
+        return principal_name.split(".", 1)[1].strip()
+    return ""
+
+
+def _domain_directory(client: Client) -> dict[str, str]:
+    """Domain SID to domain name from available domains. Empty when the call fails, so names are parsed instead."""
+    try:
+        response = client._api_request("available_domain")
+    except Exception as exc:
+        demisto.debug(f"Available domains were not loaded for the domain grid: {exc}")
+        return {}
+    directory: dict[str, str] = {}
+    data = response.get("data") if isinstance(response, dict) else None
+    for domain in data if isinstance(data, list) else []:
+        if isinstance(domain, dict) and domain.get("id") and domain.get("name"):
+            directory[str(domain["id"]).strip().upper()] = str(domain["name"]).strip()
+    return directory
+
+
+def _object_domain(item: dict, directory: dict[str, str]) -> str:
+    """Domain of a relationship object.
+
+    The object SID is authoritative. A short name such as CORP is not a domain and is not returned here.
+    """
+    name = str(item.get("name") or "").strip()
+    if not directory:
+        return _domain_from_principal_name(name)
+
+    object_id = str(item.get("objectID") or item.get("objectid") or "").strip().upper()
+    known = {domain_name.casefold(): domain_name for domain_name in directory.values()}
+    if "-S-1-" in object_id:
+        # Built-in principals are stored as "<DOMAIN>-S-1-5-32-<rid>".
+        prefix = object_id.split("-S-1-", 1)[0]
+        if prefix.casefold() in known:
+            return known[prefix.casefold()]
+    if object_id.startswith("S-1-") and "-" in object_id:
+        domain_sid = object_id.rsplit("-", 1)[0]
+        if domain_sid in directory:
+            return directory[domain_sid]
+
+    lowered = name.casefold()
+    matches = [
+        domain_name
+        for key, domain_name in known.items()
+        if lowered.endswith("@" + key) or lowered.endswith("." + key)
+    ]
+    return max(matches, key=len) if matches else ""
+
+
+def _lookup_object_domain(client: Client, object_id: str, cache: dict[str, str]) -> str:
+    """Domain stored on the object. Used only when the SID is not one of the collected domains."""
+    if object_id in cache:
+        return cache[object_id]
+    domain = ""
+    try:
+        response = client._api_request("base", object_id=quote(object_id, safe=""))
+        data = response.get("data") or {}
+        if isinstance(data, list):
+            data = data[0] if data else {}
+        props = data.get("props") or data
+        domain = str(props.get("domain") or "").strip()
+    except Exception as exc:
+        demisto.debug(f"Domain was not read for {object_id}: {exc}")
+    cache[object_id] = domain
+    return domain
+
+
+def _resolved_domain(client: Client, item: dict, directory: dict[str, str], cache: dict[str, str]) -> str:
+    domain = _object_domain(item, directory)
+    if domain or not directory:
+        return domain
+    object_id = str(item.get("objectID") or item.get("objectid") or "").strip()
+    if not object_id:
+        return ""
+    found = _lookup_object_domain(client, object_id, cache)
+    known = {name.casefold(): name for name in directory.values()}
+    if found.casefold() in known:
+        return known[found.casefold()]
+    if "." in found:
+        return found
+    return _domain_from_principal_name(str(item.get("name") or ""))
+
+
+def _select_principal(items: list, name: str) -> dict:
+    wanted = name.casefold()
+    for item in items:
+        if str(item.get("name", "")).casefold() == wanted:
+            return item
+    return items[0]
+
+
+def _resolve_principal(client: Client, name: str, indicator_type: str) -> dict:
+    search_type = INDICATOR_SEARCH_TYPES.get(indicator_type)
+    if not search_type:
+        raise BloodHoundException(f"Unsupported indicator type: {indicator_type}")
+
+    response = client._api_request(
+        "principal_search",
+        query=quote(name.strip(), safe=""),
+        search_type=search_type,
+    )
+    items = response.get("data") or []
+    if not isinstance(items, list) or not items:
+        raise BloodHoundException("object not found")
+
+    selected = _select_principal(items, name)
+    if not selected.get("objectid"):
+        raise BloodHoundException("object not found")
+    returned_type = str(selected.get("type") or "")
+    if returned_type not in PRINCIPAL_FAMILIES:
+        returned_type = search_type
+    return {
+        "objectid": selected.get("objectid") or "",
+        "name": selected.get("name") or name,
+        "type": returned_type,
+    }
+
+
+def _findings_query(principal_id: str, skip: int, limit: int) -> str:
+    return (
+        f"source_principal_id=eq:{quote(principal_id, safe='')}"
+        f"&finding_type=eq:relationship&status=eq:active&limit={limit}&skip={skip}"
+    )
+
+
+def _page_results(client: Client, endpoint_key: str, **url_values: Any) -> tuple[list, bool]:
+    """Page a BloodHound list. A retry exhaustion returns the rows already collected."""
+    skip = 0
+    collected: list = []
+    query_builder = url_values.pop("query_builder", None)
+    while True:
+        request_values = dict(url_values)
+        request_values["skip"] = skip
+        request_values["limit"] = PAGE_LIMIT
+        if query_builder:
+            request_values["query_string"] = query_builder(skip, PAGE_LIMIT)
+        try:
+            response = client._api_request(endpoint_key, **request_values)
+        except (BloodHoundRateLimitException, BloodHoundServerErrorException):
+            return collected, True
+
+        page = response.get("data") or []
+        if not isinstance(page, list):
+            page = []
+        collected.extend(page)
+        count = int(response.get("count") or 0)
+        skip += len(page) if page else PAGE_LIMIT
+        if not page or skip >= count:
+            return collected, False
+
+
+def _findings_for_principal(client: Client, name: str, object_id: str) -> tuple[list, bool]:
+    """Relationship findings for one principal. The published filter example uses the logon name."""
+    raw_findings, partial = _page_results(
+        client,
+        "attack_path_findings",
+        query_builder=lambda skip, limit: _findings_query(name, skip, limit),
+    )
+    findings = _relationship_findings(raw_findings)
+    if findings or not object_id or object_id == name:
+        return findings, partial
+
+    raw_findings, partial_by_id = _page_results(
+        client,
+        "attack_path_findings",
+        query_builder=lambda skip, limit: _findings_query(object_id, skip, limit),
+    )
+    return _relationship_findings(raw_findings), partial or partial_by_id
+
+
+def _relationship_findings(findings: list) -> list:
+    kept = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        if str(finding.get("finding_type") or "relationship").lower() == "list":
+            continue
+        kept.append(finding)
+    return kept
+
+
+def _finding_domain(finding: dict) -> str:
+    return str(finding.get("environment_name") or finding.get("environment_id") or "").strip()
+
+
+def _is_tier_zero(finding: dict) -> bool:
+    return str(finding.get("zone_name") or "").strip() == TIER_ZERO_ZONE
+
+
+def _empty_domain_row(domain: str) -> dict:
+    row = {"Domain": domain, "T0": "N", "AP": 0}
+    for column in COUNT_COLUMNS:
+        row[column] = 0
+    return row
+
+
+def _list_relationships(client: Client, principal: dict, relation: str) -> tuple[list, bool]:
+    """Page one outbound relationship. A missing path is an empty list."""
+    try:
+        return _page_results(
+            client,
+            "relationship_list",
+            family=PRINCIPAL_FAMILIES[principal["type"]],
+            object_id=quote(str(principal["objectid"]), safe=""),
+            relation=relation,
+        )
+    except BloodHoundNotFoundException:
+        return [], False
+
+
+def _domain_rows(client: Client, principal: dict, findings: list, directory: dict[str, str]) -> tuple[list, bool]:
+    """Per-domain counts for the risk view. Every relationship page is read so each object can be counted."""
+    rows: dict[str, dict] = {}
+    domain_cache: dict[str, str] = {}
+    partial = False
+
+    def bucket(domain: str) -> dict | None:
+        if not domain:
+            return None
+        key = domain.casefold()
+        if key not in rows:
+            rows[key] = _empty_domain_row(domain)
+        return rows[key]
+
+    for finding in findings:
+        row = bucket(_finding_domain(finding))
+        if row is None:
+            continue
+        row["AP"] += 1
+        if _is_tier_zero(finding):
+            row["T0"] = "Y"
+
+    relations = RELATION_PATHS[principal["type"]]
+    for column, relation in relations.items():
+        related, relation_partial = _list_relationships(client, principal, relation)
+        partial = partial or relation_partial
+        for item in related:
+            if not isinstance(item, dict):
+                continue
+            row = bucket(_resolved_domain(client, item, directory, domain_cache))
+            if row is not None:
+                row[column] += 1
+
+    visible = []
+    for row in rows.values():
+        counts_are_zero = row["AP"] == 0 and all(row[column] == 0 for column in COUNT_COLUMNS)
+        if counts_are_zero and row["T0"] == "N":
+            continue
+        visible.append(row)
+    visible.sort(key=lambda item: item["Domain"].casefold())
+    return visible, partial
+
+
+def _target_from_list_item(item: dict, directory: dict[str, str], domain: str) -> dict | None:
+    name = str(item.get("name") or "").strip()
+    if not name:
+        return None
+    label = str(item.get("label") or "").strip()
+    if not label:
+        kinds = item.get("kinds") or []
+        label = str(kinds[0]) if isinstance(kinds, list) and kinds else ""
+    return {"Name": name, "Type": label, "Domain": domain}
+
+
+def _relationship_targets(
+    client: Client, principal: dict, relation: str, directory: dict[str, str]
+) -> tuple[list, int, bool]:
+    """First page of one relationship. Returned is the list count. At most 100 names are kept."""
+    try:
+        response = client._api_request(
+            "relationship_list",
+            family=PRINCIPAL_FAMILIES[principal["type"]],
+            object_id=quote(str(principal["objectid"]), safe=""),
+            relation=relation,
+            limit=PAGE_LIMIT,
+            skip=0,
+        )
+    except BloodHoundNotFoundException:
+        return [], 0, False
+    except (BloodHoundRateLimitException, BloodHoundServerErrorException):
+        return [], 0, True
+
+    page = response.get("data") or []
+    if not isinstance(page, list):
+        page = []
+    domain_cache: dict[str, str] = {}
+    count = response.get("count")
+    returned = int(count) if count is not None else len(page)
+    targets = []
+    for item in page[:PAGE_LIMIT]:
+        if not isinstance(item, dict):
+            continue
+        target = _target_from_list_item(item, directory, _resolved_domain(client, item, directory, domain_cache))
+        if target is not None:
+            targets.append(target)
+    return targets, returned, False
+
+
+def _radius_categories(client: Client, principal: dict, directory: dict[str, str]) -> tuple[list, bool]:
+    """Target blocks for the radius view. Findings are not called. A zero count is omitted."""
+    categories = []
+    partial = False
+    relations = RELATION_PATHS[principal["type"]]
+    for column in COUNT_COLUMNS:
+        relation = relations.get(column)
+        if not relation:
+            continue
+        targets, returned, relation_partial = _relationship_targets(client, principal, relation, directory)
+        partial = partial or relation_partial
+        if returned <= 0 and not targets:
+            continue
+        categories.append(
+            {
+                "ControlCategory": CONTROL_CATEGORIES[column],
+                "Returned": returned if returned > 0 else len(targets),
+                "Targets": targets,
+            }
+        )
+    return categories, partial
+
+
+def _last_updated(client: Client, principal: dict) -> str:
+    try:
+        response = _fetch_primary_response(client, principal["objectid"], principal["type"])
+    except Exception as exc:
+        demisto.debug(f"Last Updated was not available for {principal.get('objectid')}: {exc}")
+        return ""
+    data = response.get("data") or {}
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    props = data.get("props") or {}
+    return str(props.get("lastseen") or props.get("lastlogontimestamp") or "")
+
+
+def _risk_summary(findings: list) -> dict:
+    paths = []
+    tier_zero_domains = []
+    for finding in findings:
+        domain = _finding_domain(finding)
+        paths.append({"Domain": domain, "AttackPath": finding.get("finding") or ""})
+        if _is_tier_zero(finding) and domain and domain not in tier_zero_domains:
+            tier_zero_domains.append(domain)
+    return {
+        "DirectAttackPaths": paths,
+        "AttackPathCount": len(paths),
+        "TierZero": "Yes" if tier_zero_domains else "No",
+        "TierZeroDomains": tier_zero_domains,
+    }
+
+
+def principal_impact_get(client: Client, args: dict) -> dict:
+    """Risk block, including the domain grid, or the radius target list for one principal."""
+    name = str(args.get("name") or "").strip()
+    indicator_type = str(args.get("indicator_type") or "").strip()
+    view = str(args.get("view") or "").strip().lower()
+    if not name:
+        raise BloodHoundException("name is required")
+    if view not in {"risk", "radius"}:
+        raise BloodHoundException("view must be risk or radius")
+
+    principal = _resolve_principal(client, name, indicator_type)
+    result = {
+        "Name": principal["name"],
+        "ObjectID": principal["objectid"],
+        "PrincipalType": principal["type"],
+        "View": view,
+    }
+    directory = _domain_directory(client)
+    if view == "risk":
+        findings, findings_partial = _findings_for_principal(client, principal["name"], principal["objectid"])
+        rows, rows_partial = _domain_rows(client, principal, findings, directory)
+        result["LastUpdated"] = _last_updated(client, principal)
+        result.update(_risk_summary(findings))
+        result["Rows"] = rows
+        result["Partial"] = findings_partial or rows_partial
+        return result
+
+    categories, partial = _radius_categories(client, principal, directory)
+    result["Categories"] = categories
+    result["Partial"] = partial
+    return result
+
+
+def bhe_principal_impact_get_command(client: Client, args: dict):
+    result = principal_impact_get(client, args)
+    return_results(
+        CommandResults(
+            outputs_prefix="SpecterOpsBloodHoundEnterprise.Impact",
+            outputs=result,
+            readable_output=tableToMarkdown(
+                "BloodHound principal impact",
+                result,
+                removeNull=True,
+            ),
+            raw_response=result,
+        )
+    )
+
+
 def test_module(bhe_client: Client) -> str:
     try:
         bhe_client.test_connection()
@@ -1810,6 +2372,9 @@ def main():
 
         elif command == "bloodhound-path-exist":
             bhe_path_exist_command(bhe_client, args)
+
+        elif command == "bloodhound-principal-impact-get":
+            bhe_principal_impact_get_command(bhe_client, args)
 
         elif command == "fetch-incidents":
             result = fetch_incidents(bhe_client)
