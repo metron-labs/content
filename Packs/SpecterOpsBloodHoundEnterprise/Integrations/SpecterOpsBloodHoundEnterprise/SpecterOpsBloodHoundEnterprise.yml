@@ -189,6 +189,15 @@ script:
     - contextPath: SpecterOpsBloodHoundEnterprise.Impact.DirectAttackPaths.AttackPath
       description: Finding name of a direct attack path.
       type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.DirectAttackPaths.Count
+      description: Number of BHE relationship findings for this domain and attack path (shown as Findings in the risk table).
+      type: Number
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.DirectAttackPaths.EnvironmentId
+      description: BloodHound environment id (domain SID) used for graph view links.
+      type: String
+    - contextPath: SpecterOpsBloodHoundEnterprise.Impact.DirectAttackPaths.GraphViewUrl
+      description: Link to this finding type in the BloodHound Enterprise UI.
+      type: String
     - contextPath: SpecterOpsBloodHoundEnterprise.Impact.AttackPathCount
       description: Number of direct relationship findings.
       type: Number

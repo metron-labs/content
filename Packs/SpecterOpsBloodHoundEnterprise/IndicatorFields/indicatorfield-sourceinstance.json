@@ -1,0 +1,32 @@
+{
+    "id": "indicator_sourceinstance",
+    "version": -1,
+    "name": "Source Instance",
+    "ownerOnly": false,
+    "cliName": "sourceinstance",
+    "type": "shortText",
+    "closeForm": false,
+    "editForm": true,
+    "required": false,
+    "neverSetAsRequired": false,
+    "isReadOnly": true,
+    "useAsKpi": false,
+    "locked": false,
+    "system": false,
+    "content": true,
+    "group": 2,
+    "hidden": false,
+    "openEnded": false,
+    "associatedTypes": [
+        "User",
+        "Computer",
+        "Group"
+    ],
+    "associatedToAll": false,
+    "unmapped": false,
+    "unsearchable": false,
+    "caseInsensitive": false,
+    "sla": 0,
+    "threshold": 72,
+    "fromVersion": "6.10.0"
+}

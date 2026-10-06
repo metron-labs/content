@@ -10,6 +10,42 @@ DISPLAY_TYPES = {
     "Computer": "Computer",
     "Group": "Group",
 }
+SOURCE_INSTANCE_FIELD = "sourceinstance"
+BHE_INTEGRATION_NAME = "SpecterOpsBloodHoundEnterprise"
+CATEGORY_HELP = {
+    "Outbound Object Control": (
+        "Remote assets over which this principal holds object-control privileges. "
+        "Use this category to evaluate lateral movement and outbound influence from the entity."
+    ),
+    "Admin Rights": (
+        "Systems where this principal has administrative privileges. "
+        "Review entries to identify and remove excessive admin assignments that expand attack surface."
+    ),
+    "RDP Rights": (
+        "Hosts this principal can reach via Remote Desktop Protocol. "
+        "These interactive entry points may warrant additional monitoring or hardening."
+    ),
+    "DCOM Rights": (
+        "Remote DCOM endpoints available to this principal. "
+        "Validate business need; misconfiguration can enable remote execution over COM."
+    ),
+    "PowerShell Remoting": (
+        "Hosts that accept PowerShell remoting sessions from this principal. "
+        "This access supports legitimate administration and is frequently used in lateral movement."
+    ),
+    "SQL Admin": (
+        "SQL Server instances where this principal holds administrative rights. "
+        "Database-tier privilege can facilitate further escalation in the environment."
+    ),
+    "Constrained Delegation": (
+        "Kerberos delegation resources associated with this principal. "
+        "Review for misconfigurations that could allow delegation-based abuse."
+    ),
+    "Sessions": (
+        "Interactive session reach from this principal. "
+        "Indicates where the entity may already have, or could obtain, desktop-level access."
+    ),
+}
 FONT_WRAP = (
     "font-family:Roboto,'Segoe UI','Helvetica Neue',Arial,sans-serif;color:inherit;font-size:13px;line-height:1.5;width:100%"
 )
@@ -31,7 +67,7 @@ TD = (
     "box-sizing:border-box;padding:6px 8px;text-align:left;vertical-align:top;font-size:12px;"
     "line-height:16px;color:inherit;word-break:break-word;border-top:1px solid rgba(128,128,128,0.22)"
 )
-def _indicator(args: dict) -> tuple[str, str]:
+def _indicator(args: dict) -> tuple[str, str, dict]:
     indicator = args.get("indicator")
     if isinstance(indicator, str):
         indicator = json.loads(indicator)
@@ -44,14 +80,96 @@ def _indicator(args: dict) -> tuple[str, str]:
     indicator_type = DISPLAY_TYPES.get(raw_type)
     if not value or not indicator_type:
         raise DemistoException("The indicator value or type is missing.")
-    return value, indicator_type
+    return value, indicator_type, indicator
 
 
-def _impact(value: str, indicator_type: str) -> dict:
+def _field_from_indicator_record(record: dict) -> str:
+    for key in ("fields", "CustomFields", "customFields"):
+        container = record.get(key)
+        if isinstance(container, dict):
+            stored = container.get(SOURCE_INSTANCE_FIELD)
+            if stored not in (None, ""):
+                return str(stored).strip()
+    stored = record.get(SOURCE_INSTANCE_FIELD)
+    return str(stored or "").strip()
+
+
+def _source_instance_from_indicator_payload(indicator: dict) -> str:
+    direct = _field_from_indicator_record(indicator)
+    if direct:
+        return direct
+    nested = indicator.get("indicator")
+    if isinstance(nested, dict):
+        return _field_from_indicator_record(nested)
+    return ""
+
+
+def _indicator_tim_search_query(value: str, indicator_type: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'value:"{escaped}" and type:{indicator_type}'
+
+
+def _source_instance_from_search(value: str, indicator_type: str) -> str:
+    try:
+        data = demisto.searchIndicators(
+            query=_indicator_tim_search_query(value, indicator_type),
+            size=1,
+        )
+    except Exception:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    iocs = data.get("iocs") or data.get("iocObjects") or []
+    if not iocs or not isinstance(iocs[0], dict):
+        return ""
+    return _field_from_indicator_record(iocs[0])
+
+
+def _source_instance_from_get_indicator(value: str, indicator_type: str) -> str:
     result = demisto.executeCommand(
-        "bloodhound-principal-impact-get",
-        {"name": value, "indicator_type": indicator_type, "view": "radius"},
+        "getIndicator",
+        {"value": value, "type": indicator_type},
     )
+    if not result or isError(result[0]):
+        return ""
+    contents = result[0].get("Contents")
+    if isinstance(contents, list):
+        contents = contents[0] if contents else {}
+    if isinstance(contents, dict):
+        return _field_from_indicator_record(contents)
+    return ""
+
+
+def _resolve_bhe_integration_instance(indicator: dict, value: str, indicator_type: str) -> str:
+    instance = _source_instance_from_indicator_payload(indicator)
+    if instance:
+        return instance
+    instance = _source_instance_from_search(value, indicator_type)
+    if instance:
+        return instance
+    return _source_instance_from_get_indicator(value, indicator_type)
+
+
+def _persist_source_instance(value: str, instance: str) -> None:
+    if not value or not instance:
+        return
+    demisto.executeCommand("setIndicator", {"value": value, SOURCE_INSTANCE_FIELD: instance})
+
+
+def _impact(value: str, indicator_type: str, using: str) -> dict:
+    if not using:
+        raise DemistoException(
+            "Cannot determine which BloodHound Enterprise instance owns this indicator. "
+            "Re-run fetch with Create indicators on the correct instance so Source Instance is set."
+        )
+    command_args = {
+        "name": value,
+        "indicator_type": indicator_type,
+        "view": "radius",
+        "using": using,
+        "using-brand": BHE_INTEGRATION_NAME,
+    }
+    result = demisto.executeCommand("bloodhound-principal-impact-get", command_args)
     if not result or isError(result[0]):
         raise DemistoException(get_error(result[0]) if result else "BloodHound Enterprise did not return a result.")
     entry = result[0]
@@ -107,9 +225,11 @@ def _radius_html(value: str, impact: dict) -> str:
         returned = int(category.get("Returned") or 0)
         targets = (category.get("Targets") or [])[:ROWS_SHOWN]
         shown = f" &middot; Showing {len(targets)} of {returned}" if returned > len(targets) else ""
-        parts.append(
-            f'<div style="{SUB};margin-top:14px">Control Category: {escape(str(category.get("ControlCategory") or ""))}</div>'
-        )
+        category_name = str(category.get("ControlCategory") or "")
+        parts.append(f'<div style="{SUB};margin-top:14px">Control Category: {escape(category_name)}</div>')
+        help_text = CATEGORY_HELP.get(category_name, "")
+        if help_text:
+            parts.append(f'<div style="{MUTED}">{escape(help_text)}</div>')
         parts.append(f'<div style="{MUTED}">Returned: {returned} results{shown}</div>')
         parts.append(_targets_table(targets))
     if impact.get("Partial"):
@@ -121,8 +241,10 @@ def _radius_html(value: str, impact: dict) -> str:
 
 def main():
     try:
-        value, indicator_type = _indicator(demisto.args())
-        impact = _impact(value, indicator_type)
+        value, indicator_type, indicator = _indicator(demisto.args())
+        using = _resolve_bhe_integration_instance(indicator, value, indicator_type)
+        _persist_source_instance(value, using)
+        impact = _impact(value, indicator_type, using)
         html = _radius_html(value, impact)
         saved = demisto.executeCommand("setIndicator", {"value": value, "bloodhoundradiustable": html})
         if not saved or isError(saved[0]):

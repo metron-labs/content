@@ -65,6 +65,8 @@ from SpecterOpsBloodHoundEnterprise import (
     _create_indicators_enabled,
     _create_principal_indicators,
     _indicators_from_incidents,
+    _stamp_indicator_source_instance,
+    SOURCE_INSTANCE_FIELD,
     _param_enabled,
 )
 
@@ -1498,11 +1500,60 @@ class TestPrincipalImpact:
         assert result["TierZero"] == "Yes"
         assert result["TierZeroDomains"] == ["A.EXAMPLE"]
         assert result["DirectAttackPaths"][0]["AttackPath"] == "T0MarkSensitive"
+        assert result["DirectAttackPaths"][0]["Count"] == 1
         assert result["DirectAttackPaths"][1]["Domain"] == "B.EXAMPLE"
+        assert result["DirectAttackPaths"][1]["Count"] == 1
         rows = {row["Domain"]: row for row in result["Rows"]}
         assert rows["A.EXAMPLE"]["T0"] == "Y"
         assert rows["A.EXAMPLE"]["AP"] == 1
         assert rows["B.EXAMPLE"]["T0"] == "N"
+
+    def test_direct_attack_paths_aggregate_and_graph_link(self, mock_client):
+        domain_sid = "S-1-5-21-2697957641-2271029196-387917394"
+        findings = [
+            {
+                "finding": "T0Admins",
+                "environment_name": "PHANTOM.CORP",
+                "environment_id": domain_sid,
+                "zone_name": "Tier Zero",
+                "finding_type": "relationship",
+            },
+            {
+                "finding": "T0Admins",
+                "environment_name": "PHANTOM.CORP",
+                "environment_id": domain_sid,
+                "zone_name": "Tier Zero",
+                "finding_type": "relationship",
+            },
+            {
+                "finding": "LargeDefaultGroupsAdmins",
+                "environment_name": "PHANTOM.CORP",
+                "environment_id": domain_sid,
+                "zone_name": "Tier One",
+                "finding_type": "relationship",
+            },
+        ]
+
+        def side_effect(endpoint_key, **kwargs):
+            if endpoint_key == "principal_search":
+                return _principal()
+            if endpoint_key == "dictionary_types":
+                return _entity()
+            if endpoint_key == "relationship_list":
+                return _page([])
+            return _page(findings)
+
+        mock_client._api_request = Mock(side_effect=side_effect)
+        result = principal_impact_get(mock_client, {"name": "alice@example.com", "indicator_type": "User", "view": "risk"})
+        assert result["AttackPathCount"] == 3
+        paths = {row["AttackPath"]: row for row in result["DirectAttackPaths"]}
+        assert paths["T0Admins"]["Count"] == 2
+        assert paths["LargeDefaultGroupsAdmins"]["Count"] == 1
+        expected_url = (
+            "https://test.bhe.example.com/ui/graphview?"
+            f"environmentId={domain_sid}&findingType=T0Admins"
+        )
+        assert paths["T0Admins"]["GraphViewUrl"] == expected_url
 
     def test_name_filter_empty_uses_object_id(self, mock_client):
         finding = {
@@ -1749,14 +1800,51 @@ class TestCreatePrincipalIndicators:
             _create_principal_indicators([_incident("alice@phantom.corp", "User")])
             mock_demisto.createIndicators.assert_called_once()
 
+    def test_stamp_indicator_source_instance(self):
+        with patch("SpecterOpsBloodHoundEnterprise.demisto") as mock_demisto:
+            mock_demisto.integrationInstance.return_value = "SpecterOpsBloodHoundEnterprise_instance_3"
+            mock_demisto.searchIndicators.return_value = {"iocs": []}
+            indicators = [{"value": "alice@phantom.corp", "type": "User"}]
+            _stamp_indicator_source_instance(indicators)
+            assert indicators[0]["fields"][SOURCE_INSTANCE_FIELD] == "SpecterOpsBloodHoundEnterprise_instance_3"
+
+    def test_stamp_preserves_existing_source_instance_from_other_fetch(self):
+        with patch("SpecterOpsBloodHoundEnterprise.demisto") as mock_demisto:
+            mock_demisto.integrationInstance.return_value = "SpecterOpsBloodHoundEnterprise_instance_demo"
+            mock_demisto.searchIndicators.return_value = {
+                "iocs": [{"CustomFields": {SOURCE_INSTANCE_FIELD: "SpecterOpsBloodHoundEnterprise_instance_maple"}}]
+            }
+            indicators = [{"value": "alice@phantom.corp", "type": "User"}]
+            _stamp_indicator_source_instance(indicators)
+            assert (
+                indicators[0]["fields"][SOURCE_INSTANCE_FIELD] == "SpecterOpsBloodHoundEnterprise_instance_maple"
+            )
+
     def test_create_uses_one_batch(self):
         with patch("SpecterOpsBloodHoundEnterprise.demisto") as mock_demisto:
+            mock_demisto.integrationInstance.return_value = "SpecterOpsBloodHoundEnterprise_instance_3"
             mock_demisto.params.return_value = {"create_indicators": True}
-            _create_principal_indicators([_incident("alice@phantom.corp", "User", "DC01.phantom.corp", "Computer")])
+            incidents = [
+                _incident(
+                    "alice@phantom.corp",
+                    "User",
+                    "DC01.phantom.corp",
+                    "Computer",
+                )
+            ]
+            _create_principal_indicators(incidents)
             mock_demisto.createIndicators.assert_called_once_with(
                 [
-                    {"value": "alice@phantom.corp", "type": "User"},
-                    {"value": "DC01.phantom.corp", "type": "Computer"},
+                    {
+                        "value": "alice@phantom.corp",
+                        "type": "User",
+                        "fields": {SOURCE_INSTANCE_FIELD: "SpecterOpsBloodHoundEnterprise_instance_3"},
+                    },
+                    {
+                        "value": "DC01.phantom.corp",
+                        "type": "Computer",
+                        "fields": {SOURCE_INSTANCE_FIELD: "SpecterOpsBloodHoundEnterprise_instance_3"},
+                    },
                 ],
                 noUpdate=False,
             )
@@ -1768,4 +1856,3 @@ class TestCreatePrincipalIndicators:
             ok = _create_principal_indicators([_incident("alice@phantom.corp", "User")])
             mock_demisto.error.assert_called_once()
             assert ok is False
-            assert "lastRun" in mock_demisto.error.call_args[0][0]

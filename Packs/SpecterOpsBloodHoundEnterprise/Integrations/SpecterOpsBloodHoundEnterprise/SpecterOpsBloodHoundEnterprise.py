@@ -56,6 +56,7 @@ INDICATOR_TYPES_BY_KIND = {
     "group": "Group",
 }
 INDICATOR_CREATE_BATCH = 2000
+SOURCE_INSTANCE_FIELD = "sourceinstance"
 PRINCIPAL_FAMILIES = {"User": "users", "Computer": "computers", "Group": "groups"}
 COUNT_COLUMNS = ["OOC", "AR", "RDP", "DCOM", "PS", "SQL", "CD", "Sess"]
 CONTROL_CATEGORIES = {
@@ -1372,6 +1373,59 @@ def _indicators_from_incidents(incidents: list[dict]) -> list[dict]:
     return indicators
 
 
+def _source_instance_from_tim_record(record: dict) -> str:
+    for key in ("fields", "CustomFields", "customFields"):
+        container = record.get(key)
+        if isinstance(container, dict):
+            stored = container.get(SOURCE_INSTANCE_FIELD)
+            if stored not in (None, ""):
+                return str(stored).strip()
+    stored = record.get(SOURCE_INSTANCE_FIELD)
+    return str(stored or "").strip()
+
+
+def _indicator_tim_search_query(value: str, indicator_type: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'value:"{escaped}" and type:{indicator_type}'
+
+
+def _source_instance_stored_on_indicator(value: str, indicator_type: str) -> str:
+    if not value or not indicator_type:
+        return ""
+    try:
+        data = demisto.searchIndicators(
+            query=_indicator_tim_search_query(value, indicator_type),
+            size=1,
+        )
+    except Exception:
+        return ""
+    if not isinstance(data, dict):
+        return ""
+    iocs = data.get("iocs") or data.get("iocObjects") or []
+    if not iocs or not isinstance(iocs[0], dict):
+        return ""
+    return _source_instance_from_tim_record(iocs[0])
+
+
+def _stamp_indicator_source_instance(indicators: list[dict]) -> None:
+    """Record which integration instance created principals so indicator actions use the same BHE tenant."""
+    instance = demisto.integrationInstance()
+    if not instance:
+        return
+    for indicator in indicators:
+        value = str(indicator.get("value") or "").strip()
+        indicator_type = str(indicator.get("type") or "").strip()
+        stored = _source_instance_stored_on_indicator(value, indicator_type) if value and indicator_type else ""
+        owner = stored if stored else instance
+        if stored and stored != instance:
+            demisto.info(
+                f"BloodHound Enterprise preserving sourceinstance {stored!r} for indicator {value!r} "
+                f"(current fetch instance {instance!r})."
+            )
+        fields = indicator.setdefault("fields", {})
+        fields[SOURCE_INSTANCE_FIELD] = owner
+
+
 def _create_principal_indicators(incidents: list[dict]) -> bool:
     """Create indicators for this fetch batch. Returns False if create was required and failed."""
     params = demisto.params() or {}
@@ -1389,6 +1443,7 @@ def _create_principal_indicators(incidents: list[dict]) -> bool:
     if not indicators:
         demisto.info("BloodHound Enterprise indicator create: no principal candidates in this fetch batch.")
         return True
+    _stamp_indicator_source_instance(indicators)
     try:
         for chunk in batch(indicators, batch_size=INDICATOR_CREATE_BATCH):
             # noUpdate=False: incident fetch is not a feed 304 run; new principals must be created on CRTX/XSOAR.
@@ -2084,6 +2139,30 @@ def _finding_domain(finding: dict) -> str:
     return str(finding.get("environment_name") or finding.get("environment_id") or "").strip()
 
 
+def _environment_id_for_finding(finding: dict, directory: dict[str, str]) -> str:
+    """Resolve BHE environmentId (domain SID) for graph view links."""
+    env_id = str(finding.get("environment_id") or "").strip()
+    if env_id:
+        return env_id
+    domain_name = str(finding.get("environment_name") or "").strip()
+    if domain_name and directory:
+        for sid, name in directory.items():
+            if name.casefold() == domain_name.casefold():
+                return sid
+    return ""
+
+
+def _graphview_url(base_url: str, environment_id: str, finding_type: str) -> str:
+    """BloodHound Enterprise UI link for a domain + finding type (matches Jira Forge integration)."""
+    if not base_url or not environment_id or not finding_type:
+        return ""
+    base = str(base_url).rstrip("/")
+    return (
+        f"{base}/ui/graphview?"
+        f"environmentId={quote(environment_id, safe='')}&findingType={quote(finding_type, safe='')}"
+    )
+
+
 def _is_tier_zero(finding: dict) -> bool:
     return str(finding.get("zone_name") or "").strip() == TIER_ZERO_ZONE
 
@@ -2233,17 +2312,37 @@ def _last_updated(client: Client, principal: dict) -> str:
     return str(props.get("lastseen") or props.get("lastlogontimestamp") or "")
 
 
-def _risk_summary(findings: list) -> dict:
-    paths = []
+def _risk_summary(findings: list, base_url: str = "", directory: dict[str, str] | None = None) -> dict:
+    directory = directory or {}
+    aggregated: dict[tuple[str, str], dict] = {}
     tier_zero_domains = []
     for finding in findings:
         domain = _finding_domain(finding)
-        paths.append({"Domain": domain, "AttackPath": finding.get("finding") or ""})
+        attack_path = str(finding.get("finding") or "")
+        key = (domain.casefold(), attack_path.casefold())
+        if key not in aggregated:
+            aggregated[key] = {
+                "Domain": domain,
+                "AttackPath": attack_path,
+                "Count": 0,
+                "EnvironmentId": _environment_id_for_finding(finding, directory),
+                "GraphViewUrl": "",
+            }
+        entry = aggregated[key]
+        entry["Count"] += 1
+        env_id = _environment_id_for_finding(finding, directory)
+        if env_id and not entry["EnvironmentId"]:
+            entry["EnvironmentId"] = env_id
         if _is_tier_zero(finding) and domain and domain not in tier_zero_domains:
             tier_zero_domains.append(domain)
+    paths = []
+    for entry in aggregated.values():
+        entry["GraphViewUrl"] = _graphview_url(base_url, entry["EnvironmentId"], entry["AttackPath"])
+        paths.append(entry)
+    paths.sort(key=lambda item: (item["Domain"].casefold(), item["AttackPath"].casefold()))
     return {
         "DirectAttackPaths": paths,
-        "AttackPathCount": len(paths),
+        "AttackPathCount": len(findings),
         "TierZero": "Yes" if tier_zero_domains else "No",
         "TierZeroDomains": tier_zero_domains,
     }
@@ -2271,7 +2370,7 @@ def principal_impact_get(client: Client, args: dict) -> dict:
         findings, findings_partial = _findings_for_principal(client, principal["name"], principal["objectid"])
         rows, rows_partial = _domain_rows(client, principal, findings, directory)
         result["LastUpdated"] = _last_updated(client, principal)
-        result.update(_risk_summary(findings))
+        result.update(_risk_summary(findings, client.bhe_domain, directory))
         result["Rows"] = rows
         result["Partial"] = findings_partial or rows_partial
         return result
