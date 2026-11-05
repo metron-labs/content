@@ -29,6 +29,9 @@ from Vega import (
     _is_retryable_http_error,
     _format_key_findings_html,
     _format_raw_entity_for_xsoar,
+    _format_incident_alert_grid_row,
+    _preprocess_actor_target_fields,
+    _preprocess_vega_related_alerts,
     _format_recommended_actions_for_grid,
     VEGA_NO_RECOMMENDED_ACTIONS_DISPLAY,
     _format_timeline_events_html,
@@ -1194,6 +1197,105 @@ def test_parse_backfill_days_defaults_when_none():
     assert (today_start - parsed).days == 30
 
 
+def test_preprocess_actor_target_fields_standard_and_grid():
+    assert _preprocess_actor_target_fields(
+        [
+            {"field": "src_endpoint.ip", "values": ["1.1.1.1"]},
+            {"field": "dst_endpoint.ip", "values": ["2.2.2.2", "3.3.3.3"]},
+            {
+                "field": "network_grid",
+                "values": [
+                    {"ip": "10.0.0.1", "hostname": "host-a"},
+                    {"ip": "10.0.0.2", "hostname": "host-b"},
+                ],
+            },
+        ]
+    ) == {
+        "src_endpoint.ip": ["1.1.1.1"],
+        "dst_endpoint.ip": ["2.2.2.2", "3.3.3.3"],
+        "network_grid": [
+            {"ip": "10.0.0.1", "hostname": "host-a"},
+            {"ip": "10.0.0.2", "hostname": "host-b"},
+        ],
+    }
+
+
+def test_preprocess_actor_target_fields_preserves_duplicates():
+    assert _preprocess_actor_target_fields([{"field": "src_endpoint.ip", "values": ["1.1.1.1", "1.1.1.1", "2.2.2.2"]}]) == {
+        "src_endpoint.ip": ["1.1.1.1", "1.1.1.1", "2.2.2.2"]
+    }
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, [], {}, "", "N/A", "na", "null", "NA", 123, "not-a-list"],
+)
+def test_preprocess_actor_target_fields_edge_cases(value):
+    assert _preprocess_actor_target_fields(value) == {}
+
+
+def test_preprocess_actor_target_fields_skips_bad_items_and_empty_values():
+    assert _preprocess_actor_target_fields(
+        [
+            None,
+            "skip",
+            {"field": None, "values": ["1.1.1.1"]},
+            {"field": "", "values": ["1.1.1.1"]},
+            {"field": "N/A", "values": ["1.1.1.1"]},
+            {"values": ["1.1.1.1"]},
+            {"field": "src_endpoint.ip", "values": None},
+            {"field": "dst_endpoint.ip", "values": "N/A"},
+            {"field": "account.uid"},
+            {"field": "keep.me", "values": ["ok"]},
+        ]
+    ) == {
+        "src_endpoint.ip": [],
+        "dst_endpoint.ip": [],
+        "account.uid": [],
+        "keep.me": ["ok"],
+    }
+
+
+def test_preprocess_actor_target_fields_idempotent_for_dict():
+    shaped = {"src_endpoint.ip": ["1.1.1.1"]}
+    assert _preprocess_actor_target_fields(shaped) == shaped
+
+
+@pytest.mark.parametrize("value", [None, [], "", "N/A", "na", "null", {}, 123])
+def test_preprocess_vega_related_alerts_edge_cases(value):
+    assert _preprocess_vega_related_alerts(value) == []
+
+
+def test_format_raw_entity_for_xsoar_alert_actors_and_targets():
+    alert = {
+        "vegaEntityType": "Vega Alert",
+        "actors": [{"field": "src_endpoint.ip", "values": ["1.1.1.1"]}],
+        "targets": [{"field": "account.uid", "values": ["890123456789"]}],
+    }
+    _format_raw_entity_for_xsoar(alert)
+    assert alert["actors"] == {"src_endpoint.ip": ["1.1.1.1"]}
+    assert alert["targets"] == {"account.uid": ["890123456789"]}
+
+
+def test_format_incident_alert_grid_row_preprocesses_actors_and_targets():
+    row = _format_incident_alert_grid_row(
+        {
+            "id": "alert-1",
+            "actors": [{"field": "src_endpoint.ip", "values": ["1.1.1.1", "1.1.1.1"]}],
+            "targets": "N/A",
+        }
+    )
+    assert row["actors"] == {"src_endpoint.ip": ["1.1.1.1", "1.1.1.1"]}
+    assert row["targets"] == {}
+
+
+def test_incident_to_xsoar_incident_normalizes_missing_alerts():
+    xsoar_incident = incident_to_xsoar_incident({"id": "inc-1", "name": "No alerts", "alerts": "N/A"})
+    raw = json.loads(xsoar_incident["rawJSON"])
+    assert raw["alerts"] == []
+    assert xsoar_incident["CustomFields"]["vegaalerts"] == []
+
+
 def test_format_recommended_actions_for_grid_empty_shows_placeholder():
     assert _format_recommended_actions_for_grid([]) == [{"name": VEGA_NO_RECOMMENDED_ACTIONS_DISPLAY}]
     assert _format_recommended_actions_for_grid(None) == [{"name": VEGA_NO_RECOMMENDED_ACTIONS_DISPLAY}]
@@ -1409,6 +1511,7 @@ def test_format_raw_entity_for_xsoar_incident():
         "assets": ["i-12345"],
         "typedAssets": [{"value": "i-12345", "type": "HOST"}],
         "observables": ["10.0.0.1"],
+        "typedObservables": [{"value": "10.0.0.1", "type": "IP"}],
         "incidentFindings": ["Instance i-12345 connected to 10.0.0.1"],
     }
     _format_raw_entity_for_xsoar(incident)
@@ -1417,6 +1520,7 @@ def test_format_raw_entity_for_xsoar_incident():
     assert incident["assets"] == ["i-12345"]
     assert incident["typedAssets"] == [{"type": "HOST", "value": "i-12345"}]
     assert incident["observables"] == [{"value": "10.0.0.1"}]
+    assert incident["typedObservables"] == [{"type": "IP", "value": "10.0.0.1"}]
     assert "vegaIncidentFindings" in incident
     assert "background:#000000" in incident["vegaIncidentFindings"]
     assert "i-12345" in incident["vegaIncidentFindings"]
@@ -1432,13 +1536,14 @@ def test_alert_to_incident_formats_raw_json(mocker):
         "severity": "HIGH",
         "createdAt": TIMESTAMP_T1,
         "dataSources": ["CloudTrail"],
+        "href": "/incidents/alerts/alert-1",
     }
     xsoar_incident = alert_to_incident(alert, integration_url="https://api.vega.io")
     raw = json.loads(xsoar_incident["rawJSON"])
 
     assert raw["dataSources"] == [{"value": "CloudTrail"}]
     assert raw["vegaEntityType"] == "Vega Alert"
-    assert raw["link"] == "https://app.vega.io/incidents/alerts/investigation/alert-1"
+    assert raw["link"] == "https://app.vega.io/incidents/alerts/alert-1"
     assert raw["detectionDescription"] == "N/A"
     assert raw["detectionQuery"] == "N/A"
     assert raw["verdictReasoning"] == "N/A"
@@ -1449,6 +1554,7 @@ def test_alert_to_incident_formats_raw_json(mocker):
         "severity",
         "createdAt",
         "dataSources",
+        "href",
         "vegaEntityType",
         "link",
         "detectionDescription",
@@ -1879,7 +1985,6 @@ def test_fetch_incidents_command_enriches_incident_alerts(mocker):
         incident_statuses=None,
         incident_verdicts=None,
         first_fetch_time=FIRST_FETCH_TIME,
-        include_incident_alert_metadata=True,
     )
 
     assert incidents[0]["CustomFields"]["vegaalerts"][0]["detectionId"] == "det-1"
@@ -1936,7 +2041,54 @@ def test_get_remote_data_command_mirrors_incident_alerts(mocker):
     )
 
 
-def test_fetch_incidents_command_omits_alert_metadata_by_default(mocker):
+def test_get_remote_data_command_mirrors_content_fields(mocker):
+    mocker.patch.object(demisto, "info")
+    mocker.patch.object(demisto, "debug")
+    updated_alert = _full_incident_alert()
+    updated_alert["status"] = "RESOLVED"
+    added_alert = _full_incident_alert("alert-2")
+    added_alert["name"] = "New alert"
+    mock_client = mocker.Mock(spec=Client)
+    mock_client.get_incident_for_mirror.return_value = {
+        "id": "inc-1",
+        "status": "INVESTIGATING",
+        "alerts": [{"alertId": "alert-1", "name": "Stub name", "createdAt": TIMESTAMP_T1}],
+    }
+    mock_client.get_incident_by_id.return_value = {
+        "id": "inc-1",
+        "status": "INVESTIGATING",
+        "assets": ["host-1"],
+        "typedAssets": [{"type": "HOST", "value": "host-1"}],
+        "observables": ["10.0.0.1"],
+        "incidentFindings": ["Host host-1 spoke to 10.0.0.1"],
+        "recommendedActions": [{"name": "Isolate", "description": "Block the host"}],
+        "alerts": [
+            {"alertId": "alert-1", "name": "Stub name", "createdAt": TIMESTAMP_T1},
+            {"alertId": "alert-2", "name": "New alert", "createdAt": TIMESTAMP_T2},
+        ],
+    }
+    mock_client.get_alerts.return_value = {"alerts": [updated_alert, added_alert], "total": 2, "limit": 100, "offset": 0}
+
+    result = get_remote_data_command(
+        mock_client,
+        {"id": "inc-1", "lastUpdate": "2026-06-15T11:00:00Z", "data": {"type": "Vega Incident"}},
+        include_alert_metadata=True,
+    )
+
+    fields = result.mirrored_object["CustomFields"]
+    assert fields["vegaassets"] == [{"type": "HOST", "value": "host-1"}]
+    assert fields["vegaassetsvalue"] == ["host-1"]
+    assert fields["vegaobservables"] == [{"value": "10.0.0.1"}]
+    assert "host-1" in fields["vegaincidentfindings"]
+    assert fields["vegarecommendedactions"][0]["name"] == "Isolate"
+    assert [row["alertId"] for row in fields["vegaalerts"]] == ["alert-1", "alert-2"]
+    assert fields["vegaalerts"][0]["status"] == "RESOLVED"
+    assert fields["vegaalerts"][0]["name"] == "Suspicious login"
+    assert fields["vegaalerts"][1]["name"] == "New alert"
+    assert "assets" not in fields["vegaalerts"][0]
+
+
+def test_fetch_incidents_command_omits_alert_metadata_when_disabled(mocker):
     mocker.patch.object(demisto, "debug")
     mock_client = mocker.Mock()
     mock_client.get_incidents.return_value = {
@@ -1968,6 +2120,7 @@ def test_fetch_incidents_command_omits_alert_metadata_by_default(mocker):
         incident_statuses=None,
         incident_verdicts=None,
         first_fetch_time=FIRST_FETCH_TIME,
+        include_incident_alert_metadata=False,
     )
 
     assert incidents[0]["CustomFields"]["vegaalerts"] == [{"alertId": "alert-1", "name": "Stub name", "createdAt": TIMESTAMP_T1}]
@@ -2088,6 +2241,19 @@ def test_alert_to_incident_normalizes_api_link():
     raw = json.loads(alert_to_incident(alert)["rawJSON"])
 
     assert raw["link"] == "https://app.vega.io/incidents/alerts/alert-1"
+
+
+def test_alert_to_incident_builds_link_from_href():
+    alert = {
+        "id": "f29f4feb-b95d-4d47-88a6-0d55a0e07015",
+        "name": "Test Alert",
+        "severity": "HIGH",
+        "createdAt": TIMESTAMP_T1,
+        "href": "/incidents/alerts/f29f4feb-b95d-4d47-88a6-0d55a0e07015",
+    }
+    raw = json.loads(alert_to_incident(alert, integration_url="https://api.vega.io/api/v1")["rawJSON"])
+
+    assert raw["link"] == "https://app.vega.io/incidents/alerts/f29f4feb-b95d-4d47-88a6-0d55a0e07015"
 
 
 def test_incident_to_xsoar_incident_normalizes_api_link():
@@ -4237,6 +4403,7 @@ def test_get_modified_remote_data_command_respects_entity_filter(mocker):
                 "id": "alert-1",
                 "vegaAlertId": "VA-1",
                 "updatedAt": "2026-06-15T12:00:00Z",
+                "relatedIncidents": [{"incidentId": "inc-1", "name": "Parent"}],
             }
         ],
         "total": 1,
@@ -4310,6 +4477,47 @@ def test_get_modified_remote_data_command_both_entities(mocker):
     assert mock_client.get_alerts.call_args.kwargs["updated_from"] is not None
     assert "updated_to" not in mock_client.get_alerts.call_args.kwargs
     assert mock_client.get_incidents.call_args.kwargs["updated_to"] is not None
+    assert set(result.modified_incident_ids) == {
+        "alert:alert-1",
+        "alert:alert-2",
+        "alert-1",
+        "alert-2",
+        "incident:inc-1",
+        "inc-1",
+    }
+
+
+def test_get_modified_remote_data_command_queues_related_incidents(mocker):
+    mocker.patch.object(demisto, "debug")
+    mocker.patch.object(demisto, "executeCommand", return_value=[{"Contents": {"data": []}}])
+    mock_client = mocker.Mock(spec=Client)
+    mock_client.get_alerts.return_value = {
+        "alerts": [
+            {
+                "id": "alert-1",
+                "vegaAlertId": "VA-1",
+                "updatedAt": "2026-06-15T12:00:00Z",
+                "relatedIncidents": [
+                    {"incidentId": "inc-1", "name": "Parent"},
+                    {"incidentId": "inc-1", "name": "Duplicate"},
+                ],
+            },
+            {
+                "id": "alert-2",
+                "vegaAlertId": "VA-2",
+                "updatedAt": "2026-06-15T12:00:00Z",
+                "relatedIncidents": [{"incidentId": "inc-1", "name": "Same parent"}],
+            },
+        ],
+        "total": 2,
+    }
+    mock_client.get_incidents.return_value = {"incidents": [], "total": 0}
+
+    result = get_modified_remote_data_command(
+        mock_client,
+        {"lastUpdate": "2026-06-01T00:00:00Z"},
+    )
+
     assert set(result.modified_incident_ids) == {
         "alert:alert-1",
         "alert:alert-2",
