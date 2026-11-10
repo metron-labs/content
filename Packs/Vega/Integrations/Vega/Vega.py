@@ -5065,6 +5065,10 @@ def _mirror_content_custom_fields(raw: dict[str, Any]) -> dict[str, Any]:
         custom_fields["vegaassets"] = raw.get("typedAssets") if isinstance(raw.get("typedAssets"), list) else []
     if "assets" in raw:
         custom_fields["vegaassetsvalue"] = raw.get("assets") if isinstance(raw.get("assets"), list) else []
+    if "typedObservables" in raw:
+        custom_fields["vegatypedobservables"] = (
+            raw.get("typedObservables") if isinstance(raw.get("typedObservables"), list) else []
+        )
     if "observables" in raw:
         custom_fields["vegaobservables"] = raw.get("observables") if isinstance(raw.get("observables"), list) else []
     findings = raw.get("vegaIncidentFindings")
@@ -5515,6 +5519,7 @@ def _enrich_mirror_incident_entity(
             "assets",
             "typedAssets",
             "observables",
+            "typedObservables",
             "incidentFindings",
             "keyFindings",
             "recommendedActions",

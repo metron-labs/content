@@ -2060,6 +2060,7 @@ def test_get_remote_data_command_mirrors_content_fields(mocker):
         "assets": ["host-1"],
         "typedAssets": [{"type": "HOST", "value": "host-1"}],
         "observables": ["10.0.0.1"],
+        "typedObservables": [{"type": "IP", "value": "10.0.0.1"}],
         "incidentFindings": ["Host host-1 spoke to 10.0.0.1"],
         "recommendedActions": [{"name": "Isolate", "description": "Block the host"}],
         "alerts": [
@@ -2078,6 +2079,7 @@ def test_get_remote_data_command_mirrors_content_fields(mocker):
     fields = result.mirrored_object["CustomFields"]
     assert fields["vegaassets"] == [{"type": "HOST", "value": "host-1"}]
     assert fields["vegaassetsvalue"] == ["host-1"]
+    assert fields["vegatypedobservables"] == [{"type": "IP", "value": "10.0.0.1"}]
     assert fields["vegaobservables"] == [{"value": "10.0.0.1"}]
     assert "host-1" in fields["vegaincidentfindings"]
     assert fields["vegarecommendedactions"][0]["name"] == "Isolate"
