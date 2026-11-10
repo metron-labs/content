@@ -1,0 +1,108 @@
+{
+    "flare_exposure_events_raw": {
+        "flare_event_id": {
+            "type": "string",
+            "is_array": false
+        },
+        "flare_tenant_id": {
+            "type": "string",
+            "is_array": false
+        },
+        "matched_at": {
+            "type": "string",
+            "is_array": false
+        },
+        "estimated_created_at": {
+            "type": "string",
+            "is_array": false
+        },
+        "event_type": {
+            "type": "string",
+            "is_array": false
+        },
+        "severity": {
+            "type": "string",
+            "is_array": false
+        },
+        "flare_url": {
+            "type": "string",
+            "is_array": false
+        },
+        "full_event_type": {
+            "type": "string",
+            "is_array": false
+        },
+        "source_url": {
+            "type": "string",
+            "is_array": false
+        },
+        "event_data": {
+            "type": "string",
+            "is_array": false
+        },
+        "event_description": {
+            "type": "string",
+            "is_array": false
+        },
+        "identity_name": {
+            "type": "string",
+            "is_array": false
+        },
+        "email": {
+            "type": "string",
+            "is_array": false
+        },
+        "username": {
+            "type": "string",
+            "is_array": false
+        },
+        "domain": {
+            "type": "string",
+            "is_array": false
+        },
+        "ipv4": {
+            "type": "string",
+            "is_array": false
+        },
+        "ipv6": {
+            "type": "string",
+            "is_array": false
+        },
+        "grouping_id": {
+            "type": "string",
+            "is_array": false
+        },
+        "grouping_name": {
+            "type": "string",
+            "is_array": false
+        },
+        "identifier_ids": {
+            "type": "string",
+            "is_array": true
+        },
+        "identifier_names": {
+            "type": "string",
+            "is_array": true
+        },
+        "emails": {
+            "type": "string",
+            "is_array": true
+        },
+        "usernames": {
+            "type": "string",
+            "is_array": true
+        },
+        "domains": {
+            "type": "string",
+            "is_array": true
+        },
+        "ip_addresses": {
+            "type": "string",
+            "is_array": true
+        },
+        "raw_feed": {
+            "type": "string",
+            "is_array": false
+        }
+    }
+}

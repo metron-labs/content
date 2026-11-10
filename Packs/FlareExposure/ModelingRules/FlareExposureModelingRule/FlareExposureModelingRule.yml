@@ -1,0 +1,7 @@
+fromversion: 8.15.0
+id: Flare_Exposure_Modeling_Rule
+name: Flare Exposure Modeling Rule
+rules: ''
+schema: ''
+supportedModules:
+- xsiam

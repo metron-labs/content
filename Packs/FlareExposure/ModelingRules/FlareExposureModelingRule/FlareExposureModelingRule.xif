@@ -1,0 +1,15 @@
+[MODEL: dataset=flare_exposure_events_raw]
+alter
+    xdm.event.id = flare_event_id,
+    xdm.event.type = event_type,
+    xdm.event.description = event_description,
+    xdm.alert.severity = lowercase(severity),
+    xdm.target.user.username = coalesce(identity_name, email, username),
+    xdm.target.user.identifier = coalesce(identity_name, email, username),
+    xdm.target.domain = domain,
+    xdm.target.ipv4 = ipv4,
+    xdm.target.ipv6 = ipv6,
+    xdm.target.url = flare_url,
+    xdm.target.resource.id = grouping_id,
+    xdm.target.resource.name = grouping_name,
+    xdm.target.resource.type = "Flare Identifier";

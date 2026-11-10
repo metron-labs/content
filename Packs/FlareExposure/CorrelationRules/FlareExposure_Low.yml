@@ -1,0 +1,32 @@
+alert_category: OTHER
+alert_description: Flare low event $xdm.event.id ($xdm.event.type) matched identifier $xdm.target.resource.name.
+alert_fields:
+  actor_effective_username: xdm.target.resource.name
+  agent_hostname: xdm.target.domain
+  action_local_ip: xdm.target.ipv4
+alert_name: Flare Exposure - Low
+crontab: null
+dataset: alerts
+description: Opens one alert for each low Flare event. Alerts that share a Flare identifier use the same actor, so XSIAM can group them into one case.
+drilldown_query_timeframe: ALERT
+execution_mode: REAL_TIME
+global_rule_id: 1b8d4f60-2e79-4c3a-a6d5-7f0e1c9b3a52
+investigation_query_link: 'datamodel dataset = flare_exposure_events_raw
+
+  | filter xdm.target.resource.id = $xdm.target.resource.id'
+mapping_strategy: CUSTOM
+mitre_defs: {}
+name: Flare Exposure - Low
+search_window: null
+severity: SEV_020_LOW
+suppression_duration: 24 hours
+suppression_enabled: true
+suppression_fields: xdm.event.id
+user_defined_category: null
+user_defined_severity: null
+xql_query: 'datamodel dataset = flare_exposure_events_raw
+
+  | filter xdm.alert.severity = "low"
+
+  | fields xdm.event.id, xdm.event.type, xdm.event.description, xdm.target.resource.id, xdm.target.resource.name, xdm.target.user.username, xdm.target.domain, xdm.target.ipv4, xdm.target.url'
+fromversion: 8.15.0
