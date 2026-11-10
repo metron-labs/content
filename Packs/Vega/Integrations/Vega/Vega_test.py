@@ -133,6 +133,9 @@ from Vega import (
     RECONCILE_COMPLETED_ALERTS_KEY,
     RECONCILE_NOT_FOUND_ALERTS_KEY,
     RECONCILE_NOT_FOUND_INCIDENTS_KEY,
+    ID_FETCH_SUCCESSFUL_KEY,
+    ID_FETCH_SKIPPED_KEY,
+    ID_FETCH_FAILED_KEY,
     _parse_comma_separated_ids,
     _parse_reconcile_window,
     _collect_paged_ids,
@@ -5935,12 +5938,21 @@ def _patch_reconciliation_runtime(mocker):
     mocker.patch("Vega.demisto.params", return_value={})
     mocker.patch("Vega.demisto.integrationInstance", return_value="reconcile")
     mocker.patch("Vega.demisto.info")
+    mocker.patch("Vega.demisto.getIntegrationContext", return_value={})
+    mocker.patch("Vega.demisto.setIntegrationContext")
     mocker.patch("Vega._fetch_incident_timeline_events", return_value=[])
     mocker.patch("Vega._fetch_alert_events_for_ids", return_value={})
 
 
+def _reconciliation_context(set_context) -> dict:
+    assert set_context.call_args_list
+    return set_context.call_args_list[-1].args[0]
+
+
 def test_fetch_reconciliation_uses_static_from_and_max_fetch(mocker):
     _patch_reconciliation_runtime(mocker)
+    set_context = mocker.patch("Vega.demisto.setIntegrationContext")
+    info = mocker.patch("Vega.demisto.info")
     client = mocker.Mock()
     client.get_incidents.return_value = {
         "incidents": [{"id": "i-1", "name": "One", "createdAt": "2024-06-01T00:00:00Z", "severity": "LOW"}],
@@ -5965,13 +5977,30 @@ def test_fetch_reconciliation_uses_static_from_and_max_fetch(mocker):
     client.get_alerts.assert_not_called()
     assert "severities" not in client.get_incidents.call_args.kwargs
     assert next_run["alerts_last_fetch"] == "keep-me"
-    assert next_run[RECONCILE_COMPLETED_INCIDENTS_KEY] == ["i-1"]
+    assert next_run[ID_FETCH_SUCCESSFUL_KEY] == 1
+    assert next_run[ID_FETCH_SKIPPED_KEY] == 0
+    assert next_run[ID_FETCH_FAILED_KEY] == 0
+    assert RECONCILE_COMPLETED_INCIDENTS_KEY not in next_run
+    assert _reconciliation_context(set_context)[RECONCILE_COMPLETED_INCIDENTS_KEY] == ["i-1"]
     assert len(incidents) == 1
     assert incidents[0]["dbotMirrorId"] == "incident:i-1"
+    assert "successful: 1 (i-1)" in [call.args[0] for call in info.call_args_list]
 
 
 def test_fetch_reconciliation_marks_missing_ids_and_does_not_retry(mocker):
     _patch_reconciliation_runtime(mocker)
+    context: dict = {}
+
+    def get_context():
+        return dict(context)
+
+    def set_context(value):
+        context.clear()
+        context.update(value)
+
+    mocker.patch("Vega.demisto.getIntegrationContext", side_effect=get_context)
+    mocker.patch("Vega.demisto.setIntegrationContext", side_effect=set_context)
+    info = mocker.patch("Vega.demisto.info")
     client = mocker.Mock()
     client.get_incidents.return_value = {
         "incidents": [{"id": "i-1", "name": "One", "createdAt": "2024-06-01T00:00:00Z", "severity": "LOW"}],
@@ -5987,10 +6016,17 @@ def test_fetch_reconciliation_marks_missing_ids_and_does_not_retry(mocker):
         max_fetch=50,
         integration_url="https://vega.example",
     )
-    assert next_run[RECONCILE_NOT_FOUND_ALERTS_KEY] == ["a-missing"]
-    assert next_run[RECONCILE_COMPLETED_ALERTS_KEY] == []
+    assert context[RECONCILE_NOT_FOUND_ALERTS_KEY] == ["a-missing"]
+    assert context[RECONCILE_COMPLETED_ALERTS_KEY] == []
+    assert context[RECONCILE_COMPLETED_INCIDENTS_KEY] == ["i-1"]
+    assert next_run[ID_FETCH_SUCCESSFUL_KEY] == 1
+    assert next_run[ID_FETCH_FAILED_KEY] == 1
+    assert next_run[ID_FETCH_SKIPPED_KEY] == 0
+    assert "successful: 1 (i-1)" in [call.args[0] for call in info.call_args_list]
+    assert "failed: 1 (a-missing)" in [call.args[0] for call in info.call_args_list]
     assert len(created) == 1
 
+    info.reset_mock()
     next_run, created_again = fetch_reconciliation_incidents_command(
         client,
         last_run=next_run,
@@ -6003,11 +6039,19 @@ def test_fetch_reconciliation_marks_missing_ids_and_does_not_retry(mocker):
     assert created_again == []
     assert client.get_alerts.call_count == 1
     assert client.get_incidents.call_count == 1
+    assert next_run[ID_FETCH_SUCCESSFUL_KEY] == 0
+    assert next_run[ID_FETCH_SKIPPED_KEY] == 0
+    assert next_run[ID_FETCH_FAILED_KEY] == 0
+    assert "successful: 0" in [call.args[0] for call in info.call_args_list]
+    assert "skipped: 0" in [call.args[0] for call in info.call_args_list]
+    assert "failed: 0" in [call.args[0] for call in info.call_args_list]
 
 
 def test_fetch_reconciliation_leaves_ids_pending_on_transient_error(mocker):
     _patch_reconciliation_runtime(mocker)
+    set_context = mocker.patch("Vega.demisto.setIntegrationContext")
     mocker.patch("Vega.demisto.error")
+    info = mocker.patch("Vega.demisto.info")
     client = mocker.Mock()
     client.get_alerts.side_effect = DemistoException("connection timeout error")
 
@@ -6020,8 +6064,12 @@ def test_fetch_reconciliation_leaves_ids_pending_on_transient_error(mocker):
     )
 
     assert created == []
-    assert next_run[RECONCILE_NOT_FOUND_ALERTS_KEY] == []
-    assert next_run[RECONCILE_COMPLETED_ALERTS_KEY] == []
+    assert _reconciliation_context(set_context)[RECONCILE_NOT_FOUND_ALERTS_KEY] == []
+    assert _reconciliation_context(set_context)[RECONCILE_COMPLETED_ALERTS_KEY] == []
+    assert next_run[ID_FETCH_SUCCESSFUL_KEY] == 0
+    assert next_run[ID_FETCH_SKIPPED_KEY] == 0
+    assert next_run[ID_FETCH_FAILED_KEY] == 1
+    assert "failed: 1 (a-1)" in [call.args[0] for call in info.call_args_list]
 
 
 def _invalid_uuid_exception(detail: str) -> DemistoException:
@@ -6040,6 +6088,17 @@ def _invalid_uuid_exception(detail: str) -> DemistoException:
 def test_fetch_reconciliation_skips_invalid_uuid_and_fetches_the_rest(mocker):
     """One invalid UUID is logged and skipped. Valid IDs in the same list are still fetched."""
     _patch_reconciliation_runtime(mocker)
+    context: dict = {}
+
+    def get_context():
+        return dict(context)
+
+    def set_context(value):
+        context.clear()
+        context.update(value)
+
+    mocker.patch("Vega.demisto.getIntegrationContext", side_effect=get_context)
+    mocker.patch("Vega.demisto.setIntegrationContext", side_effect=set_context)
     info = mocker.patch("Vega.demisto.info")
     error = mocker.patch("Vega.demisto.error")
     good_id = "019e1b27-6d49-7ea1-a9d2-f30bf8c69165"
@@ -6068,19 +6127,26 @@ def test_fetch_reconciliation_skips_invalid_uuid_and_fetches_the_rest(mocker):
     )
 
     assert [incident["dbotMirrorId"] for incident in created] == [f"incident:{good_id}"]
-    assert next_run[RECONCILE_COMPLETED_INCIDENTS_KEY] == [good_id]
-    assert next_run[RECONCILE_NOT_FOUND_INCIDENTS_KEY] == [bad_incident_id]
-    assert next_run[RECONCILE_NOT_FOUND_ALERTS_KEY] == [bad_alert_id]
+    assert context[RECONCILE_COMPLETED_INCIDENTS_KEY] == [good_id]
+    assert context[RECONCILE_NOT_FOUND_INCIDENTS_KEY] == [bad_incident_id]
+    assert context[RECONCILE_NOT_FOUND_ALERTS_KEY] == [bad_alert_id]
+    assert next_run[ID_FETCH_SUCCESSFUL_KEY] == 1
+    assert next_run[ID_FETCH_SKIPPED_KEY] == 2
+    assert next_run[ID_FETCH_FAILED_KEY] == 0
+    assert RECONCILE_COMPLETED_INCIDENTS_KEY not in next_run
     error_lines = [call.args[0] for call in error.call_args_list]
     assert f"Skipped incident ID '{bad_incident_id}' because it is not a valid UUID." in error_lines[0]
     assert f"Skipped alert ID '{bad_alert_id}' because it is not a valid UUID." in error_lines[1]
     assert all("GraphQL" not in line and "trace_id" not in line for line in error_lines)
-    assert "Fetched 1 Vega incident." in [call.args[0] for call in info.call_args_list]
+    info_lines = [call.args[0] for call in info.call_args_list]
+    assert f"successful: 1 ({good_id})" in info_lines
+    assert f"skipped: 2 ({bad_incident_id},{bad_alert_id})" in info_lines
+    assert "failed: 0" in info_lines
 
     info.reset_mock()
     client.get_incidents.reset_mock()
     client.get_alerts.reset_mock()
-    _, created_again = fetch_reconciliation_incidents_command(
+    next_run, created_again = fetch_reconciliation_incidents_command(
         client,
         last_run=next_run,
         alert_ids=[bad_alert_id],
@@ -6092,14 +6158,18 @@ def test_fetch_reconciliation_skips_invalid_uuid_and_fetches_the_rest(mocker):
     assert created_again == []
     client.get_incidents.assert_not_called()
     client.get_alerts.assert_not_called()
-    assert "No Vega incidents or alerts were fetched." in [call.args[0] for call in info.call_args_list]
+    assert next_run[ID_FETCH_SUCCESSFUL_KEY] == 0
+    assert next_run[ID_FETCH_SKIPPED_KEY] == 0
+    assert next_run[ID_FETCH_FAILED_KEY] == 0
+    assert "successful: 0" in [call.args[0] for call in info.call_args_list]
 
 
 def test_fetch_reconciliation_skips_uuid_error_that_uses_single_quotes(mocker):
     _patch_reconciliation_runtime(mocker)
+    set_context = mocker.patch("Vega.demisto.setIntegrationContext")
     mocker.patch("Vega.demisto.error")
-    bad_id = "019e1b27-6d49-7ea1-a9d2-f30bf8c69165rtrtrfiyf t"
     client = mocker.Mock()
+    bad_id = "019e1b27-6d49-7ea1-a9d2-f30bf8c69165rtrtrfiyf t"
     client.get_incidents.side_effect = _invalid_uuid_exception(f"incidents entry '{bad_id}' is not valid UUID")
 
     next_run, created = fetch_reconciliation_incidents_command(
@@ -6111,7 +6181,10 @@ def test_fetch_reconciliation_skips_uuid_error_that_uses_single_quotes(mocker):
     )
 
     assert created == []
-    assert next_run[RECONCILE_NOT_FOUND_INCIDENTS_KEY] == [bad_id]
+    assert _reconciliation_context(set_context)[RECONCILE_NOT_FOUND_INCIDENTS_KEY] == [bad_id]
+    assert next_run[ID_FETCH_SKIPPED_KEY] == 1
+    assert next_run[ID_FETCH_FAILED_KEY] == 0
+    assert next_run[ID_FETCH_SUCCESSFUL_KEY] == 0
 
 
 def test_fetch_reconciliation_still_fails_on_other_graphql_errors(mocker):
@@ -6127,3 +6200,33 @@ def test_fetch_reconciliation_still_fails_on_other_graphql_errors(mocker):
             incident_ids=[],
             max_fetch=50,
         )
+
+
+def test_fetch_reconciliation_migrates_progress_from_last_run(mocker):
+    _patch_reconciliation_runtime(mocker)
+    set_context = mocker.patch("Vega.demisto.setIntegrationContext")
+    mocker.patch("Vega.demisto.info")
+    client = mocker.Mock()
+
+    next_run, created = fetch_reconciliation_incidents_command(
+        client,
+        last_run={
+            RECONCILE_COMPLETED_INCIDENTS_KEY: ["i-1"],
+            RECONCILE_NOT_FOUND_ALERTS_KEY: ["a-missing"],
+        },
+        alert_ids=["a-missing"],
+        incident_ids=["i-1"],
+        max_fetch=50,
+        integration_url="https://vega.example",
+    )
+
+    assert created == []
+    client.get_incidents.assert_not_called()
+    client.get_alerts.assert_not_called()
+    assert RECONCILE_COMPLETED_INCIDENTS_KEY not in next_run
+    assert RECONCILE_NOT_FOUND_ALERTS_KEY not in next_run
+    assert _reconciliation_context(set_context)[RECONCILE_COMPLETED_INCIDENTS_KEY] == ["i-1"]
+    assert _reconciliation_context(set_context)[RECONCILE_NOT_FOUND_ALERTS_KEY] == ["a-missing"]
+    assert next_run[ID_FETCH_SUCCESSFUL_KEY] == 0
+    assert next_run[ID_FETCH_SKIPPED_KEY] == 0
+    assert next_run[ID_FETCH_FAILED_KEY] == 0

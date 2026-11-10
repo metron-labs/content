@@ -174,6 +174,15 @@ RECONCILE_COMPLETED_ALERTS_KEY = "reconciliation_completed_alert_ids"
 RECONCILE_COMPLETED_INCIDENTS_KEY = "reconciliation_completed_incident_ids"
 RECONCILE_NOT_FOUND_ALERTS_KEY = "reconciliation_not_found_alert_ids"
 RECONCILE_NOT_FOUND_INCIDENTS_KEY = "reconciliation_not_found_incident_ids"
+RECONCILE_PROGRESS_KEYS = (
+    RECONCILE_COMPLETED_ALERTS_KEY,
+    RECONCILE_COMPLETED_INCIDENTS_KEY,
+    RECONCILE_NOT_FOUND_ALERTS_KEY,
+    RECONCILE_NOT_FOUND_INCIDENTS_KEY,
+)
+ID_FETCH_SUCCESSFUL_KEY = "successful"
+ID_FETCH_SKIPPED_KEY = "skipped"
+ID_FETCH_FAILED_KEY = "failed"
 _RETRYABLE_HTTP_STATUS_CODES = frozenset({429, 502, 503, 504})
 DEFAULT_ALERT_EVENTS_PAGE_SIZE = 200
 MAX_ALERT_EVENTS_IDS = 10
@@ -6563,12 +6572,35 @@ def reconcile_incidents_command(client: Client, args: dict[str, Any]) -> Command
     )
 
 
-def _stored_id_list(last_run: dict[str, Any], key: str) -> list[str]:
-    """Return a string ID list stored in last run."""
-    value = last_run.get(key) or []
+def _stored_id_list(container: dict[str, Any], key: str) -> list[str]:
+    """Return a string ID list stored in a last-run or integration-context dict."""
+    value = container.get(key) or []
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _load_reconciliation_id_list(last_run: dict[str, Any], key: str) -> list[str]:
+    """Load a reconciliation ID list from integration context, falling back to last_run."""
+    context = demisto.getIntegrationContext() or {}
+    if key in context:
+        return _stored_id_list(context, key)
+    return _stored_id_list(last_run, key)
+
+
+def _persist_reconciliation_progress(
+    completed_incidents: list[str],
+    not_found_incidents: list[str],
+    completed_alerts: list[str],
+    not_found_alerts: list[str],
+) -> None:
+    """Store fetch-by-ID progress in integration context so last_run can show status counts only."""
+    context = demisto.getIntegrationContext() or {}
+    context[RECONCILE_COMPLETED_INCIDENTS_KEY] = completed_incidents
+    context[RECONCILE_NOT_FOUND_INCIDENTS_KEY] = not_found_incidents
+    context[RECONCILE_COMPLETED_ALERTS_KEY] = completed_alerts
+    context[RECONCILE_NOT_FOUND_ALERTS_KEY] = not_found_alerts
+    demisto.setIntegrationContext(context)
 
 
 def _extend_unique_ids(existing: list[str], extra: list[str]) -> list[str]:
@@ -6718,19 +6750,19 @@ def _fetch_ids_skipping_invalid_uuids(
     return [], invalid
 
 
-def _log_id_fetch_result(incident_count: int, alert_count: int) -> None:
-    """Log a short fetch result for the integration connector."""
-    if incident_count == 0 and alert_count == 0:
-        demisto.info("No Vega incidents or alerts were fetched.")
+def _log_id_fetch_status_line(label: str, entity_ids: list[str]) -> None:
+    """Log one fetch-by-ID status bucket, including IDs when present."""
+    if entity_ids:
+        demisto.info(f"{label}: {len(entity_ids)} ({','.join(entity_ids)})")
         return
-    parts: list[str] = []
-    if incident_count:
-        noun = "incident" if incident_count == 1 else "incidents"
-        parts.append(f"{incident_count} Vega {noun}")
-    if alert_count:
-        noun = "alert" if alert_count == 1 else "alerts"
-        parts.append(f"{alert_count} Vega {noun}")
-    demisto.info(f"Fetched {' and '.join(parts)}.")
+    demisto.info(f"{label}: 0")
+
+
+def _log_id_fetch_result(successful: list[str], skipped: list[str], failed: list[str]) -> None:
+    """Log successful/skipped/failed counts with IDs for the last fetch-by-ID cycle."""
+    _log_id_fetch_status_line("successful", successful)
+    _log_id_fetch_status_line("skipped", skipped)
+    _log_id_fetch_status_line("failed", failed)
 
 
 def _partition_reconciliation_ids(requested: list[str], entities: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
@@ -6794,45 +6826,60 @@ def fetch_reconciliation_incidents_command(
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Create investigations for explicit Vega IDs and ignore Collect filters and backfill."""
     next_run = dict(last_run)
-    completed_incidents = _stored_id_list(last_run, RECONCILE_COMPLETED_INCIDENTS_KEY)
-    not_found_incidents = _stored_id_list(last_run, RECONCILE_NOT_FOUND_INCIDENTS_KEY)
-    completed_alerts = _stored_id_list(last_run, RECONCILE_COMPLETED_ALERTS_KEY)
-    not_found_alerts = _stored_id_list(last_run, RECONCILE_NOT_FOUND_ALERTS_KEY)
+    completed_incidents = _load_reconciliation_id_list(last_run, RECONCILE_COMPLETED_INCIDENTS_KEY)
+    not_found_incidents = _load_reconciliation_id_list(last_run, RECONCILE_NOT_FOUND_INCIDENTS_KEY)
+    completed_alerts = _load_reconciliation_id_list(last_run, RECONCILE_COMPLETED_ALERTS_KEY)
+    not_found_alerts = _load_reconciliation_id_list(last_run, RECONCILE_NOT_FOUND_ALERTS_KEY)
     pending_incidents = _pending_reconciliation_ids(incident_ids, completed_incidents, not_found_incidents)
     pending_alerts = _pending_reconciliation_ids(alert_ids, completed_alerts, not_found_alerts)
     incident_batch = pending_incidents[:max_fetch]
     alert_batch = pending_alerts[: max(max_fetch - len(incident_batch), 0)]
     xsoar_incidents: list[dict[str, Any]] = []
-    created_incidents: list[dict[str, Any]] = []
-    created_alerts: list[dict[str, Any]] = []
+    successful_ids: list[str] = []
+    skipped_ids: list[str] = []
+    failed_ids: list[str] = []
 
     if incident_batch:
         incident_records, invalid_incidents = _fetch_ids_skipping_invalid_uuids(client, incident_batch, incidents=True)
+        skipped_ids.extend(invalid_incidents)
         not_found_incidents = _extend_unique_ids(not_found_incidents, invalid_incidents)
-        if incident_records is not None:
-            requested = [entity_id for entity_id in incident_batch if entity_id not in invalid_incidents]
+        invalid_incident_set = set(invalid_incidents)
+        if incident_records is None:
+            failed_ids.extend(entity_id for entity_id in incident_batch if entity_id not in invalid_incident_set)
+        else:
+            requested = [entity_id for entity_id in incident_batch if entity_id not in invalid_incident_set]
             found, missing = _partition_reconciliation_ids(requested, incident_records)
+            successful_ids.extend(found)
+            failed_ids.extend(missing)
             completed_incidents = _extend_unique_ids(completed_incidents, found)
             not_found_incidents = _extend_unique_ids(not_found_incidents, missing)
-            created_incidents = _xsoar_incidents_for_reconciliation_incidents(client, incident_records, include_alert_metadata)
-            xsoar_incidents.extend(created_incidents)
+            xsoar_incidents.extend(
+                _xsoar_incidents_for_reconciliation_incidents(client, incident_records, include_alert_metadata)
+            )
 
     if alert_batch:
         alert_records, invalid_alerts = _fetch_ids_skipping_invalid_uuids(client, alert_batch, incidents=False)
+        skipped_ids.extend(invalid_alerts)
         not_found_alerts = _extend_unique_ids(not_found_alerts, invalid_alerts)
-        if alert_records is not None:
-            requested = [entity_id for entity_id in alert_batch if entity_id not in invalid_alerts]
+        invalid_alert_set = set(invalid_alerts)
+        if alert_records is None:
+            failed_ids.extend(entity_id for entity_id in alert_batch if entity_id not in invalid_alert_set)
+        else:
+            requested = [entity_id for entity_id in alert_batch if entity_id not in invalid_alert_set]
             found, missing = _partition_reconciliation_ids(requested, alert_records)
+            successful_ids.extend(found)
+            failed_ids.extend(missing)
             completed_alerts = _extend_unique_ids(completed_alerts, found)
             not_found_alerts = _extend_unique_ids(not_found_alerts, missing)
-            created_alerts = _xsoar_incidents_for_reconciliation_alerts(client, alert_records, integration_url)
-            xsoar_incidents.extend(created_alerts)
+            xsoar_incidents.extend(_xsoar_incidents_for_reconciliation_alerts(client, alert_records, integration_url))
 
-    next_run[RECONCILE_COMPLETED_INCIDENTS_KEY] = completed_incidents
-    next_run[RECONCILE_NOT_FOUND_INCIDENTS_KEY] = not_found_incidents
-    next_run[RECONCILE_COMPLETED_ALERTS_KEY] = completed_alerts
-    next_run[RECONCILE_NOT_FOUND_ALERTS_KEY] = not_found_alerts
-    _log_id_fetch_result(len(created_incidents), len(created_alerts))
+    _persist_reconciliation_progress(completed_incidents, not_found_incidents, completed_alerts, not_found_alerts)
+    for key in RECONCILE_PROGRESS_KEYS:
+        next_run.pop(key, None)
+    next_run[ID_FETCH_SUCCESSFUL_KEY] = len(successful_ids)
+    next_run[ID_FETCH_SKIPPED_KEY] = len(skipped_ids)
+    next_run[ID_FETCH_FAILED_KEY] = len(failed_ids)
+    _log_id_fetch_result(successful_ids, skipped_ids, failed_ids)
     return next_run, xsoar_incidents
 
 
