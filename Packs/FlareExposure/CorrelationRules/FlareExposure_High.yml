@@ -1,9 +1,10 @@
 alert_category: OTHER
-alert_description: Flare high event $xdm.event.id ($xdm.event.type) matched identifier $xdm.target.resource.name.
+alert_description: Flare high event $xdm.event.id ($xdm.event.type) matched identifier $xdm.target.resource.name. Instance $xdm.observer.name.
 alert_fields:
   actor_effective_username: xdm.target.resource.name
   agent_hostname: xdm.target.domain
   action_local_ip: xdm.target.ipv4
+  agent_id: xdm.observer.name
 alert_name: Flare Exposure - High
 crontab: null
 dataset: alerts
@@ -28,5 +29,5 @@ xql_query: 'datamodel dataset = flare_exposure_events_raw
 
   | filter xdm.alert.severity = "high"
 
-  | fields xdm.event.id, xdm.event.type, xdm.event.description, xdm.target.resource.id, xdm.target.resource.name, xdm.target.user.username, xdm.target.domain, xdm.target.ipv4, xdm.target.url'
+  | fields xdm.event.id, xdm.event.type, xdm.event.description, xdm.target.resource.id, xdm.target.resource.name, xdm.target.user.username, xdm.target.domain, xdm.target.ipv4, xdm.target.url, xdm.observer.name'
 fromversion: 8.15.0

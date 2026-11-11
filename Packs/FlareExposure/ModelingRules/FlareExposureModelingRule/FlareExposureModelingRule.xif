@@ -12,4 +12,5 @@ alter
     xdm.target.url = flare_url,
     xdm.target.resource.id = grouping_id,
     xdm.target.resource.name = grouping_name,
-    xdm.target.resource.type = "Flare Identifier";
+    xdm.target.resource.type = "Flare Identifier",
+    xdm.observer.name = flare_instance_tag;

@@ -2,7 +2,7 @@
     "name": "Flare Exposure",
     "description": "Collects Flare threat exposure events into Cortex XSIAM, normalizes them to XDM, and opens one alert per event.",
     "support": "partner",
-    "currentVersion": "1.0.1",
+    "currentVersion": "1.0.4",
     "author": "Flare",
     "url": "https://flare.io",
     "email": "",

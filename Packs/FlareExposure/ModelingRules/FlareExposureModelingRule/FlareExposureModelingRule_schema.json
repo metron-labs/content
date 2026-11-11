@@ -8,6 +8,10 @@
             "type": "string",
             "is_array": false
         },
+        "flare_instance_tag": {
+            "type": "string",
+            "is_array": false
+        },
         "matched_at": {
             "type": "string",
             "is_array": false

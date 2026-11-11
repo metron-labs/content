@@ -14,14 +14,15 @@ The dataset, vendor, and product names are `flare_exposure_events_raw`, `flare`,
     | Server URL | Flare API base URL. Default is https://api.flare.io. | False |
     | API Key | Flare API key from the profile page. | True |
     | Flare tenants | Comma-separated numeric tenant IDs. Empty uses the key's default tenant. | False |
+    | Instance tag | Text stored on every event. Filter events, issues, and cases by this value. | False |
     | Flare severity | Severities to ingest. Empty ingests all. | False |
-    | Flare category | Feed categories to ingest. Empty ingests all. | False |
+    | Flare category | Illicit Networks, Open Web, Intelligence Objects, Leaked Credentials, Look-alike Domains, and Emerging Source. Empty ingests all. | False |
     | Initial backfill | First-fetch window. Default is 30 days. Maximum is 180 days. | False |
     | Maximum number of events per fetch | Events stored in one cycle. Default is 50. Maximum is 500. | False |
-    | Fetch full event | Store the event data block. Off stores the feed record only. | False |
-    | Fetch alerts | Read saved Flare alerts, then fetch tenant events with each alert's categories, severities, and the backfill. | False |
-    | Fetch events | Enables scheduled collection. | False |
     | Events Fetch Interval | Minutes between fetches. Default is 10. | False |
+    | Fetch full event | Store the event data block. Off stores the feed record only. | False |
+    | Fetch Via Events | Read the tenant feed. Selected by default. | False |
+    | Fetch Via Alerts | Read saved Flare alerts, then fetch tenant events with each alert's categories and severities. Continues from the last stored event. | False |
     | Trust any certificate (not secure) | Skip certificate verification. | False |
     | Use system proxy settings | Use the XSIAM system proxy. | False |
 
@@ -31,7 +32,7 @@ The dataset, vendor, and product names are `flare_exposure_events_raw`, `flare`,
 
 Each fetch exchanges the API key for a token at `POST /tokens/generate`, then reads `POST /firework/v4/events/tenant/_search`. When **Fetch full event** is enabled, each result is also read from `GET /firework/v4/events/?uid=` and the `data` block is stored on the event. Passwords are removed before the event is stored.
 
-When **Fetch alerts** is enabled, the collector lists `GET /firework/v4/alerts/` and then calls `POST /firework/v4/events/tenant/_search` once per alert. `search_types` is sent as `type`, and `risks` is sent as `severity` (`1` info, `2` low, `3` medium, `4` high, `5` critical). The only extra filter is the initial backfill. The instance severity and category settings are not sent. Each stored event includes `flare_alert_id` and `flare_alert_name`. Parsing, modeling, and the correlation rules are unchanged.
+When **Fetch Via Alerts** is enabled, the collector lists `GET /firework/v4/alerts/` and then calls `POST /firework/v4/events/tenant/_search` once per alert. `search_types` is sent as `type`, and `risks` is sent as `severity` (`1` info, `2` low, `3` medium, `4` high, `5` critical). The instance severity and category settings are not sent. Each stored event includes `flare_alert_id` and `flare_alert_name`. A later switch to **Fetch Via Alerts** continues from the last stored event instead of repeating the backfill. Parsing, modeling, and the correlation rules are unchanged apart from the instance tag.
 
 The cursor is the Flare `next` token, saved per tenant after a successful push. The same `matched_at` filter is reused on later fetches, which is what the Flare paging contract requires. Changing severity or category starts that tenant from the current time instead of replaying the backfill.
 

@@ -19,12 +19,31 @@ configuration:
   required: true
   section: Connect
   additionalinfo: Flare API key from the Flare profile page. The collector sends this key to POST /tokens/generate and uses the returned token for the feed.
+- display: Fetch Via Events
+  name: isFetchEvents
+  type: 8
+  defaultvalue: 'true'
+  required: false
+  section: Collect
+  additionalinfo: Read the tenant feed with the instance severity, category, and backfill. Selected by default.
+- display: Fetch Via Alerts
+  name: fetch_alerts
+  type: 8
+  required: false
+  section: Collect
+  additionalinfo: Read each saved Flare alert and fetch tenant events with that alert's categories and severities. The instance severity and category are not sent. Disabled alerts are skipped. A later switch continues from the last stored event instead of repeating the backfill.
 - display: Flare tenants
   name: tenants
   type: 0
   required: false
   section: Collect
   additionalinfo: Comma-separated numeric tenant IDs from the Flare profile page. Leave empty to use the API key's default tenant.
+- display: Instance tag
+  name: instance_tag
+  type: 0
+  required: false
+  section: Collect
+  additionalinfo: Text written onto every event as flare_instance_tag. Filter events, issues, and cases with this value to see which instance collected them.
 - display: Flare severity
   name: severity
   type: 16
@@ -42,37 +61,14 @@ configuration:
   type: 16
   required: false
   section: Collect
-  additionalinfo: Flare feed categories to ingest. Leave empty to ingest every category.
+  additionalinfo: Flare event categories to ingest. Leave empty to ingest every category. Leaked Credentials and Look-alike Domains expand to the event types inside those groups.
   options:
-  - illicit_networks
-  - open_web
-  - leak
-  - valid_credential
-  - invalid_credential
-  - mitigated_credential
-  - domain
-  - lookalike_discovery
-  - lookalike_title
-  - lookalike_ip_address
-  - lookalike_favicon
-  - lookalike_screenshot
-  - lookalike_dns
-  - lookalike_whois_rdap
-  - lookalike_ssl_certificate
-  - listing
-  - forum_content
-  - blog_content
-  - profile
-  - chat_message
-  - ransomleak
-  - infected_devices
-  - financial_data
-  - paste
-  - social_media
-  - source_code
-  - google
-  - service
-  - buckets
+  - Illicit Networks
+  - Open Web
+  - Intelligence Objects
+  - Leaked Credentials
+  - Look-alike Domains
+  - Emerging Source
 - display: Initial backfill
   name: first_fetch
   type: 0
@@ -87,30 +83,19 @@ configuration:
   required: false
   section: Collect
   additionalinfo: Upper bound for one fetch cycle across all selected tenants. Maximum is 500. The Flare feed returns 10 events per page.
+- display: Events Fetch Interval
+  name: eventFetchInterval
+  type: 19
+  defaultvalue: '10'
+  required: false
+  section: Collect
+  additionalinfo: Minutes between fetches.
 - display: Fetch full event
   name: fetch_full_event
   type: 8
   required: false
   section: Collect
   additionalinfo: When enabled, each feed event is enriched with GET /firework/v4/events/ and the data block is stored with the event. Leave this off to store the tenant feed record only.
-- display: Fetch alerts
-  name: fetch_alerts
-  type: 8
-  required: false
-  section: Collect
-  additionalinfo: Fetch events with the categories and severities saved on each Flare alert. The instance severity and category are not sent. Only the initial backfill is applied. Disabled alerts are skipped.
-- display: Fetch events
-  name: isFetchEvents
-  type: 8
-  required: false
-  section: Collect
-- display: Events Fetch Interval
-  name: eventFetchInterval
-  type: 19
-  defaultvalue: '10'
-  required: false
-  advanced: true
-  section: Collect
 - display: Trust any certificate (not secure)
   name: insecure
   type: 8

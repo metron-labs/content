@@ -6,6 +6,8 @@ from FlareExposureEventCollector import (
     alert_search_filters,
     backfill_start,
     build_event,
+    category_types,
+    fetch_events,
     fetch_saved_alerts,
     fetch_tenant_events,
     strip_secrets,
@@ -138,6 +140,11 @@ def test_fetch_stops_inside_a_page_and_replays_the_remainder():
     assert second_events[0]["source_url"] == "https://example.invalid/item"
 
 
+def test_build_event_keeps_the_instance_tag():
+    event = build_event("17", FEED_ITEM, instance_tag="lab-a")
+    assert event["flare_instance_tag"] == "lab-a"
+
+
 def test_fetch_skips_full_event_unless_enabled():
     page = {
         "items": [{"metadata": {"uid": "event-1", "severity": "low", "matched_at": "2026-01-01T00:00:00Z"}}],
@@ -150,6 +157,39 @@ def test_fetch_skips_full_event_unless_enabled():
     assert client.activity_uids == []
 
 
+def test_fetch_skips_an_event_id_already_stored():
+    page = {
+        "items": [{"metadata": {"uid": "event-1", "severity": "low", "matched_at": "2026-01-01T00:00:00Z"}}],
+        "next": None,
+    }
+    client = FakeClient([page])
+    events, state = fetch_tenant_events(
+        client,
+        "17",
+        {},
+        "7 days",
+        [],
+        [],
+        5,
+        watermark="2026-01-01T00:00:00Z",
+        seen_uids={"event-1"},
+    )
+    assert events == []
+    assert state["matched_at_gte"] == "2026-01-01T00:00:00Z"
+
+
+def test_fetch_events_records_the_checkpoint_and_instance_tag():
+    page = {
+        "items": [{"metadata": {"uid": "event-9", "severity": "low", "matched_at": "2026-11-08T00:00:00Z"}}],
+        "next": None,
+    }
+    client = FakeClient([page])
+    state, events = fetch_events(client, {}, {"tenants": "17", "first_fetch": "7 days", "instance_tag": "lab-a"}, 5)
+    assert events[0]["flare_instance_tag"] == "lab-a"
+    assert state["last_matched_at"] == "2026-11-08T00:00:00Z"
+    assert state["seen_uids"] == ["event-9"]
+
+
 SAVED_ALERT = {
     "id": 436059,
     "name": "test ",
@@ -157,6 +197,19 @@ SAVED_ALERT = {
     "search_types": ["service", "leak"],
     "risks": [5],
 }
+
+
+def test_category_labels_expand_to_search_types():
+    assert category_types(["Illicit Networks", "Open Web"]) == ["illicit_networks", "open_web"]
+    assert category_types(["Leaked Credentials"]) == [
+        "leak",
+        "valid_credential",
+        "invalid_credential",
+        "mitigated_credential",
+    ]
+    assert category_types(["Look-alike Domains"])[0] == "lookalike_discovery"
+    assert category_types(["Intelligence Objects", "Emerging Source"]) == ["intelligence_object", "experimental"]
+    assert category_types([]) == []
 
 
 def test_alert_search_uses_saved_categories_severities_and_backfill():
@@ -222,3 +275,15 @@ def test_fetch_alerts_skips_a_disabled_alert():
     _state, events = fetch_saved_alerts(client, {}, {"tenants": "747671", "first_fetch": "3 days"}, 10)
     assert [call["alert_id"] for call in client.alert_calls] == [436059]
     assert [event["flare_alert_id"] for event in events] == ["436059"]
+
+
+def test_alert_fetch_continues_from_the_last_stored_event():
+    client = AlertClient()
+    _state, events = fetch_saved_alerts(
+        client,
+        {"last_matched_at": "2026-11-10T00:00:00Z", "seen_uids": ["alert-event-1"]},
+        {"tenants": "747671", "first_fetch": "7 days", "instance_tag": "lab-a"},
+        10,
+    )
+    assert client.alert_calls[0]["matched_at_gte"] == "2026-11-10T00:00:00Z"
+    assert events == []

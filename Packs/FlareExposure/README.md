@@ -4,7 +4,7 @@ Collects Flare threat exposure events into Cortex XSIAM.
 
 This first version covers ingestion, XDM normalization, and alert creation:
 
-- The event collector polls the Flare API and writes `flare_exposure_events_raw`. **Fetch alerts** loads each saved Flare alert and fetches tenant events with that alert's categories and severities.
+- The event collector polls the Flare API and writes `flare_exposure_events_raw`. **Fetch Via Alerts** loads each saved Flare alert and fetches tenant events with that alert's categories and severities.
 - The parsing rule sets `_time` from `matched_at`.
 - The modeling rule maps the event onto XDM and sets the Flare identifier as the case grouping key.
 - Real-time correlation rules open one alert per event, one rule per Flare severity.

@@ -21,7 +21,26 @@ DEFAULT_TENANT = "default"
 SECRET_KEYS = {"password", "passwords"}
 RETRY_STATUSES = [429, 500, 502, 503, 504]
 ALERT_LIST_PAGES = 20
+SEEN_UID_LIMIT = 2000
 RISK_SEVERITY = {1: "info", 2: "low", 3: "medium", 4: "high", 5: "critical"}
+# Flare Events page groups. Each selection expands to the type values tenant search accepts.
+CATEGORY_TYPES = {
+    "Illicit Networks": ["illicit_networks"],
+    "Open Web": ["open_web"],
+    "Intelligence Objects": ["intelligence_object"],
+    "Leaked Credentials": ["leak", "valid_credential", "invalid_credential", "mitigated_credential"],
+    "Look-alike Domains": [
+        "lookalike_discovery",
+        "lookalike_title",
+        "lookalike_ip_address",
+        "lookalike_favicon",
+        "lookalike_screenshot",
+        "lookalike_dns",
+        "lookalike_whois_rdap",
+        "lookalike_ssl_certificate",
+    ],
+    "Emerging Source": ["experimental"],
+}
 
 
 class Client(BaseClient):
@@ -185,6 +204,39 @@ def parse_choices(value: Any) -> list[str]:
     return [str(item).strip() for item in argToList(value) if str(item).strip()]
 
 
+def category_types(selected: list[str]) -> list[str]:
+    """Turn Flare category labels into the type values sent to tenant search."""
+    types: list[str] = []
+    for name in selected:
+        for value in CATEGORY_TYPES.get(name, [name]):
+            if value not in types:
+                types.append(value)
+    return types
+
+
+def remember_uids(seen: list[str], new_uids: list[str]) -> list[str]:
+    """Keep a bounded cache of event IDs already stored. XSIAM cannot be queried for duplicates."""
+    merged = [uid for uid in seen if uid]
+    known = set(merged)
+    for uid in new_uids:
+        if uid and uid not in known:
+            merged.append(uid)
+            known.add(uid)
+    if len(merged) > SEEN_UID_LIMIT:
+        return merged[-SEEN_UID_LIMIT:]
+    return merged
+
+
+def latest_matched_at(current: str, events: list[dict[str, Any]]) -> str:
+    """Return the newest matched_at among the stored checkpoint and this cycle."""
+    latest = current
+    for event in events:
+        matched_at = str(event.get("matched_at") or "")
+        if matched_at > latest:
+            latest = matched_at
+    return latest
+
+
 def filter_fingerprint(severities: list[str], event_types: list[str]) -> str:
     return json.dumps({"severity": sorted(severities), "type": sorted(event_types)})
 
@@ -262,6 +314,7 @@ def build_event(
     feed_item: dict[str, Any],
     full_event: dict[str, Any] | None = None,
     alert: dict[str, Any] | None = None,
+    instance_tag: str = "",
 ) -> dict[str, Any]:
     """Flatten one feed record. The full-event data block is attached only when it was fetched."""
     metadata = feed_item.get("metadata") if isinstance(feed_item.get("metadata"), dict) else {}
@@ -312,6 +365,7 @@ def build_event(
         "grouping_name": grouping_name,
         "flare_alert_id": "" if not alert else str(alert.get("id") or ""),
         "flare_alert_name": "" if not alert else str(alert.get("name") or "").strip(),
+        "flare_instance_tag": instance_tag,
         "identifier_ids": identifier_ids,
         "identifier_names": identifier_names,
         "emails": emails,
@@ -345,8 +399,9 @@ def resume_cursor(
     saved_state: dict[str, Any],
     backfill: str,
     fingerprint: str,
+    watermark: str = "",
 ) -> tuple[str | None, set[str], str]:
-    """Keep the saved page unless the filters changed. A filter change resumes from now."""
+    """Keep the saved page unless the filters changed. A new stream continues from the last stored event."""
     cursor = saved_state.get("from")
     handled = set(saved_state.get("page_uids") or [])
     matched_at_gte = str(saved_state.get("matched_at_gte") or "")
@@ -355,7 +410,7 @@ def resume_cursor(
         demisto.debug(f"Flare filters changed for {tenant_key}. Resuming from now.")
         return None, set(), datetime.now(timezone.utc).strftime(DATE_FORMAT)
     if not matched_at_gte:
-        matched_at_gte = backfill_start(backfill)
+        matched_at_gte = watermark or backfill_start(backfill)
     return cursor if isinstance(cursor, str) else None, handled, matched_at_gte
 
 
@@ -369,9 +424,13 @@ def collect_events(
     fetch_full_event: bool,
     search_page: Any,
     alert: dict[str, Any] | None = None,
+    instance_tag: str = "",
+    watermark: str = "",
+    seen_uids: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Pull one feed until the cycle limit, the feed is caught up, or the page cap is reached."""
-    cursor, handled, matched_at_gte = resume_cursor(tenant_key, saved_state, backfill, fingerprint)
+    already_seen = seen_uids or set()
+    cursor, handled, matched_at_gte = resume_cursor(tenant_key, saved_state, backfill, fingerprint, watermark)
     collected: list[dict[str, Any]] = []
     pages = 0
     while len(collected) < max_events and pages < MAX_PAGES:
@@ -380,15 +439,20 @@ def collect_events(
         page = search_page(request_cursor, matched_at_gte)
         items = page.get("items") if isinstance(page.get("items"), list) else []
         response_next = page.get("next") if isinstance(page.get("next"), str) else None
-        fresh = [item for item in items if isinstance(item, dict) and feed_uid(item) and feed_uid(item) not in handled]
+        fresh = []
+        for item in items:
+            uid = feed_uid(item) if isinstance(item, dict) else ""
+            if uid and uid not in handled and uid not in already_seen:
+                fresh.append(item)
         room = max_events - len(collected)
         chosen = fresh[:room]
         for item in chosen:
             uid = feed_uid(item)
             full_event = client.get_event(tenant_key, uid) if uid and fetch_full_event else {}
-            collected.append(build_event(tenant_key, item, full_event, alert))
+            collected.append(build_event(tenant_key, item, full_event, alert, instance_tag))
             if uid:
                 handled.add(uid)
+                already_seen.add(uid)
         truncated = len(chosen) < len(fresh)
         moved = advance_cursor(request_cursor, response_next, list(handled), truncated)
         cursor = moved["from"]
@@ -413,6 +477,9 @@ def fetch_tenant_events(
     event_types: list[str],
     max_events: int,
     fetch_full_event: bool = False,
+    instance_tag: str = "",
+    watermark: str = "",
+    seen_uids: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Pull one tenant feed until the cycle limit, the feed is caught up, or the page cap is reached."""
 
@@ -428,6 +495,9 @@ def fetch_tenant_events(
         max_events,
         fetch_full_event,
         search_page,
+        instance_tag=instance_tag,
+        watermark=watermark,
+        seen_uids=seen_uids,
     )
 
 
@@ -464,6 +534,9 @@ def fetch_one_alert(
     backfill: str,
     max_events: int,
     fetch_full_event: bool,
+    instance_tag: str = "",
+    watermark: str = "",
+    seen_uids: set[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     def search_page(from_cursor: str | None, matched_at_gte: str) -> dict[str, Any]:
         return client.search_alert_events(tenant_key, alert, from_cursor, matched_at_gte)
@@ -478,6 +551,9 @@ def fetch_one_alert(
         fetch_full_event,
         search_page,
         alert,
+        instance_tag,
+        watermark,
+        seen_uids,
     )
 
 
@@ -490,6 +566,9 @@ def fetch_saved_alerts(
     """Fetch each saved Flare alert. Instance severity and category are not applied."""
     fetch_full_event = argToBoolean(params.get("fetch_full_event") or False)
     backfill = str(params.get("first_fetch") or DEFAULT_BACKFILL)
+    instance_tag = str(params.get("instance_tag") or "").strip()
+    watermark = str(last_run.get("last_matched_at") or "")
+    seen_uids = set(last_run.get("seen_uids") or [])
     stored = last_run.get("alerts") if isinstance(last_run.get("alerts"), dict) else {}
     events: list[dict[str, Any]] = []
     next_alerts: dict[str, Any] = {}
@@ -509,6 +588,9 @@ def fetch_saved_alerts(
                 backfill,
                 max_events - len(events),
                 fetch_full_event,
+                instance_tag,
+                watermark,
+                seen_uids,
             )
             events.extend(alert_events)
             next_alerts[state_key] = alert_state
@@ -523,12 +605,16 @@ def fetch_events(
     max_events: int,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if argToBoolean(params.get("fetch_alerts") or False):
-        return fetch_saved_alerts(client, last_run, params, max_events)
+        next_run, events = fetch_saved_alerts(client, last_run, params, max_events)
+        return stamp_checkpoint(last_run, next_run, events), events
     tenants = parse_tenants(params.get("tenants"))
     severities = parse_choices(params.get("severity"))
-    event_types = parse_choices(params.get("event_types"))
+    event_types = category_types(parse_choices(params.get("event_types")))
     fetch_full_event = argToBoolean(params.get("fetch_full_event") or False)
     backfill = str(params.get("first_fetch") or DEFAULT_BACKFILL)
+    instance_tag = str(params.get("instance_tag") or "").strip()
+    watermark = str(last_run.get("last_matched_at") or "")
+    seen_uids = set(last_run.get("seen_uids") or [])
     stored = last_run.get("tenants") if isinstance(last_run.get("tenants"), dict) else {}
     events: list[dict[str, Any]] = []
     next_tenants: dict[str, Any] = {}
@@ -545,11 +631,26 @@ def fetch_events(
             event_types,
             max_events - len(events),
             fetch_full_event,
+            instance_tag,
+            watermark,
+            seen_uids,
         )
         events.extend(tenant_events)
         next_tenants[tenant_key] = tenant_state
     alerts = last_run.get("alerts") if isinstance(last_run.get("alerts"), dict) else {}
-    return {"tenants": next_tenants, "alerts": alerts}, events
+    return stamp_checkpoint(last_run, {"tenants": next_tenants, "alerts": alerts}, events), events
+
+
+def stamp_checkpoint(
+    last_run: dict[str, Any],
+    next_run: dict[str, Any],
+    events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Save the newest matched time and the event IDs already stored."""
+    stored = [str(event.get("flare_event_id") or "") for event in events]
+    next_run["seen_uids"] = remember_uids(list(last_run.get("seen_uids") or []), stored)
+    next_run["last_matched_at"] = latest_matched_at(str(last_run.get("last_matched_at") or ""), events)
+    return next_run
 
 
 def test_module(client: Client, params: dict[str, Any]) -> str:
@@ -565,7 +666,7 @@ def test_module(client: Client, params: dict[str, Any]) -> str:
         None,
         backfill,
         parse_choices(params.get("severity")),
-        parse_choices(params.get("event_types")),
+        category_types(parse_choices(params.get("event_types"))),
     )
     return "ok"
 
@@ -581,7 +682,15 @@ def get_events_command(
     readable = tableToMarkdown(
         "Flare exposure events",
         events,
-        headers=["flare_event_id", "flare_tenant_id", "event_type", "severity", "grouping_name", "matched_at"],
+        headers=[
+            "flare_event_id",
+            "flare_tenant_id",
+            "flare_instance_tag",
+            "event_type",
+            "severity",
+            "grouping_name",
+            "matched_at",
+        ],
         removeNull=True,
     )
     return events, CommandResults(readable_output=readable, raw_response=events)
