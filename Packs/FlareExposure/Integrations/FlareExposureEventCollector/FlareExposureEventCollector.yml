@@ -19,19 +19,26 @@ configuration:
   required: true
   section: Connect
   additionalinfo: Flare API key from the Flare profile page. The collector sends this key to POST /tokens/generate and uses the returned token for the feed.
-- display: Fetch Via Events
+- display: Fetch events
   name: isFetchEvents
   type: 8
   defaultvalue: 'true'
   required: false
   section: Collect
-  additionalinfo: Read the tenant feed with the instance severity, category, and backfill. Selected by default.
+  additionalinfo: Stores Flare events in the dataset. Leave this checked.
 - display: Fetch Via Alerts
   name: fetch_alerts
   type: 8
   required: false
   section: Collect
   additionalinfo: Read each saved Flare alert and fetch tenant events with that alert's categories and severities. The instance severity and category are not sent. Disabled alerts are skipped. A later switch continues from the last stored event instead of repeating the backfill.
+- display: Enable Direct Alert Promotion
+  name: enable_direct_alert_promotion
+  type: 8
+  defaultvalue: 'false'
+  required: false
+  section: Collect
+  additionalinfo: Stores each Flare event in the dataset and opens one XSIAM issue for it directly. Leave Fetch events checked. Use this or the correlation rules, not both.
 - display: Flare tenants
   name: tenants
   type: 0
@@ -115,6 +122,7 @@ script:
   script: '-'
   type: python
   subtype: python3
+  isfetch: false
   isfetchevents: true
   dockerimage: demisto/python3:3.12.13.10116658
   commands:

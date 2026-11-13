@@ -21,8 +21,9 @@ The dataset, vendor, and product names are `flare_exposure_events_raw`, `flare`,
     | Maximum number of events per fetch | Events stored in one cycle. Default is 50. Maximum is 500. | False |
     | Events Fetch Interval | Minutes between fetches. Default is 10. | False |
     | Fetch full event | Store the event data block. Off stores the feed record only. | False |
-    | Fetch Via Events | Read the tenant feed. Selected by default. | False |
-    | Fetch Via Alerts | Read saved Flare alerts, then fetch tenant events with each alert's categories and severities. Continues from the last stored event. | False |
+    | Fetch events | Stores every event in the dataset. Leave this checked. First Collect option. | False |
+    | Fetch Via Alerts | Read saved Flare alerts, then fetch tenant events with each alert's categories and severities. Shown directly under Fetch events. | False |
+    | Enable Direct Alert Promotion | Opens one XSIAM issue per stored event. Leave this off to use the correlation rules. | False |
     | Trust any certificate (not secure) | Skip certificate verification. | False |
     | Use system proxy settings | Use the XSIAM system proxy. | False |
 

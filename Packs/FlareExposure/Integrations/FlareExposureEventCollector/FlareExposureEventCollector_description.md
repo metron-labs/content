@@ -6,4 +6,4 @@ Enable **Fetch Via Alerts** to read each saved Flare alert and then fetch events
 
 Set **Instance tag** to a short name for this instance. The collector stores it on every event as `flare_instance_tag`, and the correlation rules copy it to the issue as the agent id. Filter events with `flare_instance_tag` and issues with `agent_id`.
 
-Use a comma-separated list of numeric tenant IDs. Leave the tenant field empty to use the default tenant of the API key. Leave severity and category empty to ingest every event those tenants match. **Fetch Via Events** is selected by default.
+Use a comma-separated list of numeric tenant IDs. Leave the tenant field empty to use the default tenant of the API key. Leave severity and category empty to ingest every event those tenants match. **Fetch events** stays selected. **Fetch Via Alerts** is the next option. **Enable Direct Alert Promotion** opens one issue per stored event. Leave it off to let the correlation rules open the issues.

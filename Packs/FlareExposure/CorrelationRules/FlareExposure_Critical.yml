@@ -4,8 +4,8 @@ alert_fields:
   actor_effective_username: xdm.target.resource.name
   agent_hostname: xdm.target.domain
   action_local_ip: xdm.target.ipv4
-  agent_id: xdm.observer.name
-alert_name: Flare Exposure - Critical
+  user_agent: xdm.observer.name
+alert_name: Flare Exposure - Critical. Instance $xdm.observer.name
 crontab: null
 dataset: alerts
 description: Opens one alert for each critical Flare event. Alerts that share a Flare identifier use the same actor, so XSIAM can group them into one case.

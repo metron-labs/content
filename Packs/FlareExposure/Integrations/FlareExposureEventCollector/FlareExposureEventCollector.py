@@ -641,6 +641,45 @@ def fetch_events(
     return stamp_checkpoint(last_run, {"tenants": next_tenants, "alerts": alerts}, events), events
 
 
+ISSUE_SEVERITY = {
+    "info": IncidentSeverity.INFO,
+    "low": IncidentSeverity.LOW,
+    "medium": IncidentSeverity.MEDIUM,
+    "high": IncidentSeverity.HIGH,
+    "critical": IncidentSeverity.CRITICAL,
+}
+
+
+def direct_promotion_enabled(params: dict[str, Any]) -> bool:
+    return argToBoolean(params.get("enable_direct_alert_promotion") or False)
+
+
+def events_to_incidents(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Turn each stored Flare event into one XSIAM issue. Correlation rules are not involved."""
+    incidents: list[dict[str, Any]] = []
+    for event in events:
+        severity_name = str(event.get("severity") or "info").lower()
+        instance_tag = str(event.get("flare_instance_tag") or "").strip()
+        event_id = str(event.get("flare_event_id") or "")
+        name = f"Flare Exposure - {severity_name.title()}"
+        if instance_tag:
+            name = f"{name}. Instance {instance_tag}"
+        incidents.append(
+            {
+                "name": name,
+                "occurred": str(event.get("matched_at") or ""),
+                "severity": ISSUE_SEVERITY.get(severity_name, IncidentSeverity.UNKNOWN),
+                "details": (
+                    f"Direct alert promotion. Flare {severity_name} event {event_id} "
+                    f"({event.get('event_type')}) matched identifier {event.get('grouping_name')}. "
+                    f"Instance {instance_tag}."
+                ),
+                "rawJSON": json.dumps(event),
+            }
+        )
+    return incidents
+
+
 def stamp_checkpoint(
     last_run: dict[str, Any],
     next_run: dict[str, Any],
@@ -722,7 +761,10 @@ def main() -> None:
             last_run = demisto.getLastRun() or {}
             limit = event_limit(params.get("max_fetch"), DEFAULT_MAX_EVENTS)
             next_run, events = fetch_events(client, last_run, params, limit)
-            send_events_to_xsiam(events, vendor=VENDOR, product=PRODUCT)
+            if events:
+                send_events_to_xsiam(events, vendor=VENDOR, product=PRODUCT)
+                if direct_promotion_enabled(params):
+                    demisto.createIncidents(events_to_incidents(events))
             demisto.setLastRun(next_run)
         else:
             return_error(f"Command {command} is not implemented.")

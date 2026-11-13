@@ -7,6 +7,7 @@ from FlareExposureEventCollector import (
     backfill_start,
     build_event,
     category_types,
+    events_to_incidents,
     fetch_events,
     fetch_saved_alerts,
     fetch_tenant_events,
@@ -176,6 +177,16 @@ def test_fetch_skips_an_event_id_already_stored():
     )
     assert events == []
     assert state["matched_at_gte"] == "2026-01-01T00:00:00Z"
+
+
+def test_direct_promotion_creates_one_issue_per_event():
+    event = build_event("17", FEED_ITEM, instance_tag="Custom-Index-1")
+    incidents = events_to_incidents([event])
+    assert len(incidents) == 1
+    assert incidents[0]["name"] == "Flare Exposure - High. Instance Custom-Index-1"
+    assert incidents[0]["severity"] == 3
+    assert "Direct alert promotion" in incidents[0]["details"]
+    assert json.loads(incidents[0]["rawJSON"])["flare_event_id"] == event["flare_event_id"]
 
 
 def test_fetch_events_records_the_checkpoint_and_instance_tag():
