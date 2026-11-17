@@ -227,6 +227,25 @@ def remember_uids(seen: list[str], new_uids: list[str]) -> list[str]:
     return merged
 
 
+def load_seen_uids(last_run: dict[str, Any]) -> list[str]:
+    """Union the checkpoint with the IDs kept outside it. A reset clears only the checkpoint."""
+    context = demisto.getIntegrationContext() or {}
+    stored = context.get("seen_uids") if isinstance(context, dict) else []
+    if not isinstance(stored, list):
+        stored = []
+    checkpoint = last_run.get("seen_uids") if isinstance(last_run.get("seen_uids"), list) else []
+    return remember_uids([str(uid) for uid in stored], [str(uid) for uid in checkpoint])
+
+
+def save_seen_uids(seen: list[str]) -> None:
+    """Remember stored event IDs where Reset event fetching does not erase them."""
+    context = demisto.getIntegrationContext() or {}
+    if not isinstance(context, dict):
+        context = {}
+    context["seen_uids"] = seen
+    demisto.setIntegrationContext(context)
+
+
 def latest_matched_at(current: str, events: list[dict[str, Any]]) -> str:
     """Return the newest matched_at among the stored checkpoint and this cycle."""
     latest = current
@@ -603,7 +622,10 @@ def fetch_events(
     last_run: dict[str, Any],
     params: dict[str, Any],
     max_events: int,
+    remember: bool = True,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if remember:
+        last_run = {**last_run, "seen_uids": load_seen_uids(last_run)}
     if argToBoolean(params.get("fetch_alerts") or False):
         next_run, events = fetch_saved_alerts(client, last_run, params, max_events)
         return stamp_checkpoint(last_run, next_run, events), events
@@ -641,22 +663,82 @@ def fetch_events(
     return stamp_checkpoint(last_run, {"tenants": next_tenants, "alerts": alerts}, events), events
 
 
-ISSUE_SEVERITY = {
-    "info": IncidentSeverity.INFO,
-    "low": IncidentSeverity.LOW,
-    "medium": IncidentSeverity.MEDIUM,
-    "high": IncidentSeverity.HIGH,
-    "critical": IncidentSeverity.CRITICAL,
+ALERT_SEVERITY = {
+    "info": "Informational",
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "critical": "Critical",
 }
+ALERT_BATCH = 60
+
+
+class XsiamClient(BaseClient):
+    """Opens one XSIAM alert per Flare event. This is separate from the Flare API client."""
+
+    def __init__(self, base_url: str, api_key: str, api_key_id: str, verify: bool, proxy: bool):
+        headers = {
+            "Authorization": api_key,
+            "x-xdr-auth-id": api_key_id,
+            "Content-Type": "application/json",
+        }
+        super().__init__(base_url=base_url, verify=verify, proxy=proxy, headers=headers)
+
+    def insert_parsed_alerts(self, alerts: list[dict[str, Any]]) -> None:
+        for start in range(0, len(alerts), ALERT_BATCH):
+            batch = alerts[start : start + ALERT_BATCH]
+            response = self._http_request(
+                method="POST",
+                url_suffix="/public_api/v1/alerts/insert_parsed_alerts",
+                json_data={"request_data": {"alerts": batch}},
+            )
+            reply = response.get("reply") if isinstance(response, dict) else None
+            if isinstance(reply, dict) and reply.get("err_code"):
+                message = reply.get("err_msg") or reply.get("err_code")
+                raise DemistoException(f"Direct alert promotion failed to open an issue. {message}")
 
 
 def direct_promotion_enabled(params: dict[str, Any]) -> bool:
     return argToBoolean(params.get("enable_direct_alert_promotion") or False)
 
 
-def events_to_incidents(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Turn each stored Flare event into one XSIAM issue. Correlation rules are not involved."""
-    incidents: list[dict[str, Any]] = []
+def promotion_settings(params: dict[str, Any]) -> tuple[str, str, str]:
+    """XSIAM credentials used only when direct alert promotion is checked."""
+    base_url = str(params.get("xsiam_url") or "").strip().rstrip("/")
+    api_key = str(params.get("xsiam_api_key") or "").strip()
+    api_key_id = str(params.get("xsiam_api_key_id") or "").strip()
+    missing = []
+    if not base_url:
+        missing.append("XSIAM server URL")
+    if not api_key:
+        missing.append("XSIAM API key")
+    if not api_key_id:
+        missing.append("XSIAM API key ID")
+    if missing:
+        raise DemistoException(f"Enable Direct Alert Promotion needs {', '.join(missing)}.")
+    return base_url, api_key, api_key_id
+
+
+def xsiam_client_from_params(params: dict[str, Any]) -> XsiamClient:
+    base_url, api_key, api_key_id = promotion_settings(params)
+    return XsiamClient(
+        base_url=base_url,
+        api_key=api_key,
+        api_key_id=api_key_id,
+        verify=not params.get("insecure"),
+        proxy=bool(params.get("proxy")),
+    )
+
+
+def matched_at_millis(matched_at: str) -> int:
+    parsed = arg_to_datetime(matched_at) if matched_at else None
+    moment = parsed or datetime.now(timezone.utc)
+    return int(moment.timestamp() * 1000)
+
+
+def events_to_parsed_alerts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Turn each stored Flare event into one parsed XSIAM alert."""
+    alerts: list[dict[str, Any]] = []
     for event in events:
         severity_name = str(event.get("severity") or "info").lower()
         instance_tag = str(event.get("flare_instance_tag") or "").strip()
@@ -664,20 +746,48 @@ def events_to_incidents(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         name = f"Flare Exposure - {severity_name.title()}"
         if instance_tag:
             name = f"{name}. Instance {instance_tag}"
-        incidents.append(
+        local_ip = str(event.get("ipv4") or "").strip() or "0.0.0.0"
+        alerts.append(
             {
-                "name": name,
-                "occurred": str(event.get("matched_at") or ""),
-                "severity": ISSUE_SEVERITY.get(severity_name, IncidentSeverity.UNKNOWN),
-                "details": (
+                "product": PRODUCT,
+                "vendor": VENDOR,
+                "local_ip": local_ip,
+                "local_port": 1,
+                "remote_ip": "0.0.0.0",
+                "remote_port": 1,
+                "event_timestamp": matched_at_millis(str(event.get("matched_at") or "")),
+                "severity": ALERT_SEVERITY.get(severity_name, "Informational"),
+                "alert_name": name,
+                "alert_description": (
                     f"Direct alert promotion. Flare {severity_name} event {event_id} "
                     f"({event.get('event_type')}) matched identifier {event.get('grouping_name')}. "
                     f"Instance {instance_tag}."
                 ),
-                "rawJSON": json.dumps(event),
             }
         )
-    return incidents
+    return alerts
+
+
+def store_and_promote(
+    params: dict[str, Any],
+    last_run: dict[str, Any],
+    next_run: dict[str, Any],
+    events: list[dict[str, Any]],
+) -> None:
+    """Store the dataset first. A failed alert insert is retried on the next fetch without a reset."""
+    promoting = direct_promotion_enabled(params)
+    pending = [item for item in list(last_run.get("pending_alerts") or []) if isinstance(item, dict)] if promoting else []
+    if events:
+        send_events_to_xsiam(events, vendor=VENDOR, product=PRODUCT)
+        if promoting:
+            pending.extend(events_to_parsed_alerts(events))
+    save_seen_uids([str(uid) for uid in (next_run.get("seen_uids") or [])])
+    if pending:
+        next_run["pending_alerts"] = pending
+        demisto.setLastRun(next_run)
+        xsiam_client_from_params(params).insert_parsed_alerts(pending)
+    next_run.pop("pending_alerts", None)
+    demisto.setLastRun(next_run)
 
 
 def stamp_checkpoint(
@@ -693,6 +803,8 @@ def stamp_checkpoint(
 
 
 def test_module(client: Client, params: dict[str, Any]) -> str:
+    if direct_promotion_enabled(params):
+        promotion_settings(params)
     tenant_key = parse_tenants(params.get("tenants"))[0]
     backfill = backfill_start(str(params.get("first_fetch") or DEFAULT_BACKFILL))
     if argToBoolean(params.get("fetch_alerts") or False):
@@ -717,7 +829,7 @@ def get_events_command(
 ) -> tuple[list[dict[str, Any]], CommandResults]:
     """On-demand fetch. Does not read or move the scheduled cursor."""
     command_params = params | {"first_fetch": args.get("from") or params.get("first_fetch")}
-    _next_run, events = fetch_events(client, {}, command_params, event_limit(args.get("limit"), 10))
+    _next_run, events = fetch_events(client, {}, command_params, event_limit(args.get("limit"), 10), remember=False)
     readable = tableToMarkdown(
         "Flare exposure events",
         events,
@@ -758,14 +870,12 @@ def main() -> None:
             if should_push:
                 send_events_to_xsiam(events, vendor=VENDOR, product=PRODUCT)
         elif command == "fetch-events":
+            if direct_promotion_enabled(params):
+                promotion_settings(params)
             last_run = demisto.getLastRun() or {}
             limit = event_limit(params.get("max_fetch"), DEFAULT_MAX_EVENTS)
             next_run, events = fetch_events(client, last_run, params, limit)
-            if events:
-                send_events_to_xsiam(events, vendor=VENDOR, product=PRODUCT)
-                if direct_promotion_enabled(params):
-                    demisto.createIncidents(events_to_incidents(events))
-            demisto.setLastRun(next_run)
+            store_and_promote(params, last_run, next_run, events)
         else:
             return_error(f"Command {command} is not implemented.")
     except Exception as error:

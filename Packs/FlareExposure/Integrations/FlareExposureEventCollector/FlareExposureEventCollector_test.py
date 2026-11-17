@@ -1,5 +1,6 @@
 import json
 
+import demistomock as demisto
 import pytest
 from FlareExposureEventCollector import (
     advance_cursor,
@@ -7,7 +8,9 @@ from FlareExposureEventCollector import (
     backfill_start,
     build_event,
     category_types,
-    events_to_incidents,
+    events_to_parsed_alerts,
+    promotion_settings,
+    save_seen_uids,
     fetch_events,
     fetch_saved_alerts,
     fetch_tenant_events,
@@ -179,14 +182,55 @@ def test_fetch_skips_an_event_id_already_stored():
     assert state["matched_at_gte"] == "2026-01-01T00:00:00Z"
 
 
-def test_direct_promotion_creates_one_issue_per_event():
+def test_direct_promotion_creates_one_alert_per_event():
     event = build_event("17", FEED_ITEM, instance_tag="Custom-Index-1")
-    incidents = events_to_incidents([event])
-    assert len(incidents) == 1
-    assert incidents[0]["name"] == "Flare Exposure - High. Instance Custom-Index-1"
-    assert incidents[0]["severity"] == 3
-    assert "Direct alert promotion" in incidents[0]["details"]
-    assert json.loads(incidents[0]["rawJSON"])["flare_event_id"] == event["flare_event_id"]
+    alerts = events_to_parsed_alerts([event])
+    assert len(alerts) == 1
+    assert alerts[0]["alert_name"] == "Flare Exposure - High. Instance Custom-Index-1"
+    assert alerts[0]["severity"] == "High"
+    assert alerts[0]["vendor"] == "flare"
+    assert alerts[0]["product"] == "exposure"
+    assert alerts[0]["local_ip"] == "0.0.0.0"
+    assert "Direct alert promotion" in alerts[0]["alert_description"]
+    assert event["flare_event_id"] in alerts[0]["alert_description"]
+    assert alerts[0]["event_timestamp"] == 1793855017534
+
+
+def test_direct_promotion_uses_the_event_ipv4_and_info_severity():
+    event = build_event("17", FEED_ITEM, FULL_EVENT, instance_tag="Custom-Index-1")
+    event["severity"] = "info"
+    alerts = events_to_parsed_alerts([event])
+    assert alerts[0]["local_ip"] == "203.0.113.10"
+    assert alerts[0]["severity"] == "Informational"
+    assert alerts[0]["alert_name"] == "Flare Exposure - Info. Instance Custom-Index-1"
+
+
+def test_direct_promotion_requires_xsiam_credentials():
+    with pytest.raises(Exception, match="XSIAM server URL"):
+        promotion_settings({"enable_direct_alert_promotion": True})
+
+
+def test_reset_skips_event_ids_remembered_outside_the_checkpoint():
+    demisto.setIntegrationContext({})
+    page = {
+        "items": [
+            {"metadata": {"uid": "event-1", "severity": "low", "matched_at": "2026-11-16T05:00:00Z"}},
+            {"metadata": {"uid": "event-2", "severity": "high", "matched_at": "2026-11-16T06:00:00Z"}},
+        ],
+        "next": None,
+    }
+    try:
+        client = FakeClient([page, page, page])
+        params = {"tenants": "17", "first_fetch": "7 days"}
+        first_state, first_events = fetch_events(client, {}, params, 5, remember=False)
+        assert [event["flare_event_id"] for event in first_events] == ["event-1", "event-2"]
+        save_seen_uids(first_state["seen_uids"])
+
+        reset_state, reset_events = fetch_events(client, {}, params, 5)
+        assert reset_events == []
+        assert reset_state["seen_uids"] == ["event-1", "event-2"]
+    finally:
+        demisto.setIntegrationContext({})
 
 
 def test_fetch_events_records_the_checkpoint_and_instance_tag():
