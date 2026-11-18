@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -22,6 +23,20 @@ SECRET_KEYS = {"password", "passwords"}
 RETRY_STATUSES = [429, 500, 502, 503, 504]
 ALERT_LIST_PAGES = 20
 SEEN_UID_LIMIT = 2000
+ACTION_BATCH = 10
+WRITEBACK_LOOKBACK_MS = 60 * 60 * 1000
+WRITEBACK_CASE_LIMIT = 2000
+EVENT_ID_PATTERN = re.compile(r"event\s+(\S+?)\s+\(")
+RESOLVED_CASE_STATUSES = [
+    "resolved_threat_handled",
+    "resolved_known_issue",
+    "resolved_duplicate",
+    "resolved_false_positive",
+    "resolved_true_positive",
+    "resolved_other",
+    "resolved_auto",
+    "resolved_security_testing",
+]
 RISK_SEVERITY = {1: "info", 2: "low", 3: "medium", 4: "high", 5: "critical"}
 # Flare Events page groups. Each selection expands to the type values tenant search accepts.
 CATEGORY_TYPES = {
@@ -140,6 +155,17 @@ class Client(BaseClient):
         )
         return response if isinstance(response, dict) else {}
 
+    def remediate_events(self, tenant_key: str, uids: list[str]) -> None:
+        """POST /firework/v4/events/actions marks each event remediated. Flare accepts 10 targets per call."""
+        token = self.token_for(tenant_key)
+        for body in remediate_batches(uids):
+            self._request(
+                "POST",
+                "/firework/v4/events/actions",
+                json_data=body,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
     def _request(
         self,
         method: str,
@@ -239,10 +265,67 @@ def load_seen_uids(last_run: dict[str, Any]) -> list[str]:
 
 def save_seen_uids(seen: list[str]) -> None:
     """Remember stored event IDs where Reset event fetching does not erase them."""
-    context = demisto.getIntegrationContext() or {}
-    if not isinstance(context, dict):
-        context = {}
+    context = integration_context()
     context["seen_uids"] = seen
+    demisto.setIntegrationContext(context)
+
+
+def integration_context() -> dict[str, Any]:
+    context = demisto.getIntegrationContext() or {}
+    return context if isinstance(context, dict) else {}
+
+
+def remediate_batches(uids: list[str]) -> list[dict[str, Any]]:
+    """Build Flare remediate calls. Each call carries at most 10 event ids."""
+    unique: list[str] = []
+    seen: set[str] = set()
+    for uid in uids:
+        event_id = str(uid).strip()
+        if event_id and event_id not in seen:
+            unique.append(event_id)
+            seen.add(event_id)
+    batches = []
+    for start in range(0, len(unique), ACTION_BATCH):
+        targets = [{"uid": event_id} for event_id in unique[start : start + ACTION_BATCH]]
+        batches.append({"action": {"type": "remediate"}, "targets": targets})
+    return batches
+
+
+def event_ids_from_alerts(alerts: list[dict[str, Any]]) -> list[str]:
+    """Read the Flare event id from an alert description. Correlation and direct promotion both write it there."""
+    found: list[str] = []
+    seen: set[str] = set()
+    for alert in alerts:
+        if not isinstance(alert, dict):
+            continue
+        for key in ("description", "alert_description", "name", "alert_name"):
+            text = alert.get(key)
+            if not isinstance(text, str):
+                continue
+            for event_id in EVENT_ID_PATTERN.findall(text):
+                if event_id not in seen:
+                    found.append(event_id)
+                    seen.add(event_id)
+    return found
+
+
+def writeback_enabled(params: dict[str, Any]) -> bool:
+    return argToBoolean(params.get("enable_status_writeback") or False)
+
+
+def load_writeback_state() -> tuple[int | None, list[str]]:
+    context = integration_context()
+    raw_since = context.get("writeback_since_ms")
+    since_ms = int(raw_since) if isinstance(raw_since, (int, float)) else None
+    raw_ids = context.get("writeback_case_ids")
+    case_ids = [str(case_id) for case_id in raw_ids] if isinstance(raw_ids, list) else []
+    return since_ms, case_ids
+
+
+def save_writeback_state(since_ms: int, case_ids: list[str]) -> None:
+    context = integration_context()
+    context["writeback_since_ms"] = since_ms
+    context["writeback_case_ids"] = remember_uids([], case_ids)[-WRITEBACK_CASE_LIMIT:]
     demisto.setIntegrationContext(context)
 
 
@@ -697,13 +780,60 @@ class XsiamClient(BaseClient):
                 message = reply.get("err_msg") or reply.get("err_code")
                 raise DemistoException(f"Direct alert promotion failed to open an issue. {message}")
 
+    def xdr_request(self, url_suffix: str, request_data: dict[str, Any]) -> dict[str, Any]:
+        response = self._http_request(method="POST", url_suffix=url_suffix, json_data={"request_data": request_data})
+        if not isinstance(response, dict):
+            raise DemistoException("XSIAM returned an empty response.")
+        reply = response.get("reply")
+        if isinstance(reply, dict) and reply.get("err_code"):
+            message = reply.get("err_msg") or reply.get("err_code")
+            raise DemistoException(f"XSIAM case lookup failed. {message}")
+        return reply if isinstance(reply, dict) else {}
+
+    def closed_flare_cases(self, since_ms: int) -> list[dict[str, Any]]:
+        """Closed cases whose name contains Flare Exposure and that changed since the last check."""
+        reply = self.xdr_request(
+            "/public_api/v1/incidents/get_incidents",
+            {
+                "filters": [
+                    {"field": "status", "operator": "in", "value": RESOLVED_CASE_STATUSES},
+                    {"field": "modification_time", "operator": "gte", "value": since_ms},
+                ],
+                "search_from": 0,
+                "search_to": 100,
+            },
+        )
+        incidents = reply.get("incidents")
+        if not isinstance(incidents, list):
+            return []
+        cases = []
+        for incident in incidents:
+            if not isinstance(incident, dict):
+                continue
+            name = str(incident.get("incident_name") or incident.get("name") or "")
+            if "Flare Exposure" in name:
+                cases.append(incident)
+        return cases
+
+    def case_alerts(self, incident_id: str) -> list[dict[str, Any]]:
+        reply = self.xdr_request(
+            "/public_api/v1/incidents/get_incident_extra_data",
+            {"incident_id": str(incident_id), "alerts_limit": 100},
+        )
+        alerts = reply.get("alerts")
+        if isinstance(alerts, list):
+            return [alert for alert in alerts if isinstance(alert, dict)]
+        if isinstance(alerts, dict) and isinstance(alerts.get("data"), list):
+            return [alert for alert in alerts["data"] if isinstance(alert, dict)]
+        return []
+
 
 def direct_promotion_enabled(params: dict[str, Any]) -> bool:
     return argToBoolean(params.get("enable_direct_alert_promotion") or False)
 
 
-def promotion_settings(params: dict[str, Any]) -> tuple[str, str, str]:
-    """XSIAM credentials used only when direct alert promotion is checked."""
+def xsiam_settings(params: dict[str, Any], feature: str) -> tuple[str, str, str]:
+    """XSIAM credentials used by direct alert promotion and status write-back."""
     base_url = str(params.get("xsiam_url") or "").strip().rstrip("/")
     api_key = str(params.get("xsiam_api_key") or "").strip()
     api_key_id = str(params.get("xsiam_api_key_id") or "").strip()
@@ -715,12 +845,27 @@ def promotion_settings(params: dict[str, Any]) -> tuple[str, str, str]:
     if not api_key_id:
         missing.append("XSIAM API key ID")
     if missing:
-        raise DemistoException(f"Enable Direct Alert Promotion needs {', '.join(missing)}.")
+        raise DemistoException(f"{feature} needs {', '.join(missing)}.")
     return base_url, api_key, api_key_id
 
 
-def xsiam_client_from_params(params: dict[str, Any]) -> XsiamClient:
-    base_url, api_key, api_key_id = promotion_settings(params)
+def promotion_settings(params: dict[str, Any]) -> tuple[str, str, str]:
+    """XSIAM credentials used only when direct alert promotion is checked."""
+    return xsiam_settings(params, "Enable Direct Alert Promotion")
+
+
+def require_xsiam_settings(params: dict[str, Any]) -> None:
+    features = []
+    if direct_promotion_enabled(params):
+        features.append("Enable Direct Alert Promotion")
+    if writeback_enabled(params):
+        features.append("Enable Status Write-back - Auto Closure/Remediation")
+    if features:
+        xsiam_settings(params, " and ".join(features))
+
+
+def xsiam_client_from_params(params: dict[str, Any], feature: str = "Enable Direct Alert Promotion") -> XsiamClient:
+    base_url, api_key, api_key_id = xsiam_settings(params, feature)
     return XsiamClient(
         base_url=base_url,
         api_key=api_key,
@@ -802,9 +947,57 @@ def stamp_checkpoint(
     return next_run
 
 
+def sync_closed_cases(client: Client, params: dict[str, Any], xsiam: XsiamClient) -> list[str]:
+    """Mark Flare events remediated for Flare Exposure cases closed since the last check."""
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    since_ms, done_ids = load_writeback_state()
+    if since_ms is None:
+        since_ms = now_ms - WRITEBACK_LOOKBACK_MS
+    done = set(done_ids)
+    tenant_key = parse_tenants(params.get("tenants"))[0]
+    remediated: list[str] = []
+    for case in xsiam.closed_flare_cases(since_ms):
+        case_id = str(case.get("incident_id") or "")
+        if not case_id or case_id in done:
+            continue
+        alerts = xsiam.case_alerts(case_id)
+        event_ids = event_ids_from_alerts(alerts)
+        if not alerts or not event_ids:
+            raise DemistoException(f"Case {case_id} has no Flare event id on its alerts.")
+        client.remediate_events(tenant_key, event_ids)
+        remediated.extend(event_ids)
+        done_ids.append(case_id)
+        done.add(case_id)
+    save_writeback_state(now_ms, done_ids)
+    if remediated:
+        demisto.info(f"Marked {len(remediated)} Flare events remediated from closed cases.")
+    return remediated
+
+
+def update_event_status_command(client: Client, params: dict[str, Any], args: dict[str, Any]) -> CommandResults:
+    """On-demand remediate. A case id reads that case's alerts. The checkbox does not gate this command."""
+    event_ids = [str(event_id).strip() for event_id in argToList(args.get("event_id")) if str(event_id).strip()]
+    case_id = str(args.get("case_id") or "").strip()
+    if case_id:
+        xsiam = xsiam_client_from_params(params, "flare-update-event-status")
+        alerts = xsiam.case_alerts(case_id)
+        event_ids.extend(event_ids_from_alerts(alerts))
+        if not event_ids:
+            raise DemistoException(f"Case {case_id} has no Flare event id on its alerts.")
+    if not event_ids:
+        raise DemistoException("Provide a Flare event id or a case id.")
+    tenant_key = parse_tenants(params.get("tenants"))[0]
+    client.remediate_events(tenant_key, event_ids)
+    rows = [{"EventID": event_id, "Status": "remediated"} for event_id in event_ids]
+    return CommandResults(
+        readable_output=tableToMarkdown("Flare events marked remediated", rows, headers=["EventID", "Status"]),
+        outputs_prefix="FlareExposure.Remediation",
+        outputs={"EventIDs": event_ids, "Status": "remediated", "CaseID": case_id},
+    )
+
+
 def test_module(client: Client, params: dict[str, Any]) -> str:
-    if direct_promotion_enabled(params):
-        promotion_settings(params)
+    require_xsiam_settings(params)
     tenant_key = parse_tenants(params.get("tenants"))[0]
     backfill = backfill_start(str(params.get("first_fetch") or DEFAULT_BACKFILL))
     if argToBoolean(params.get("fetch_alerts") or False):
@@ -869,13 +1062,20 @@ def main() -> None:
             return_results(results)
             if should_push:
                 send_events_to_xsiam(events, vendor=VENDOR, product=PRODUCT)
+        elif command == "flare-update-event-status":
+            return_results(update_event_status_command(client, params, args))
         elif command == "fetch-events":
-            if direct_promotion_enabled(params):
-                promotion_settings(params)
+            require_xsiam_settings(params)
             last_run = demisto.getLastRun() or {}
             limit = event_limit(params.get("max_fetch"), DEFAULT_MAX_EVENTS)
             next_run, events = fetch_events(client, last_run, params, limit)
             store_and_promote(params, last_run, next_run, events)
+            if writeback_enabled(params):
+                sync_closed_cases(
+                    client,
+                    params,
+                    xsiam_client_from_params(params, "Enable Status Write-back - Auto Closure/Remediation"),
+                )
         else:
             return_error(f"Command {command} is not implemented.")
     except Exception as error:

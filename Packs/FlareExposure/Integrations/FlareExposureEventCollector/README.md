@@ -13,9 +13,9 @@ The dataset, vendor, and product names are `flare_exposure_events_raw`, `flare`,
     | --- | --- | --- |
     | Server URL | Flare API base URL. Default is https://api.flare.io. | False |
     | API Key | Flare API key from the profile page. | True |
-    | XSIAM server URL | Cortex API URL. Required only when Enable Direct Alert Promotion is checked. | False |
-    | XSIAM API Key | Cortex API key. Required only when Enable Direct Alert Promotion is checked. | False |
-    | XSIAM API Key ID | Cortex API key ID. Required only when Enable Direct Alert Promotion is checked. | False |
+    | XSIAM server URL | Cortex API URL. Required when Enable Direct Alert Promotion or Enable Status Write-back is checked. | False |
+    | XSIAM API Key | Cortex API key. Required when Enable Direct Alert Promotion or Enable Status Write-back is checked. | False |
+    | XSIAM API Key ID | Cortex API key ID. Required when Enable Direct Alert Promotion or Enable Status Write-back is checked. | False |
     | Flare tenants | Comma-separated numeric tenant IDs. Empty uses the key's default tenant. | False |
     | Instance tag | Text stored on every event. Filter events, issues, and cases by this value. | False |
     | Flare severity | Severities to ingest. Empty ingests all. | False |
@@ -27,6 +27,7 @@ The dataset, vendor, and product names are `flare_exposure_events_raw`, `flare`,
     | Fetch events | Stores every event in the dataset. Leave this checked. First Collect option. | False |
     | Fetch Via Alerts | Read saved Flare alerts, then fetch tenant events with each alert's categories and severities. Shown directly under Fetch events. | False |
     | Enable Direct Alert Promotion | Stores each event and opens one XSIAM alert through the Cortex alerts API. Leave this off to use the correlation rules. Do not use both. | False |
+    | Enable Status Write-back - Auto Closure/Remediation | Off by default. When checked, the next fetch marks the Flare events on a closed Flare Exposure case as remediated. | False |
     | Trust any certificate (not secure) | Skip certificate verification. | False |
     | Use system proxy settings | Use the XSIAM system proxy. | False |
 
@@ -45,6 +46,8 @@ The cursor is the Flare `next` token, saved per tenant after a successful push. 
 Five real-time correlation rules query `flare_exposure_events_raw`. Each rule matches one Flare severity, so one event opens one alert and the rules do not overlap. A repeated event id is suppressed for 24 hours.
 
 **Enable Direct Alert Promotion** is the other way to open an alert. The fetch still writes `flare_exposure_events_raw`, then calls `POST /public_api/v1/alerts/insert_parsed_alerts` once per event. That call uses the XSIAM server URL, API key, and API key ID. Leave the checkbox off when the correlation rules are enabled, or the same event opens two alerts.
+
+**Enable Status Write-back - Auto Closure/Remediation** stays off until you check it. After a Flare Exposure case is closed, the next fetch calls `POST /firework/v4/events/actions` with action `remediate` for the Flare event ids on that case. The command `flare-update-event-status` does the same update on demand.
 
 The alert field **Actor Effective Username** is set to the Flare identifier name (`xdm.target.resource.name`). To put multiple alerts for the same identifier into one case, configure XSIAM case grouping on that actor field. The content pack does not create the grouping policy. Alerts with no Flare identifier use the Flare event id, so they are not grouped together under an empty name.
 

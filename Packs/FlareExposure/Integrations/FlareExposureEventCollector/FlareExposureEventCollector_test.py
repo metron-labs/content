@@ -8,14 +8,18 @@ from FlareExposureEventCollector import (
     backfill_start,
     build_event,
     category_types,
+    event_ids_from_alerts,
     events_to_parsed_alerts,
     promotion_settings,
+    remediate_batches,
     save_seen_uids,
+    sync_closed_cases,
     fetch_events,
     fetch_saved_alerts,
     fetch_tenant_events,
     strip_secrets,
     tenant_id,
+    writeback_enabled,
 )
 
 
@@ -330,6 +334,72 @@ def test_fetch_alerts_skips_a_disabled_alert():
     _state, events = fetch_saved_alerts(client, {}, {"tenants": "747671", "first_fetch": "3 days"}, 10)
     assert [call["alert_id"] for call in client.alert_calls] == [436059]
     assert [event["flare_alert_id"] for event in events] == ["436059"]
+
+
+def test_writeback_checkbox_defaults_off():
+    assert writeback_enabled({}) is False
+    assert writeback_enabled({"enable_status_writeback": True}) is True
+
+
+def test_event_ids_come_from_direct_and_correlation_descriptions():
+    event_id = "document/cactus_blog/testbench_ransomware_2026-11-14"
+    alerts = [
+        {"description": f"Direct alert promotion. Flare critical event {event_id} (document) matched identifier x."},
+        {"description": "Flare high event listing/alphabet_market/testbench_listing_2026-11-14 (listing) matched identifier y."},
+    ]
+    assert event_ids_from_alerts(alerts) == [
+        event_id,
+        "listing/alphabet_market/testbench_listing_2026-11-14",
+    ]
+
+
+def test_remediate_batches_hold_ten_event_ids():
+    uids = [f"event-{index}" for index in range(11)]
+    batches = remediate_batches(uids)
+    assert len(batches) == 2
+    assert batches[0]["action"] == {"type": "remediate"}
+    assert len(batches[0]["targets"]) == 10
+    assert batches[1]["targets"] == [{"uid": "event-10"}]
+
+
+class WritebackFlare:
+    def __init__(self):
+        self.calls: list[tuple[str, list[str]]] = []
+
+    def remediate_events(self, tenant_key, uids):
+        self.calls.append((tenant_key, list(uids)))
+
+
+class WritebackXsiam:
+    def __init__(self, cases, alerts):
+        self.cases = cases
+        self.alerts = alerts
+
+    def closed_flare_cases(self, since_ms):
+        return self.cases
+
+    def case_alerts(self, incident_id):
+        return self.alerts[incident_id]
+
+
+def test_closed_case_remediates_its_events_once():
+    demisto.setIntegrationContext({})
+    event_id = "service/driller_shodan/testbench.qa.flared.io/2026-11-14"
+    flare = WritebackFlare()
+    xsiam = WritebackXsiam(
+        [{"incident_id": "223880", "incident_name": "Flare Exposure - High. Instance Custom-Index-1"}],
+        {"223880": [{"description": f"Direct alert promotion. Flare high event {event_id} (service) matched identifier x."}]},
+    )
+    try:
+        first = sync_closed_cases(flare, {"tenants": "747671"}, xsiam)
+        assert first == [event_id]
+        assert flare.calls == [("747671", [event_id])]
+        second = sync_closed_cases(flare, {"tenants": "747671"}, xsiam)
+        assert second == []
+        assert len(flare.calls) == 1
+        assert demisto.getIntegrationContext()["writeback_case_ids"] == ["223880"]
+    finally:
+        demisto.setIntegrationContext({})
 
 
 def test_alert_fetch_continues_from_the_last_stored_event():

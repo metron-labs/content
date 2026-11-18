@@ -1,0 +1,118 @@
+id: Flare Exposure - Case Closure Status Write-back
+version: -1
+name: Flare Exposure - Case Closure Status Write-back
+description: Marks the Flare events on this case as remediated by calling flare-update-event-status with the current case id.
+starttaskid: "0"
+fromversion: 8.4.0
+marketplaces:
+- marketplacev2
+- platform
+tasks:
+  "0":
+    id: "0"
+    taskid: 4c1e8a20-6b57-4d3a-9f14-2a7c0e5b6d81
+    type: start
+    task:
+      id: 4c1e8a20-6b57-4d3a-9f14-2a7c0e5b6d81
+      version: -1
+      name: ""
+      description: ""
+      iscommand: false
+      brand: ""
+    nexttasks:
+      '#none#':
+      - "1"
+    separatecontext: false
+    continueonerrortype: ""
+    view: |-
+      {
+        "position": {
+          "x": 450,
+          "y": 50
+        }
+      }
+    note: false
+    timertriggers: []
+    ignoreworker: false
+    skipunavailable: false
+    quietmode: 0
+    isoversize: false
+    isautoswitchedtoquietmode: false
+  "1":
+    id: "1"
+    taskid: 8b2d4f61-1e70-4c3a-a6d5-7f0e1c9b3a52
+    type: regular
+    task:
+      id: 8b2d4f61-1e70-4c3a-a6d5-7f0e1c9b3a52
+      version: -1
+      name: Mark the case events remediated
+      description: Reads the alerts on this case and marks each Flare event remediated.
+      script: '|||flare-update-event-status'
+      type: regular
+      iscommand: true
+      brand: Flare Exposure Event Collector
+    nexttasks:
+      '#none#':
+      - "2"
+    scriptarguments:
+      case_id:
+        complex:
+          root: incident.id
+    separatecontext: false
+    continueonerrortype: ""
+    view: |-
+      {
+        "position": {
+          "x": 450,
+          "y": 220
+        }
+      }
+    note: false
+    timertriggers: []
+    ignoreworker: false
+    skipunavailable: false
+    quietmode: 0
+    isoversize: false
+    isautoswitchedtoquietmode: false
+  "2":
+    id: "2"
+    taskid: 6e0c9a83-4b15-4f2d-9a77-8c3d5e1b0f64
+    type: title
+    task:
+      id: 6e0c9a83-4b15-4f2d-9a77-8c3d5e1b0f64
+      version: -1
+      name: Done
+      type: title
+      iscommand: false
+      brand: ""
+      description: ""
+    separatecontext: false
+    continueonerrortype: ""
+    view: |-
+      {
+        "position": {
+          "x": 450,
+          "y": 390
+        }
+      }
+    note: false
+    timertriggers: []
+    ignoreworker: false
+    skipunavailable: false
+    quietmode: 0
+    isoversize: false
+    isautoswitchedtoquietmode: false
+view: |-
+  {
+    "linkLabelsPosition": {},
+    "paper": {
+      "dimensions": {
+        "height": 450,
+        "width": 380,
+        "x": 450,
+        "y": 50
+      }
+    }
+  }
+tests:
+- No tests (auto formatted)
