@@ -13,9 +13,9 @@ The dataset, vendor, and product names are `flare_exposure_events_raw`, `flare`,
     | --- | --- | --- |
     | Server URL | Flare API base URL. Default is https://api.flare.io. | False |
     | API Key | Flare API key from the profile page. | True |
-    | XSIAM server URL | Cortex API URL. Required when Enable Direct Alert Promotion or Enable Status Write-back is checked. | False |
-    | XSIAM API Key | Cortex API key. Required when Enable Direct Alert Promotion or Enable Status Write-back is checked. | False |
-    | XSIAM API Key ID | Cortex API key ID. Required when Enable Direct Alert Promotion or Enable Status Write-back is checked. | False |
+    | XSIAM server URL | Cortex API URL. Required for direct alert promotion and for the case-closure playbook. | False |
+    | XSIAM API Key | Cortex API key. Required for direct alert promotion and for the case-closure playbook. | False |
+    | XSIAM API Key ID | Cortex API key ID. Required for direct alert promotion and for the case-closure playbook. | False |
     | Flare tenants | Comma-separated numeric tenant IDs. Empty uses the key's default tenant. | False |
     | Instance tag | Text stored on every event. Filter events, issues, and cases by this value. | False |
     | Flare severity | Severities to ingest. Empty ingests all. | False |
@@ -27,7 +27,7 @@ The dataset, vendor, and product names are `flare_exposure_events_raw`, `flare`,
     | Fetch events | Stores every event in the dataset. Leave this checked. First Collect option. | False |
     | Fetch Via Alerts | Read saved Flare alerts, then fetch tenant events with each alert's categories and severities. Shown directly under Fetch events. | False |
     | Enable Direct Alert Promotion | Stores each event and opens one XSIAM alert through the Cortex alerts API. Leave this off to use the correlation rules. Do not use both. | False |
-    | Enable Status Write-back - Auto Closure/Remediation | Off by default. When checked, the next fetch marks the Flare events on a closed Flare Exposure case as remediated. | False |
+    | Enable Status Write-back - Auto Closure/Remediation | Not used by the event fetch. The case-closure playbook updates Flare when the case is resolved. | False |
     | Trust any certificate (not secure) | Skip certificate verification. | False |
     | Use system proxy settings | Use the XSIAM system proxy. | False |
 
@@ -37,17 +37,17 @@ The dataset, vendor, and product names are `flare_exposure_events_raw`, `flare`,
 
 Each fetch exchanges the API key for a token at `POST /tokens/generate`, then reads `POST /firework/v4/events/tenant/_search`. When **Fetch full event** is enabled, each result is also read from `GET /firework/v4/events/?uid=` and the `data` block is stored on the event. Passwords are removed before the event is stored.
 
-When **Fetch Via Alerts** is enabled, the collector lists `GET /firework/v4/alerts/` and then calls `POST /firework/v4/events/tenant/_search` once per alert. `search_types` is sent as `type`, and `risks` is sent as `severity` (`1` info, `2` low, `3` medium, `4` high, `5` critical). The instance severity and category settings are not sent. Each stored event includes `flare_alert_id` and `flare_alert_name`. A later switch to **Fetch Via Alerts** continues from the last stored event instead of repeating the backfill. Parsing, modeling, and the correlation rules are unchanged apart from the instance tag.
+When **Fetch Via Alerts** is enabled, the collector lists `GET /firework/v4/alerts/` and then calls `POST /firework/v4/events/tenant/_search` once per category on each alert. `search_types` is sent as `type`, and `risks` is sent as `severity` (`1` info, `2` low, `3` medium, `4` high, `5` critical). The instance severity and category settings are not sent. Each stored event includes `flare_alert_id` and `flare_alert_name`. Each category on an alert keeps its own timestamp. A category added to an alert after the first run, and an alert that appears after the first run, start at the global timestamp. The global timestamp is the newest event stored by any category. Parsing, modeling, and the correlation rules are unchanged apart from the instance tag.
 
-The cursor is the Flare `next` token, saved per tenant after a successful push. The same `matched_at` filter is reused on later fetches, which is what the Flare paging contract requires. Changing severity or category starts that tenant from the current time instead of replaying the backfill.
+The next fetch starts at the timestamp of the last event stored for that tenant. Changing severity or category starts that tenant from the current time instead of replaying the backfill.
 
 ## Alerts and cases
 
 Five real-time correlation rules query `flare_exposure_events_raw`. Each rule matches one Flare severity, so one event opens one alert and the rules do not overlap. A repeated event id is suppressed for 24 hours.
 
-**Enable Direct Alert Promotion** is the other way to open an alert. The fetch still writes `flare_exposure_events_raw`, then calls `POST /public_api/v1/alerts/insert_parsed_alerts` once per event. That call uses the XSIAM server URL, API key, and API key ID. Leave the checkbox off when the correlation rules are enabled, or the same event opens two alerts.
+**Enable Direct Alert Promotion** is the other way to open an alert. The fetch still writes `flare_exposure_events_raw`, then calls `POST /public_api/v1/alerts/create_alert` once per event. That call uses the XSIAM server URL, API key, and API key ID. The alert name, actor, and host are the Flare identifier, the same values the correlation rules use, so Medium and higher issues for the same identifier can group into one case. Leave the checkbox off when the correlation rules are enabled, or the same event opens two alerts.
 
-**Enable Status Write-back - Auto Closure/Remediation** stays off until you check it. After a Flare Exposure case is closed, the next fetch calls `POST /firework/v4/events/actions` with action `remediate` for the Flare event ids on that case. The command `flare-update-event-status` does the same update on demand.
+**Enable Status Write-back - Auto Closure/Remediation** is not used by the event fetch. When a Flare Exposure case is resolved, the playbook **Flare Exposure - Case Closure Status Write-back** calls `flare-update-event-status` with the case id. That command reads the alerts on the case and sends `POST /firework/v4/events/actions` with action `remediate`. The fetch interval does not delay this update.
 
 The alert field **Actor Effective Username** is set to the Flare identifier name (`xdm.target.resource.name`). To put multiple alerts for the same identifier into one case, configure XSIAM case grouping on that actor field. The content pack does not create the grouping policy. Alerts with no Flare identifier use the Flare event id, so they are not grouped together under an empty name.
 

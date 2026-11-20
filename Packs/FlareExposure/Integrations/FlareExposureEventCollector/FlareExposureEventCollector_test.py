@@ -10,13 +10,14 @@ from FlareExposureEventCollector import (
     category_types,
     event_ids_from_alerts,
     events_to_parsed_alerts,
+    XsiamClient,
     promotion_settings,
     remediate_batches,
-    save_seen_uids,
     sync_closed_cases,
     fetch_events,
     fetch_saved_alerts,
     fetch_tenant_events,
+    filter_fingerprint,
     strip_secrets,
     tenant_id,
     writeback_enabled,
@@ -135,14 +136,13 @@ def test_fetch_stops_inside_a_page_and_replays_the_remainder():
     client = FakeClient([page, page])
     first_events, first_state = fetch_tenant_events(client, "17", {}, "1 day", [], [], 1, fetch_full_event=True)
     assert [event["flare_event_id"] for event in first_events] == ["event-1"]
-    assert first_state["from"] is None
-    assert first_state["page_uids"] == ["event-1"]
+    assert first_state["matched_at_gte"] == "2026-01-01T00:00:00Z"
 
     second_events, second_state = fetch_tenant_events(
         client, "17", first_state, "1 day", [], [], 1, fetch_full_event=True
     )
     assert [event["flare_event_id"] for event in second_events] == ["event-2"]
-    assert second_state["from"] == "cursor-b"
+    assert second_state["matched_at_gte"] == "2026-01-01T00:01:00Z"
     assert client.activity_uids == ["event-1", "event-2"]
     assert first_events[0]["source_url"] == "https://example.invalid/item"
     assert second_events[0]["source_url"] == "https://example.invalid/item"
@@ -165,7 +165,7 @@ def test_fetch_skips_full_event_unless_enabled():
     assert client.activity_uids == []
 
 
-def test_fetch_skips_an_event_id_already_stored():
+def test_fetch_continues_after_the_saved_timestamp():
     page = {
         "items": [{"metadata": {"uid": "event-1", "severity": "low", "matched_at": "2026-01-01T00:00:00Z"}}],
         "next": None,
@@ -174,13 +174,11 @@ def test_fetch_skips_an_event_id_already_stored():
     events, state = fetch_tenant_events(
         client,
         "17",
-        {},
+        {"matched_at_gte": "2026-01-01T00:00:00Z", "fingerprint": filter_fingerprint([], [])},
         "7 days",
         [],
         [],
         5,
-        watermark="2026-01-01T00:00:00Z",
-        seen_uids={"event-1"},
     )
     assert events == []
     assert state["matched_at_gte"] == "2026-01-01T00:00:00Z"
@@ -190,13 +188,19 @@ def test_direct_promotion_creates_one_alert_per_event():
     event = build_event("17", FEED_ITEM, instance_tag="Custom-Index-1")
     alerts = events_to_parsed_alerts([event])
     assert len(alerts) == 1
-    assert alerts[0]["alert_name"] == "Flare Exposure - High. Instance Custom-Index-1"
+    assert alerts[0]["alert_name"] == "Flare Exposure - High. testbench.qa.flared.io. Instance Custom-Index-1"
     assert alerts[0]["severity"] == "High"
     assert alerts[0]["vendor"] == "flare"
     assert alerts[0]["product"] == "exposure"
-    assert alerts[0]["local_ip"] == "0.0.0.0"
-    assert "Direct alert promotion" in alerts[0]["alert_description"]
-    assert event["flare_event_id"] in alerts[0]["alert_description"]
+    assert "Direct alert promotion" in alerts[0]["description"]
+    assert event["flare_event_id"] in alerts[0]["description"]
+    assert alerts[0]["host_name"] == "testbench.qa.flared.io"
+    assert alerts[0]["os_parent_user_name"] == "testbench.qa.flared.io"
+    assert alerts[0]["actor_effective_username"] == "testbench.qa.flared.io"
+    assert alerts[0]["agent_hostname"] == "testbench.qa.flared.io"
+    assert alerts[0]["category"] == "Other"
+    assert alerts[0]["alert_domain"] == "DOMAIN_SECURITY"
+    assert "local_ip" not in alerts[0]
     assert alerts[0]["event_timestamp"] == 1793855017534
 
 
@@ -204,9 +208,25 @@ def test_direct_promotion_uses_the_event_ipv4_and_info_severity():
     event = build_event("17", FEED_ITEM, FULL_EVENT, instance_tag="Custom-Index-1")
     event["severity"] = "info"
     alerts = events_to_parsed_alerts([event])
-    assert alerts[0]["local_ip"] == "203.0.113.10"
+    assert alerts[0]["remote_ip"] == "203.0.113.10"
     assert alerts[0]["severity"] == "Informational"
-    assert alerts[0]["alert_name"] == "Flare Exposure - Info. Instance Custom-Index-1"
+    assert alerts[0]["alert_name"] == "Flare Exposure - Info. testbench.qa.flared.io. Instance Custom-Index-1"
+
+
+def test_create_alerts_wraps_each_alert():
+    client = XsiamClient("https://example.test", "key", "1", True, False)
+    captured: dict = {}
+
+    def fake_http(**kwargs):
+        captured.update(kwargs)
+        return {"reply": True}
+
+    client._http_request = fake_http  # type: ignore[method-assign]
+    client.create_alerts([{"alert_name": "Flare Exposure - High", "vendor": "flare"}])
+    assert captured["url_suffix"] == "/public_api/v1/alerts/create_alert"
+    assert captured["json_data"] == {
+        "request_data": {"alert": {"alert_name": "Flare Exposure - High", "vendor": "flare"}}
+    }
 
 
 def test_direct_promotion_requires_xsiam_credentials():
@@ -214,8 +234,7 @@ def test_direct_promotion_requires_xsiam_credentials():
         promotion_settings({"enable_direct_alert_promotion": True})
 
 
-def test_reset_skips_event_ids_remembered_outside_the_checkpoint():
-    demisto.setIntegrationContext({})
+def test_reset_fetches_the_backfill_again():
     page = {
         "items": [
             {"metadata": {"uid": "event-1", "severity": "low", "matched_at": "2026-11-16T05:00:00Z"}},
@@ -223,18 +242,18 @@ def test_reset_skips_event_ids_remembered_outside_the_checkpoint():
         ],
         "next": None,
     }
-    try:
-        client = FakeClient([page, page, page])
-        params = {"tenants": "17", "first_fetch": "7 days"}
-        first_state, first_events = fetch_events(client, {}, params, 5, remember=False)
-        assert [event["flare_event_id"] for event in first_events] == ["event-1", "event-2"]
-        save_seen_uids(first_state["seen_uids"])
+    client = FakeClient([page, page, page])
+    params = {"tenants": "17", "first_fetch": "7 days"}
+    first_state, first_events = fetch_events(client, {}, params, 5)
+    assert [event["flare_event_id"] for event in first_events] == ["event-1", "event-2"]
 
-        reset_state, reset_events = fetch_events(client, {}, params, 5)
-        assert reset_events == []
-        assert reset_state["seen_uids"] == ["event-1", "event-2"]
-    finally:
-        demisto.setIntegrationContext({})
+    continued_state, continued_events = fetch_events(client, first_state, params, 5)
+    assert continued_events == []
+    assert continued_state["last_matched_at"] == "2026-11-16T06:00:00Z"
+
+    reset_state, reset_events = fetch_events(client, {}, params, 5)
+    assert [event["flare_event_id"] for event in reset_events] == ["event-1", "event-2"]
+    assert reset_state["last_matched_at"] == "2026-11-16T06:00:00Z"
 
 
 def test_fetch_events_records_the_checkpoint_and_instance_tag():
@@ -246,7 +265,8 @@ def test_fetch_events_records_the_checkpoint_and_instance_tag():
     state, events = fetch_events(client, {}, {"tenants": "17", "first_fetch": "7 days", "instance_tag": "lab-a"}, 5)
     assert events[0]["flare_instance_tag"] == "lab-a"
     assert state["last_matched_at"] == "2026-11-08T00:00:00Z"
-    assert state["seen_uids"] == ["event-9"]
+    assert state["tenants"]["17"]["matched_at_gte"] == "2026-11-08T00:00:00Z"
+    assert "seen_uids" not in state
 
 
 SAVED_ALERT = {
@@ -296,7 +316,14 @@ class AlertClient:
         return {"items": [SAVED_ALERT], "next": "page-2"}
 
     def search_alert_events(self, tenant_key, alert, from_cursor, matched_at_gte):
-        self.alert_calls.append({"alert_id": alert["id"], "from": from_cursor, "matched_at_gte": matched_at_gte})
+        self.alert_calls.append(
+            {
+                "alert_id": alert["id"],
+                "from": from_cursor,
+                "matched_at_gte": matched_at_gte,
+                "types": list(alert.get("search_types") or []),
+            }
+        )
         return {
             "items": [{"metadata": {"uid": "alert-event-1", "severity": "critical", "matched_at": "2026-11-05T00:00:00Z"}}],
             "next": None,
@@ -314,8 +341,8 @@ def test_fetch_alerts_ignores_instance_filters_and_tags_the_alert():
         {"tenants": "747671", "severity": ["info"], "event_types": ["paste"], "first_fetch": "3 days"},
         10,
     )
-    assert len(client.alert_calls) == 1
-    assert client.alert_calls[0]["alert_id"] == 436059
+    assert len(client.alert_calls) == 2
+    assert {tuple(call["types"]) for call in client.alert_calls} == {("service",), ("leak",)}
     assert events[0]["flare_alert_id"] == "436059"
     assert events[0]["flare_alert_name"] == "test"
     assert events[0]["grouping_name"] == "alert-event-1"
@@ -332,8 +359,8 @@ def test_fetch_alerts_skips_a_disabled_alert():
 
     client = DisabledAlertClient()
     _state, events = fetch_saved_alerts(client, {}, {"tenants": "747671", "first_fetch": "3 days"}, 10)
-    assert [call["alert_id"] for call in client.alert_calls] == [436059]
-    assert [event["flare_alert_id"] for event in events] == ["436059"]
+    assert [call["alert_id"] for call in client.alert_calls] == [436059, 436059]
+    assert [event["flare_alert_id"] for event in events] == ["436059", "436059"]
 
 
 def test_writeback_checkbox_defaults_off():
@@ -402,13 +429,66 @@ def test_closed_case_remediates_its_events_once():
         demisto.setIntegrationContext({})
 
 
-def test_alert_fetch_continues_from_the_last_stored_event():
+def test_alert_fetch_continues_from_the_category_timestamp():
     client = AlertClient()
+    state_key = "747671:436059"
     _state, events = fetch_saved_alerts(
         client,
-        {"last_matched_at": "2026-11-10T00:00:00Z", "seen_uids": ["alert-event-1"]},
+        {
+            "global_time": "2026-11-01T00:00:00Z",
+            "alerts": {state_key: {"categories": {"service": "2026-11-05T00:00:00Z", "leak": "2026-11-05T00:00:00Z"}}},
+        },
         {"tenants": "747671", "first_fetch": "7 days", "instance_tag": "lab-a"},
         10,
     )
-    assert client.alert_calls[0]["matched_at_gte"] == "2026-11-10T00:00:00Z"
+    assert {tuple(call["types"]): call["matched_at_gte"] for call in client.alert_calls} == {
+        ("service",): "2026-11-05T00:00:00Z",
+        ("leak",): "2026-11-05T00:00:00Z",
+    }
     assert events == []
+
+
+def test_new_alert_starts_at_the_global_timestamp():
+    client = AlertClient()
+    state, events = fetch_saved_alerts(
+        client,
+        {"global_time": "2026-11-01T00:00:00Z", "alerts": {}},
+        {"tenants": "747671", "first_fetch": "7 days"},
+        10,
+    )
+    assert {call["matched_at_gte"] for call in client.alert_calls} == {"2026-11-01T00:00:00Z"}
+    assert [event["flare_event_id"] for event in events] == ["alert-event-1", "alert-event-1"]
+    assert state["global_time"] == "2026-11-05T00:00:00Z"
+    assert state["alerts"]["747671:436059"]["categories"] == {
+        "service": "2026-11-05T00:00:00Z",
+        "leak": "2026-11-05T00:00:00Z",
+    }
+
+
+def test_new_category_on_a_saved_alert_starts_at_the_global_timestamp():
+    client = AlertClient()
+    saved_alert = {**SAVED_ALERT, "search_types": ["service", "leak", "open_web"]}
+
+    class ExpandedAlertClient(AlertClient):
+        def list_alerts(self, tenant_key, from_cursor):
+            if from_cursor:
+                return {"items": [], "next": None}
+            return {"items": [saved_alert], "next": None}
+
+    client = ExpandedAlertClient()
+    state, events = fetch_saved_alerts(
+        client,
+        {
+            "global_time": "2026-11-04T00:00:00Z",
+            "alerts": {"747671:436059": {"categories": {"service": "2026-11-05T00:00:00Z", "leak": "2026-11-05T00:00:00Z"}}},
+        },
+        {"tenants": "747671", "first_fetch": "7 days"},
+        10,
+    )
+    by_type = {tuple(call["types"]): call["matched_at_gte"] for call in client.alert_calls}
+    assert by_type[("service",)] == "2026-11-05T00:00:00Z"
+    assert by_type[("leak",)] == "2026-11-05T00:00:00Z"
+    assert by_type[("open_web",)] == "2026-11-04T00:00:00Z"
+    assert [event["flare_event_id"] for event in events] == ["alert-event-1"]
+    assert state["alerts"]["747671:436059"]["categories"]["open_web"] == "2026-11-05T00:00:00Z"
+    assert state["global_time"] == "2026-11-05T00:00:00Z"

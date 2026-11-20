@@ -9,6 +9,6 @@ This first version covers ingestion, XDM normalization, and alert creation:
 - The modeling rule maps the event onto XDM and sets the Flare identifier as the case grouping key.
 - Real-time correlation rules open one alert per event, one rule per Flare severity.
 
-**Enable Status Write-back - Auto Closure/Remediation** is off by default. When it is on, the next fetch marks the Flare events on a closed Flare Exposure case as remediated. The remediation playbooks and the indicator feed are not part of this version.
+**Enable Status Write-back - Auto Closure/Remediation** is not used by the event fetch. The playbook **Flare Exposure - Case Closure Status Write-back** marks the Flare events remediated when the case is resolved.
 
 These names stay clear of an existing `flare_events_raw` pipeline: vendor `flare`, product `exposure`, dataset `flare_exposure_events_raw`, alert names `Flare Exposure - Critical`, `Flare Exposure - High`, `Flare Exposure - Medium`, `Flare Exposure - Low`, and `Flare Exposure - Info`.

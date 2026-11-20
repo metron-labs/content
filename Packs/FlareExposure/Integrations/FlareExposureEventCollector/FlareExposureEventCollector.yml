@@ -24,19 +24,19 @@ configuration:
   type: 0
   required: false
   section: Connect
-  additionalinfo: Cortex API URL used when Enable Direct Alert Promotion or Enable Status Write-back - Auto Closure/Remediation is checked. Example, https://api-<tenant>.xdr.<region>.paloaltonetworks.com.
+  additionalinfo: Cortex API URL used by Enable Direct Alert Promotion and by the case-closure playbook. Example, https://api-<tenant>.xdr.<region>.paloaltonetworks.com.
 - display: XSIAM API Key
   name: xsiam_api_key
   type: 4
   required: false
   section: Connect
-  additionalinfo: Cortex API key used when Enable Direct Alert Promotion or Enable Status Write-back - Auto Closure/Remediation is checked. This is not the Flare API key.
+  additionalinfo: Cortex API key used by Enable Direct Alert Promotion and by the case-closure playbook. This is not the Flare API key.
 - display: XSIAM API Key ID
   name: xsiam_api_key_id
   type: 0
   required: false
   section: Connect
-  additionalinfo: Cortex API key ID sent as x-xdr-auth-id. Used when Enable Direct Alert Promotion or Enable Status Write-back - Auto Closure/Remediation is checked.
+  additionalinfo: Cortex API key ID sent as x-xdr-auth-id. Used by Enable Direct Alert Promotion and by the case-closure playbook.
 - display: Fetch events
   name: isFetchEvents
   type: 8
@@ -63,7 +63,7 @@ configuration:
   defaultvalue: 'false'
   required: false
   section: Collect
-  additionalinfo: Leave this off and closing a case does not change Flare. When it is checked, the next fetch marks the Flare events on a closed Flare Exposure case as remediated. Uses the XSIAM server URL, API key, and API key ID. Only the events that belong to that case are updated.
+  additionalinfo: Not used by the event fetch. Flare status updates run from the playbook Flare Exposure - Case Closure Status Write-back when the case is resolved.
 - display: Flare tenants
   name: tenants
   type: 0
