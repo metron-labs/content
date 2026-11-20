@@ -138,9 +138,7 @@ def test_fetch_stops_inside_a_page_and_replays_the_remainder():
     assert [event["flare_event_id"] for event in first_events] == ["event-1"]
     assert first_state["matched_at_gte"] == "2026-01-01T00:00:00Z"
 
-    second_events, second_state = fetch_tenant_events(
-        client, "17", first_state, "1 day", [], [], 1, fetch_full_event=True
-    )
+    second_events, second_state = fetch_tenant_events(client, "17", first_state, "1 day", [], [], 1, fetch_full_event=True)
     assert [event["flare_event_id"] for event in second_events] == ["event-2"]
     assert second_state["matched_at_gte"] == "2026-01-01T00:01:00Z"
     assert client.activity_uids == ["event-1", "event-2"]
@@ -224,9 +222,7 @@ def test_create_alerts_wraps_each_alert():
     client._http_request = fake_http  # type: ignore[method-assign]
     client.create_alerts([{"alert_name": "Flare Exposure - High", "vendor": "flare"}])
     assert captured["url_suffix"] == "/public_api/v1/alerts/create_alert"
-    assert captured["json_data"] == {
-        "request_data": {"alert": {"alert_name": "Flare Exposure - High", "vendor": "flare"}}
-    }
+    assert captured["json_data"] == {"request_data": {"alert": {"alert_name": "Flare Exposure - High", "vendor": "flare"}}}
 
 
 def test_direct_promotion_requires_xsiam_credentials():

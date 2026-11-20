@@ -1,6 +1,6 @@
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, UTC
 from typing import Any
 
 import demistomock as demisto
@@ -119,7 +119,7 @@ class Client(BaseClient):
 
     def list_alerts(self, tenant_key: str, from_cursor: str | None) -> dict[str, Any]:
         """GET /firework/v4/alerts/ returns saved alerts. Each alert already carries its filters."""
-        params = {"size": PAGE_SIZE}
+        params: dict[str, Any] = {"size": PAGE_SIZE}
         if from_cursor:
             params["from"] = from_cursor
         response = self._request(
@@ -201,6 +201,16 @@ def string_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if isinstance(item, (str, int)) and str(item)]
     return []
+
+
+def as_dict(value: Any) -> dict[str, Any]:
+    """Return value when it is a dictionary."""
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value: Any) -> list[Any]:
+    """Return value when it is a list."""
+    return value if isinstance(value, list) else []
 
 
 def first_or_blank(values: list[str]) -> str:
@@ -327,7 +337,7 @@ def filter_fingerprint(severities: list[str], event_types: list[str]) -> str:
 
 def alert_severities(alert: dict[str, Any]) -> list[str]:
     """Map a Flare alert's numeric risks onto the event-search severity names."""
-    risks = alert.get("risks") if isinstance(alert.get("risks"), list) else []
+    risks = as_list(alert.get("risks"))
     severities: list[str] = []
     for risk in risks:
         try:
@@ -340,7 +350,7 @@ def alert_severities(alert: dict[str, Any]) -> list[str]:
 
 
 def alert_types(alert: dict[str, Any]) -> list[str]:
-    values = alert.get("search_types") if isinstance(alert.get("search_types"), list) else []
+    values = as_list(alert.get("search_types"))
     return [str(item) for item in values if str(item).strip()]
 
 
@@ -358,7 +368,7 @@ def alert_for_category(alert: dict[str, Any], category: str) -> dict[str, Any]:
 
 
 def alert_is_disabled(alert: dict[str, Any]) -> bool:
-    scope = alert.get("identifier_scope") if isinstance(alert.get("identifier_scope"), dict) else {}
+    scope = as_dict(alert.get("identifier_scope"))
     return bool(scope.get("is_disabled"))
 
 
@@ -384,7 +394,7 @@ def backfill_start(backfill: str) -> str:
     start_time = arg_to_datetime(start)
     if start_time is None:
         raise DemistoException(f"Could not parse the initial backfill value {backfill!r}.")
-    oldest = datetime.now(timezone.utc) - timedelta(days=MAX_BACKFILL_DAYS)
+    oldest = datetime.now(UTC) - timedelta(days=MAX_BACKFILL_DAYS)
     if start_time < oldest:
         raise DemistoException(f"Initial backfill cannot exceed {MAX_BACKFILL_DAYS} days.")
     return start
@@ -401,7 +411,7 @@ def event_limit(value: Any, default: int = DEFAULT_MAX_EVENTS) -> int:
 
 def event_data_block(full_event: dict[str, Any]) -> dict[str, Any]:
     """The v4 event response carries the payload under data. Passwords are removed."""
-    data = full_event.get("data") if isinstance(full_event.get("data"), dict) else {}
+    data = as_dict(full_event.get("data"))
     cleaned = strip_secrets(data)
     return cleaned if isinstance(cleaned, dict) else {}
 
@@ -414,18 +424,16 @@ def build_event(
     instance_tag: str = "",
 ) -> dict[str, Any]:
     """Flatten one feed record. The full-event data block is attached only when it was fetched."""
-    metadata = feed_item.get("metadata") if isinstance(feed_item.get("metadata"), dict) else {}
-    tenant_metadata = feed_item.get("tenant_metadata") if isinstance(feed_item.get("tenant_metadata"), dict) else {}
-    severity_block = tenant_metadata.get("severity") if isinstance(tenant_metadata.get("severity"), dict) else {}
-    identifiers = feed_item.get("identifiers") if isinstance(feed_item.get("identifiers"), list) else []
+    metadata = as_dict(feed_item.get("metadata"))
+    tenant_metadata = as_dict(feed_item.get("tenant_metadata"))
+    severity_block = as_dict(tenant_metadata.get("severity"))
+    identifiers = as_list(feed_item.get("identifiers"))
     full_event = full_event or {}
-    full_metadata = full_event.get("metadata") if isinstance(full_event.get("metadata"), dict) else {}
+    full_metadata = as_dict(full_event.get("metadata"))
     data = event_data_block(full_event)
-    features = data.get("features") if isinstance(data.get("features"), dict) else {}
+    features = as_dict(data.get("features"))
 
-    identifier_ids = [
-        str(item.get("id")) for item in identifiers if isinstance(item, dict) and item.get("id") is not None
-    ]
+    identifier_ids = [str(item.get("id")) for item in identifiers if isinstance(item, dict) and item.get("id") is not None]
     identifier_names = [str(item.get("name")) for item in identifiers if isinstance(item, dict) and item.get("name")]
     emails = string_list(features.get("emails"))
     usernames = string_list(features.get("usernames"))
@@ -475,12 +483,12 @@ def build_event(
 
 
 def feed_uid(item: dict[str, Any]) -> str:
-    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    metadata = as_dict(item.get("metadata"))
     return str(metadata.get("uid") or "")
 
 
 def feed_matched_at(item: dict[str, Any]) -> str:
-    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    metadata = as_dict(item.get("metadata"))
     return str(metadata.get("matched_at") or "")
 
 
@@ -507,7 +515,7 @@ def resume_window(
     filters_changed = "fingerprint" in saved_state and saved_state.get("fingerprint") != fingerprint
     if filters_changed:
         demisto.debug(f"Flare filters changed for {tenant_key}. Resuming from now.")
-        return datetime.now(timezone.utc).strftime(DATE_FORMAT), False
+        return datetime.now(UTC).strftime(DATE_FORMAT), False
     if saved:
         return saved, True
     return backfill_start(backfill), False
@@ -533,7 +541,7 @@ def collect_events(
     while len(collected) < max_events and pages < MAX_PAGES:
         pages += 1
         page = search_page(cursor, matched_at_gte)
-        items = page.get("items") if isinstance(page.get("items"), list) else []
+        items = as_list(page.get("items"))
         response_next = page.get("next") if isinstance(page.get("next"), str) else None
         fresh = []
         for item in items:
@@ -593,7 +601,7 @@ def list_alert_definitions(client: Client, tenant_key: str) -> list[dict[str, An
     seen_cursors: set[str] = set()
     for _page in range(ALERT_LIST_PAGES):
         page = client.list_alerts(tenant_key, cursor)
-        items = page.get("items") if isinstance(page.get("items"), list) else []
+        items = as_list(page.get("items"))
         for item in items:
             if not isinstance(item, dict) or item.get("id") is None:
                 continue
@@ -658,7 +666,7 @@ def fetch_saved_alerts(
     backfill = str(params.get("first_fetch") or DEFAULT_BACKFILL)
     instance_tag = str(params.get("instance_tag") or "").strip()
     global_time = str(last_run.get("global_time") or "")
-    stored = last_run.get("alerts") if isinstance(last_run.get("alerts"), dict) else {}
+    stored = as_dict(last_run.get("alerts"))
     events: list[dict[str, Any]] = []
     next_alerts: dict[str, Any] = {}
     for tenant_key in parse_tenants(params.get("tenants")):
@@ -666,8 +674,8 @@ def fetch_saved_alerts(
             if alert_is_disabled(alert):
                 continue
             state_key = f"{tenant_key}:{alert.get('id')}"
-            previous = stored.get(state_key) if isinstance(stored.get(state_key), dict) else {}
-            saved_categories = previous.get("categories") if isinstance(previous.get("categories"), dict) else {}
+            previous = as_dict(stored.get(state_key))
+            saved_categories = as_dict(previous.get("categories"))
             if len(events) >= max_events:
                 if previous:
                     next_alerts[state_key] = previous
@@ -689,7 +697,7 @@ def fetch_saved_alerts(
                 events.extend(alert_events)
                 next_categories[category] = str(alert_state.get("matched_at_gte") or "")
             next_alerts[state_key] = {"categories": next_categories}
-    tenants = last_run.get("tenants") if isinstance(last_run.get("tenants"), dict) else {}
+    tenants = as_dict(last_run.get("tenants"))
     return {"tenants": tenants, "alerts": next_alerts, "global_time": latest_matched_at(global_time, events)}, events
 
 
@@ -700,15 +708,15 @@ def fetch_events(
     max_events: int,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if argToBoolean(params.get("fetch_alerts") or False):
-        next_run, events = fetch_saved_alerts(client, last_run, params, max_events)
-        return stamp_checkpoint(last_run, next_run, events), events
+        next_run, alert_events = fetch_saved_alerts(client, last_run, params, max_events)
+        return stamp_checkpoint(last_run, next_run, alert_events), alert_events
     tenants = parse_tenants(params.get("tenants"))
     severities = parse_choices(params.get("severity"))
     event_types = category_types(parse_choices(params.get("event_types")))
     fetch_full_event = argToBoolean(params.get("fetch_full_event") or False)
     backfill = str(params.get("first_fetch") or DEFAULT_BACKFILL)
     instance_tag = str(params.get("instance_tag") or "").strip()
-    stored = last_run.get("tenants") if isinstance(last_run.get("tenants"), dict) else {}
+    stored = as_dict(last_run.get("tenants"))
     events: list[dict[str, Any]] = []
     next_tenants: dict[str, Any] = {}
     for tenant_key in tenants:
@@ -728,7 +736,7 @@ def fetch_events(
         )
         events.extend(tenant_events)
         next_tenants[tenant_key] = tenant_state
-    alerts = last_run.get("alerts") if isinstance(last_run.get("alerts"), dict) else {}
+    alerts = as_dict(last_run.get("alerts"))
     return stamp_checkpoint(last_run, {"tenants": next_tenants, "alerts": alerts}, events), events
 
 
@@ -739,6 +747,8 @@ ALERT_SEVERITY = {
     "high": "High",
     "critical": "Critical",
 }
+
+
 class XsiamClient(BaseClient):
     """Opens one XSIAM alert per Flare event. This is separate from the Flare API client."""
 
@@ -855,7 +865,7 @@ def xsiam_client_from_params(params: dict[str, Any], feature: str = "Enable Dire
 
 def matched_at_millis(matched_at: str) -> int:
     parsed = arg_to_datetime(matched_at) if matched_at else None
-    moment = parsed or datetime.now(timezone.utc)
+    moment = parsed or datetime.now(UTC)
     return int(moment.timestamp() * 1000)
 
 
@@ -936,7 +946,7 @@ def stamp_checkpoint(
 
 def sync_closed_cases(client: Client, params: dict[str, Any], xsiam: XsiamClient) -> list[str]:
     """Mark Flare events remediated for Flare Exposure cases closed since the last check."""
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
     since_ms, done_ids = load_writeback_state()
     if since_ms is None:
         since_ms = now_ms - WRITEBACK_LOOKBACK_MS
