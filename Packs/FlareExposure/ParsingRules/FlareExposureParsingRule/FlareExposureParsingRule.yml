@@ -1,0 +1,8 @@
+name: Flare Exposure Parsing Rule
+id: Flare_Exposure_Parsing_Rule
+fromversion: 8.4.0
+tags: []
+rules: ''
+samples: ''
+supportedModules:
+- xsiam
