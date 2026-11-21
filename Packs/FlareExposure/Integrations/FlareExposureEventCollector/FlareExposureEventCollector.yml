@@ -93,7 +93,7 @@ configuration:
   type: 16
   required: false
   section: Collect
-  additionalinfo: Flare event categories to ingest. Leave empty to ingest every category. Leaked Credentials and Look-alike Domains expand to the event types inside those groups.
+  additionalinfo: Flare event categories to ingest. Leave empty to ingest every category. Each selection expands to the Flare type values for that group.
   options:
   - Illicit Networks
   - Open Web
@@ -101,6 +101,12 @@ configuration:
   - Leaked Credentials
   - Look-alike Domains
   - Emerging Source
+  - Buckets
+  - Source Code
+  - Domains
+  - Forum Content
+  - Profile
+  - Infected Devices
 - display: Initial backfill
   name: first_fetch
   type: 0

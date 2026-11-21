@@ -11,6 +11,16 @@ urllib3.disable_warnings()
 
 VENDOR = "flare"
 PRODUCT = "exposure"
+DEFAULT_SERVER_URL = "https://api.flare.io"
+USER_AGENT = "CortexXSIAM-FlareExposureEventCollector"
+TOKEN_ENDPOINT = "/tokens/generate"
+TENANT_EVENTS_SEARCH_ENDPOINT = "/firework/v4/events/tenant/_search"
+EVENT_ENDPOINT = "/firework/v4/events/"
+ALERTS_ENDPOINT = "/firework/v4/alerts/"
+EVENT_ACTIONS_ENDPOINT = "/firework/v4/events/actions"
+EVENT_FILTER_TYPES_ENDPOINT = "/firework/v4/events/filters/types"
+CREATE_ALERT_ENDPOINT = "/public_api/v1/alerts/create_alert"
+ALERT_CREATE_BATCH = 20
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 PAGE_SIZE = 10
 MAX_PAGES = 50
@@ -37,12 +47,29 @@ RESOLVED_CASE_STATUSES = [
     "resolved_security_testing",
 ]
 RISK_SEVERITY = {1: "info", 2: "low", 3: "medium", 4: "high", 5: "critical"}
-# Flare Events page groups. Each selection expands to the type values tenant search accepts.
+# Labels for the instance category field. Values are the type filters published at
+# GET /firework/v4/events/filters/types. A category value also selects its base types.
+# https://api.docs.flare.io/advanced/event-source-filters
 CATEGORY_TYPES = {
-    "Illicit Networks": ["illicit_networks"],
-    "Open Web": ["open_web"],
-    "Intelligence Objects": ["intelligence_object"],
-    "Leaked Credentials": ["leak", "valid_credential", "invalid_credential", "mitigated_credential"],
+    "Illicit Networks": [
+        "illicit_networks",
+        "forum_content",
+        "blog_content",
+        "profile",
+        "chat_message",
+        "ransomleak",
+        "infected_devices",
+        "financial_data",
+    ],
+    "Open Web": ["open_web", "paste", "social_media", "source_code", "google", "service", "buckets"],
+    "Buckets": ["buckets", "bucket", "bucket_object"],
+    # source_code_secret is listed in the public docs, but tenant search returns 422 for it.
+    "Source Code": ["source_code", "stack_exchange", "source_code_files"],
+    "Leaked Credentials": ["leaks", "leak", "valid_credential", "invalid_credential", "mitigated_credential"],
+    "Domains": ["domains", "domain"],
+    "Forum Content": ["forum_content", "forum_post", "forum_topic"],
+    "Profile": ["profile", "forum_profile", "seller"],
+    "Infected Devices": ["infected_devices", "bot", "stealer_log"],
     "Look-alike Domains": [
         "lookalike_discovery",
         "lookalike_title",
@@ -53,6 +80,7 @@ CATEGORY_TYPES = {
         "lookalike_whois_rdap",
         "lookalike_ssl_certificate",
     ],
+    "Intelligence Objects": ["intelligence_object"],
     "Emerging Source": ["experimental"],
 }
 
@@ -64,6 +92,19 @@ class Client(BaseClient):
         super().__init__(base_url=base_url, verify=verify, proxy=proxy)
         self.api_key = api_key
         self._tokens: dict[str, str] = {}
+        self.headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+
+    def request_headers(self, authorization: str) -> dict[str, str]:
+        """Copy the shared headers and set the credential for this call.
+
+        BaseClient stores its default header dict on ``self._headers``, so this helper uses its own name.
+        """
+        headers = dict(self.headers)
+        headers["Authorization"] = authorization
+        return headers
+
+    def bearer_headers(self, tenant_key: str) -> dict[str, str]:
+        return self.request_headers(f"Bearer {self.token_for(tenant_key)}")
 
     def token_for(self, tenant_key: str) -> str:
         cached = self._tokens.get(tenant_key)
@@ -72,11 +113,12 @@ class Client(BaseClient):
         body = None
         if tenant_key != DEFAULT_TENANT:
             body = {"tenant_id": tenant_id(tenant_key)}
-        response = self._request("POST", "/tokens/generate", json_data=body, headers={"Authorization": self.api_key})
+        response = self._request("POST", TOKEN_ENDPOINT, json_data=body, headers=self.request_headers(self.api_key))
         token = response.get("token") if isinstance(response, dict) else None
         if not token:
             raise DemistoException(f"Flare did not return a token for tenant {tenant_key}.")
         self._tokens[tenant_key] = str(token)
+        write_log("info", f"Created a Flare token for tenant {tenant_key}.")
         return str(token)
 
     def search_events(
@@ -92,41 +134,46 @@ class Client(BaseClient):
             filters["severity"] = severities
         if event_types:
             filters["type"] = event_types
-        body: dict[str, Any] = {"size": PAGE_SIZE, "sort": "matched_at", "order": "asc", "filters": filters}
+        body: dict[str, Any] = {
+            "size": PAGE_SIZE,
+            "sort": "matched_at",
+            "order": "asc",
+            "filters": filters,
+        }
         if from_cursor:
             body["from"] = from_cursor
         response = self._request(
             "POST",
-            "/firework/v4/events/tenant/_search",
+            TENANT_EVENTS_SEARCH_ENDPOINT,
             json_data=body,
-            headers={"Authorization": f"Bearer {self.token_for(tenant_key)}"},
+            headers=self.bearer_headers(tenant_key),
         )
         return response if isinstance(response, dict) else {}
 
     def get_event(self, tenant_key: str, uid: str) -> dict[str, Any]:
-        """GET /firework/v4/events/?uid= returns the full event, including the data block."""
+        """Return the full event for one uid, including the data block."""
         try:
             response = self._request(
                 "GET",
-                "/firework/v4/events/",
+                EVENT_ENDPOINT,
                 params={"uid": uid},
-                headers={"Authorization": f"Bearer {self.token_for(tenant_key)}"},
+                headers=self.bearer_headers(tenant_key),
             )
         except DemistoException:
-            demisto.debug(f"Flare full event lookup failed for event {uid}.")
+            write_log("error", f"Flare full event lookup failed for event {uid}.")
             return {}
         return response if isinstance(response, dict) else {}
 
     def list_alerts(self, tenant_key: str, from_cursor: str | None) -> dict[str, Any]:
-        """GET /firework/v4/alerts/ returns saved alerts. Each alert already carries its filters."""
+        """Return one page of saved Flare alerts. Each alert already carries its filters."""
         params: dict[str, Any] = {"size": PAGE_SIZE}
         if from_cursor:
             params["from"] = from_cursor
         response = self._request(
             "GET",
-            "/firework/v4/alerts/",
+            ALERTS_ENDPOINT,
             params=params,
-            headers={"Authorization": f"Bearer {self.token_for(tenant_key)}"},
+            headers=self.bearer_headers(tenant_key),
         )
         return response if isinstance(response, dict) else {}
 
@@ -148,22 +195,27 @@ class Client(BaseClient):
             body["from"] = from_cursor
         response = self._request(
             "POST",
-            "/firework/v4/events/tenant/_search",
+            TENANT_EVENTS_SEARCH_ENDPOINT,
             json_data=body,
-            headers={"Authorization": f"Bearer {self.token_for(tenant_key)}"},
+            headers=self.bearer_headers(tenant_key),
         )
         return response if isinstance(response, dict) else {}
 
     def remediate_events(self, tenant_key: str, uids: list[str]) -> None:
-        """POST /firework/v4/events/actions marks each event remediated. Flare accepts 10 targets per call."""
-        token = self.token_for(tenant_key)
+        """Mark the Flare events on a resolved XSIAM case as remediated.
+
+        The case-closure playbook calls flare-update-event-status with the case id.
+        That command collects the Flare event ids from the case alerts and passes them
+        here. Flare accepts at most 10 event ids per call, so the ids are sent in batches.
+        """
+        headers = self.bearer_headers(tenant_key)
         for body in remediate_batches(uids):
-            self._request(
-                "POST",
-                "/firework/v4/events/actions",
-                json_data=body,
-                headers={"Authorization": f"Bearer {token}"},
-            )
+            self._request("POST", EVENT_ACTIONS_ENDPOINT, json_data=body, headers=headers)
+
+    def list_filter_types(self, tenant_key: str) -> list[str]:
+        """Return the event type names from the Flare filter-types endpoint."""
+        response = self._request("GET", EVENT_FILTER_TYPES_ENDPOINT, headers=self.bearer_headers(tenant_key))
+        return filter_type_names(response)
 
     def _request(
         self,
@@ -173,7 +225,8 @@ class Client(BaseClient):
         params: dict | None = None,
         headers: dict | None = None,
     ) -> Any:
-        return self._http_request(
+        write_log("debug", f"Calling Flare {method} {url_suffix}.")
+        response = self._http_request(
             method=method,
             url_suffix=url_suffix,
             json_data=json_data,
@@ -184,6 +237,38 @@ class Client(BaseClient):
             backoff_factor=2,
             timeout=60,
         )
+        self._log_response(method, url_suffix, response)
+        return response
+
+    def _log_response(self, method: str, url_suffix: str, response: Any) -> None:
+        """Debug keeps the call detail. Info keeps a short count."""
+        if not isinstance(response, dict):
+            write_log("debug", f"Flare {method} {url_suffix} returned a non-object response.")
+            return
+        items = response.get("items")
+        if not isinstance(items, list):
+            write_log("debug", f"Flare {method} {url_suffix} completed.")
+            return
+        stamps = []
+        for item in items:
+            metadata = as_dict(item.get("metadata")) if isinstance(item, dict) else {}
+            matched_at = metadata.get("matched_at")
+            if matched_at:
+                stamps.append(str(matched_at))
+        window = f" Timestamps {stamps[0]} to {stamps[-1]}." if stamps else ""
+        write_log("debug", f"Flare {method} {url_suffix} returned {len(items)} items.{window}")
+        write_log("info", f"Flare {method} {url_suffix} returned {len(items)} items.")
+
+
+def write_log(level: str, message: str) -> None:
+    """Log when the server provides that level. A missing logger must not fail Test or fetch."""
+    logger = getattr(demisto, level, None)
+    if not callable(logger):
+        return
+    try:
+        logger(message)
+    except Exception:
+        return
 
 
 def strip_secrets(value: Any) -> Any:
@@ -237,6 +322,29 @@ def parse_tenants(value: Any) -> list[str]:
 
 def parse_choices(value: Any) -> list[str]:
     return [str(item).strip() for item in argToList(value) if str(item).strip()]
+
+
+def filter_type_names(response: Any) -> list[str]:
+    """Read type names from the filter-types response. The list may be bare or wrapped."""
+    values = response
+    if isinstance(response, dict):
+        for key in ("items", "types", "data", "results"):
+            wrapped = response.get(key)
+            if isinstance(wrapped, list):
+                values = wrapped
+                break
+    if not isinstance(values, list):
+        return []
+    names: list[str] = []
+    for item in values:
+        if isinstance(item, str) and item:
+            names.append(item)
+            continue
+        if isinstance(item, dict):
+            name = item.get("name") or item.get("id") or item.get("type") or item.get("value")
+            if name:
+                names.append(str(name))
+    return names
 
 
 def category_types(selected: list[str]) -> list[str]:
@@ -514,7 +622,7 @@ def resume_window(
     saved = str(saved_state.get("matched_at_gte") or "")
     filters_changed = "fingerprint" in saved_state and saved_state.get("fingerprint") != fingerprint
     if filters_changed:
-        demisto.debug(f"Flare filters changed for {tenant_key}. Resuming from now.")
+        write_log("debug", f"Flare filters changed for {tenant_key}. Resuming from now.")
         return datetime.now(UTC).strftime(DATE_FORMAT), False
     if saved:
         return saved, True
@@ -761,12 +869,12 @@ class XsiamClient(BaseClient):
         super().__init__(base_url=base_url, verify=verify, proxy=proxy, headers=headers)
 
     def create_alerts(self, alerts: list[dict[str, Any]]) -> None:
-        """Open one alert per call. insert_parsed_alerts drops host and user, so cases never group."""
+        """Open one alert per call. A failed batch stays pending and is sent again on the next fetch."""
         for alert in alerts:
             response = self._http_request(
                 method="POST",
-                url_suffix="/public_api/v1/alerts/create_alert",
-                json_data={"request_data": {"alert": alert}},
+                url_suffix=CREATE_ALERT_ENDPOINT,
+                json_data={"request_data": {"alert": alert_for_create(alert)}},
             )
             reply = response.get("reply") if isinstance(response, dict) else None
             if isinstance(reply, dict) and reply.get("err_code"):
@@ -863,18 +971,43 @@ def xsiam_client_from_params(params: dict[str, Any], feature: str = "Enable Dire
     )
 
 
-def matched_at_millis(matched_at: str) -> int:
-    parsed = arg_to_datetime(matched_at) if matched_at else None
-    moment = parsed or datetime.now(UTC)
-    return int(moment.timestamp() * 1000)
+def alert_user_list(alert: dict[str, Any]) -> list[str]:
+    """The create_alert user field is a list. Older pending alerts stored a string."""
+    users = alert.get("os_actor_effective_username")
+    if users is None:
+        users = alert.get("os_parent_user_name") or alert.get("actor_effective_username")
+    if isinstance(users, str):
+        users = [users]
+    if not isinstance(users, list):
+        return []
+    return [str(user) for user in users if str(user)]
+
+
+def alert_for_create(alert: dict[str, Any]) -> dict[str, Any]:
+    """Return the payload accepted by this tenant's create_alert API.
+
+    os_actor_effective_username is not a create_alert parameter. The accepted user
+    field is os_parent_user_name, and this tenant requires that value to be a list.
+    """
+    rejected = {
+        "event_timestamp",
+        "agent_hostname",
+        "actor_effective_username",
+        "os_actor_effective_username",
+        "os_parent_user_name",
+    }
+    cleaned = {key: value for key, value in alert.items() if key not in rejected}
+    users = alert_user_list(alert)
+    if users:
+        cleaned["os_parent_user_name"] = users
+    return cleaned
 
 
 def events_to_parsed_alerts(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Turn each stored Flare event into one custom XSIAM alert.
 
-    create_alert keeps alert-table fields. host_name and the actor are the
-    same values the correlation rules set, so Medium and higher issues for
-    one identifier can share a case.
+    host_name carries the Flare identifier. os_parent_user_name is that same
+    identifier in a list, which is the user field this tenant accepts.
     """
     alerts: list[dict[str, Any]] = []
     for event in events:
@@ -899,16 +1032,13 @@ def events_to_parsed_alerts(events: list[dict[str, Any]]) -> list[dict[str, Any]
                 f"({event.get('event_type')}) matched identifier {identifier}. "
                 f"Instance {instance_tag}."
             ),
-            "event_timestamp": matched_at_millis(str(event.get("matched_at") or "")),
         }
         ipv4 = str(event.get("ipv4") or "").strip()
         if ipv4 and ipv4 != "0.0.0.0":
             alert["remote_ip"] = ipv4
         if identifier:
             alert["host_name"] = identifier
-            alert["agent_hostname"] = identifier
-            alert["os_parent_user_name"] = identifier
-            alert["actor_effective_username"] = identifier
+            alert["os_parent_user_name"] = [identifier]
         alerts.append(alert)
     return alerts
 
@@ -923,13 +1053,21 @@ def store_and_promote(
     promoting = direct_promotion_enabled(params)
     pending = [item for item in list(last_run.get("pending_alerts") or []) if isinstance(item, dict)] if promoting else []
     if events:
+        # Provided by CommonServerPython. vendor=flare and product=exposure
+        # store the events in the flare_exposure_events_raw dataset.
         send_events_to_xsiam(events, vendor=VENDOR, product=PRODUCT)
         if promoting:
             pending.extend(events_to_parsed_alerts(events))
-    if pending:
+    if not pending:
+        next_run.pop("pending_alerts", None)
+        demisto.setLastRun(next_run)
+        return
+    xsiam = xsiam_client_from_params(params)
+    while pending:
         next_run["pending_alerts"] = pending
         demisto.setLastRun(next_run)
-        xsiam_client_from_params(params).create_alerts(pending)
+        xsiam.create_alerts(pending[:ALERT_CREATE_BATCH])
+        pending = pending[ALERT_CREATE_BATCH:]
     next_run.pop("pending_alerts", None)
     demisto.setLastRun(next_run)
 
@@ -967,7 +1105,7 @@ def sync_closed_cases(client: Client, params: dict[str, Any], xsiam: XsiamClient
         done.add(case_id)
     save_writeback_state(now_ms, done_ids)
     if remediated:
-        demisto.info(f"Marked {len(remediated)} Flare events remediated from closed cases.")
+        write_log("info", f"Marked {len(remediated)} Flare events remediated from closed cases.")
     return remediated
 
 
@@ -1045,7 +1183,7 @@ def main() -> None:
     if not api_key:
         return_error("Flare API key is required.")
     client = Client(
-        base_url=params.get("url") or "https://api.flare.io",
+        base_url=params.get("url") or DEFAULT_SERVER_URL,
         api_key=api_key,
         verify=not params.get("insecure"),
         proxy=bool(params.get("proxy")),
@@ -1058,6 +1196,7 @@ def main() -> None:
             events, results = get_events_command(client, params, args)
             return_results(results)
             if should_push:
+                # Same CommonServerPython call the scheduled fetch uses.
                 send_events_to_xsiam(events, vendor=VENDOR, product=PRODUCT)
         elif command == "flare-update-event-status":
             return_results(update_event_status_command(client, params, args))

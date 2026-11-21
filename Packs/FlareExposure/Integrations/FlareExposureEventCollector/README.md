@@ -19,7 +19,7 @@ The dataset, vendor, and product names are `flare_exposure_events_raw`, `flare`,
     | Flare tenants | Comma-separated numeric tenant IDs. Empty uses the key's default tenant. | False |
     | Instance tag | Text stored on every event. Filter events, issues, and cases by this value. | False |
     | Flare severity | Severities to ingest. Empty ingests all. | False |
-    | Flare category | Illicit Networks, Open Web, Intelligence Objects, Leaked Credentials, Look-alike Domains, and Emerging Source. Empty ingests all. | False |
+    | Flare category | Flare event groups, including Illicit Networks, Open Web, Leaked Credentials, Look-alike Domains, Buckets, Source Code, Domains, Forum Content, Profile, and Infected Devices. Empty ingests all. | False |
     | Initial backfill | First-fetch window. Default is 30 days. Maximum is 180 days. | False |
     | Maximum number of events per fetch | Events stored in one cycle. Default is 50. Maximum is 500. | False |
     | Events Fetch Interval | Minutes between fetches. Default is 10. | False |
@@ -45,7 +45,7 @@ The next fetch starts at the timestamp of the last event stored for that tenant.
 
 Five real-time correlation rules query `flare_exposure_events_raw`. Each rule matches one Flare severity, so one event opens one alert and the rules do not overlap. A repeated event id is suppressed for 24 hours.
 
-**Enable Direct Alert Promotion** is the other way to open an alert. The fetch still writes `flare_exposure_events_raw`, then calls `POST /public_api/v1/alerts/create_alert` once per event. That call uses the XSIAM server URL, API key, and API key ID. The alert name, actor, and host are the Flare identifier, the same values the correlation rules use, so Medium and higher issues for the same identifier can group into one case. Leave the checkbox off when the correlation rules are enabled, or the same event opens two alerts.
+**Enable Direct Alert Promotion** is the other way to open an alert. The fetch still writes `flare_exposure_events_raw`, then calls `POST /public_api/v1/alerts/create_alert` once per event. That call uses the XSIAM server URL, API key, and API key ID. The alert name is the Flare identifier. `host_name` and `os_parent_user_name` carry that same identifier so Medium and higher issues can group into one case. Leave the checkbox off when the correlation rules are enabled, or the same event opens two alerts.
 
 **Enable Status Write-back - Auto Closure/Remediation** is not used by the event fetch. When a Flare Exposure case is resolved, the playbook **Flare Exposure - Case Closure Status Write-back** calls `flare-update-event-status` with the case id. That command reads the alerts on the case and sends `POST /firework/v4/events/actions` with action `remediate`. The fetch interval does not delay this update.
 

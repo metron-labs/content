@@ -4,10 +4,12 @@ import demistomock as demisto
 import pytest
 from FlareExposureEventCollector import (
     advance_cursor,
+    alert_for_create,
     alert_search_filters,
     backfill_start,
     build_event,
     category_types,
+    Client,
     event_ids_from_alerts,
     events_to_parsed_alerts,
     XsiamClient,
@@ -193,13 +195,14 @@ def test_direct_promotion_creates_one_alert_per_event():
     assert "Direct alert promotion" in alerts[0]["description"]
     assert event["flare_event_id"] in alerts[0]["description"]
     assert alerts[0]["host_name"] == "testbench.qa.flared.io"
-    assert alerts[0]["os_parent_user_name"] == "testbench.qa.flared.io"
-    assert alerts[0]["actor_effective_username"] == "testbench.qa.flared.io"
-    assert alerts[0]["agent_hostname"] == "testbench.qa.flared.io"
+    assert alerts[0]["os_parent_user_name"] == ["testbench.qa.flared.io"]
+    assert "os_actor_effective_username" not in alerts[0]
+    assert "actor_effective_username" not in alerts[0]
+    assert "agent_hostname" not in alerts[0]
+    assert "event_timestamp" not in alerts[0]
     assert alerts[0]["category"] == "Other"
     assert alerts[0]["alert_domain"] == "DOMAIN_SECURITY"
     assert "local_ip" not in alerts[0]
-    assert alerts[0]["event_timestamp"] == 1793855017534
 
 
 def test_direct_promotion_uses_the_event_ipv4_and_info_severity():
@@ -209,6 +212,40 @@ def test_direct_promotion_uses_the_event_ipv4_and_info_severity():
     assert alerts[0]["remote_ip"] == "203.0.113.10"
     assert alerts[0]["severity"] == "Informational"
     assert alerts[0]["alert_name"] == "Flare Exposure - Info. testbench.qa.flared.io. Instance Custom-Index-1"
+
+
+def test_token_request_uses_the_flare_api_key_header():
+    client = Client("https://api.flare.io", "flare-key", True, False)
+    captured: dict = {}
+
+    def fake_http(**kwargs):
+        captured.update(kwargs)
+        return {"token": "issued"}
+
+    client._http_request = fake_http  # type: ignore[method-assign]
+    assert client.token_for("747671") == "issued"
+    assert captured["headers"]["Authorization"] == "flare-key"
+    assert captured["headers"]["User-Agent"]
+    assert captured["headers"]["Accept"] == "application/json"
+    assert captured["json_data"] == {"tenant_id": 747671}
+
+
+def test_create_alert_drops_fields_the_api_rejects():
+    cleaned = alert_for_create(
+        {
+            "alert_name": "Flare Exposure - High",
+            "host_name": "testbench.qa.flared.io",
+            "os_actor_effective_username": ["testbench.qa.flared.io"],
+            "event_timestamp": 1793855017534,
+            "agent_hostname": "testbench.qa.flared.io",
+            "actor_effective_username": "testbench.qa.flared.io",
+        }
+    )
+    assert cleaned == {
+        "alert_name": "Flare Exposure - High",
+        "host_name": "testbench.qa.flared.io",
+        "os_parent_user_name": ["testbench.qa.flared.io"],
+    }
 
 
 def test_create_alerts_wraps_each_alert():
@@ -275,14 +312,22 @@ SAVED_ALERT = {
 
 
 def test_category_labels_expand_to_search_types():
-    assert category_types(["Illicit Networks", "Open Web"]) == ["illicit_networks", "open_web"]
+    illicit = category_types(["Illicit Networks"])
+    assert illicit[0] == "illicit_networks"
+    assert "chat_message" in illicit
+    assert "service" in category_types(["Open Web"])
     assert category_types(["Leaked Credentials"]) == [
+        "leaks",
         "leak",
         "valid_credential",
         "invalid_credential",
         "mitigated_credential",
     ]
     assert category_types(["Look-alike Domains"])[0] == "lookalike_discovery"
+    assert "bot" in category_types(["Infected Devices"])
+    source_code = category_types(["Source Code"])
+    assert source_code == ["source_code", "stack_exchange", "source_code_files"]
+    assert "source_code_secret" not in source_code
     assert category_types(["Intelligence Objects", "Emerging Source"]) == ["intelligence_object", "experimental"]
     assert category_types([]) == []
 
