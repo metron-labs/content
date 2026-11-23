@@ -1,5 +1,5 @@
 {
-    "flare_exposure_events_raw": {
+    "flare_events_raw": {
         "flare_event_id": {
             "type": "string",
             "is_array": false
@@ -77,6 +77,14 @@
             "is_array": false
         },
         "grouping_name": {
+            "type": "string",
+            "is_array": false
+        },
+        "flare_alert_id": {
+            "type": "string",
+            "is_array": false
+        },
+        "flare_alert_name": {
             "type": "string",
             "is_array": false
         },

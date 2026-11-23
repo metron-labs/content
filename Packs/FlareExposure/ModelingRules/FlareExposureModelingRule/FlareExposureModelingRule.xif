@@ -1,8 +1,9 @@
-[MODEL: dataset=flare_exposure_events_raw]
+[MODEL: dataset=flare_events_raw]
 alter
     xdm.event.id = flare_event_id,
     xdm.event.type = event_type,
-    xdm.event.description = event_description,
+    xdm.alert.name = if(flare_alert_name != "", flare_alert_name, flare_alert_id),
+    xdm.event.description = if(flare_alert_name != "" or flare_alert_id != "", concat("Fetch via alert ", if(flare_alert_name != "", flare_alert_name, flare_alert_id), ". Flare ", severity, " event ", flare_event_id, " (", event_type, ") matched identifier ", grouping_name, ". Instance ", flare_instance_tag, "."), concat("Flare ", severity, " event ", flare_event_id, " (", event_type, ") matched identifier ", grouping_name, ". Instance ", flare_instance_tag, ".")),
     xdm.alert.severity = lowercase(severity),
     xdm.target.user.username = coalesce(identity_name, email, username),
     xdm.target.user.identifier = coalesce(identity_name, email, username),

@@ -4,9 +4,15 @@ sectionorder:
 - Connect
 - Collect
 commonfields:
-  id: Flare Exposure Event Collector
+  id: Flare
   version: -1
 configuration:
+- display: Instance tag
+  name: instance_tag
+  type: 0
+  required: false
+  section: Connect
+  additionalinfo: Text written onto every event as flare_instance_tag. Filter events, issues, and cases with this value to see which instance collected them.
 - display: Server URL
   name: url
   defaultvalue: https://api.flare.io
@@ -19,6 +25,12 @@ configuration:
   required: true
   section: Connect
   additionalinfo: Flare API key from the Flare profile page. The collector sends this key to POST /tokens/generate and uses the returned token for the feed.
+- display: Flare tenants
+  name: tenants
+  type: 0
+  required: false
+  section: Connect
+  additionalinfo: Comma-separated numeric tenant IDs from the Flare profile page. Leave empty to use the API key's default tenant.
 - display: XSIAM server URL
   name: xsiam_url
   type: 0
@@ -63,19 +75,7 @@ configuration:
   defaultvalue: 'false'
   required: false
   section: Collect
-  additionalinfo: Not used by the event fetch. Flare status updates run from the playbook Flare Exposure - Case Closure Status Write-back when the case is resolved.
-- display: Flare tenants
-  name: tenants
-  type: 0
-  required: false
-  section: Collect
-  additionalinfo: Comma-separated numeric tenant IDs from the Flare profile page. Leave empty to use the API key's default tenant.
-- display: Instance tag
-  name: instance_tag
-  type: 0
-  required: false
-  section: Collect
-  additionalinfo: Text written onto every event as flare_instance_tag. Filter events, issues, and cases with this value to see which instance collected them.
+  additionalinfo: Not used by the event fetch. Flare status updates run from the playbook Flare - Case Closure Status Write-back when the case is resolved.
 - display: Flare severity
   name: severity
   type: 16
@@ -93,20 +93,31 @@ configuration:
   type: 16
   required: false
   section: Collect
-  additionalinfo: Flare event categories to ingest. Leave empty to ingest every category. Each selection expands to the Flare type values for that group.
+  additionalinfo: Flare event categories to ingest. Leave empty to ingest every category. A category selects every subtype in that group. A value such as open_web.paste selects that one subtype.
   options:
   - Illicit Networks
+  - illicit_networks.listing
+  - illicit_networks.forum_content
+  - illicit_networks.blog_content
+  - illicit_networks.profile
+  - illicit_networks.chat_message
+  - illicit_networks.ransomleak
+  - illicit_networks.infected_devices
+  - illicit_networks.financial_data
   - Open Web
-  - Intelligence Objects
+  - open_web.paste
+  - open_web.social_media
+  - open_web.source_code
+  - open_web.google
+  - open_web.service
+  - open_web.buckets
   - Leaked Credentials
+  - leaks.leak
+  - leaks.valid_credential
+  - leaks.invalid_credential
+  - leaks.mitigated_credential
   - Look-alike Domains
-  - Emerging Source
-  - Buckets
-  - Source Code
-  - Domains
-  - Forum Content
-  - Profile
-  - Infected Devices
+  - lookalike_discovery.lookalike_discovery
 - display: Initial backfill
   name: first_fetch
   type: 0
@@ -146,9 +157,9 @@ configuration:
   required: false
   advanced: true
   section: Connect
-description: Collects Flare threat exposure events into the flare_exposure_events_raw dataset.
-display: Flare Exposure Event Collector
-name: Flare Exposure Event Collector
+description: Collects Flare threat exposure events into the flare_events_raw dataset.
+display: Flare
+name: Flare
 script:
   script: '-'
   type: python

@@ -1,7 +1,7 @@
-id: Flare Exposure - Case Closure Status Write-back
+id: Flare - Case Closure Status Write-back
 version: -1
-name: Flare Exposure - Case Closure Status Write-back
-description: Runs when a Flare Exposure case is resolved. Calls flare-update-event-status with this case id and does not wait for the event fetch.
+name: Flare - Case Closure Status Write-back
+description: Runs when a Flare case is resolved. Calls flare-update-event-status with this case id and does not wait for the event fetch.
 starttaskid: "0"
 fromversion: 8.4.0
 marketplaces:
@@ -94,7 +94,7 @@ tasks:
       script: '|||flare-update-event-status'
       type: regular
       iscommand: true
-      brand: Flare Exposure Event Collector
+      brand: Flare
     nexttasks:
       '#none#':
       - "4"

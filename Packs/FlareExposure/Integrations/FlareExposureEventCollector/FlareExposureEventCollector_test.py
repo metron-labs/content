@@ -9,6 +9,7 @@ from FlareExposureEventCollector import (
     backfill_start,
     build_event,
     category_types,
+    USER_AGENT,
     Client,
     event_ids_from_alerts,
     events_to_parsed_alerts,
@@ -67,6 +68,8 @@ def test_build_event_uses_feed_fields_without_full_event():
     assert event["flare_url"].startswith("https://app.flare.io/#/driller/")
     assert event["event_data"] == ""
     assert event["full_event_type"] == ""
+    assert event["_time"] != event["matched_at"]
+    assert event["_time"].endswith("Z")
 
 
 def test_build_event_attaches_data_block_and_drops_password():
@@ -188,10 +191,10 @@ def test_direct_promotion_creates_one_alert_per_event():
     event = build_event("17", FEED_ITEM, instance_tag="Custom-Index-1")
     alerts = events_to_parsed_alerts([event])
     assert len(alerts) == 1
-    assert alerts[0]["alert_name"] == "Flare Exposure - High. testbench.qa.flared.io. Instance Custom-Index-1"
+    assert alerts[0]["alert_name"] == "Flare - High. testbench.qa.flared.io. Instance Custom-Index-1"
     assert alerts[0]["severity"] == "High"
     assert alerts[0]["vendor"] == "flare"
-    assert alerts[0]["product"] == "exposure"
+    assert alerts[0]["product"] == "events"
     assert "Direct alert promotion" in alerts[0]["description"]
     assert event["flare_event_id"] in alerts[0]["description"]
     assert alerts[0]["host_name"] == "testbench.qa.flared.io"
@@ -211,7 +214,7 @@ def test_direct_promotion_uses_the_event_ipv4_and_info_severity():
     alerts = events_to_parsed_alerts([event])
     assert alerts[0]["remote_ip"] == "203.0.113.10"
     assert alerts[0]["severity"] == "Informational"
-    assert alerts[0]["alert_name"] == "Flare Exposure - Info. testbench.qa.flared.io. Instance Custom-Index-1"
+    assert alerts[0]["alert_name"] == "Flare - Info. testbench.qa.flared.io. Instance Custom-Index-1"
 
 
 def test_token_request_uses_the_flare_api_key_header():
@@ -225,7 +228,7 @@ def test_token_request_uses_the_flare_api_key_header():
     client._http_request = fake_http  # type: ignore[method-assign]
     assert client.token_for("747671") == "issued"
     assert captured["headers"]["Authorization"] == "flare-key"
-    assert captured["headers"]["User-Agent"]
+    assert captured["headers"]["User-Agent"] == USER_AGENT
     assert captured["headers"]["Accept"] == "application/json"
     assert captured["json_data"] == {"tenant_id": 747671}
 
@@ -233,7 +236,7 @@ def test_token_request_uses_the_flare_api_key_header():
 def test_create_alert_drops_fields_the_api_rejects():
     cleaned = alert_for_create(
         {
-            "alert_name": "Flare Exposure - High",
+            "alert_name": "Flare - High",
             "host_name": "testbench.qa.flared.io",
             "os_actor_effective_username": ["testbench.qa.flared.io"],
             "event_timestamp": 1793855017534,
@@ -242,7 +245,7 @@ def test_create_alert_drops_fields_the_api_rejects():
         }
     )
     assert cleaned == {
-        "alert_name": "Flare Exposure - High",
+        "alert_name": "Flare - High",
         "host_name": "testbench.qa.flared.io",
         "os_parent_user_name": ["testbench.qa.flared.io"],
     }
@@ -250,6 +253,7 @@ def test_create_alert_drops_fields_the_api_rejects():
 
 def test_create_alerts_wraps_each_alert():
     client = XsiamClient("https://example.test", "key", "1", True, False)
+    assert client._headers["User-Agent"] == USER_AGENT
     captured: dict = {}
 
     def fake_http(**kwargs):
@@ -257,9 +261,9 @@ def test_create_alerts_wraps_each_alert():
         return {"reply": True}
 
     client._http_request = fake_http  # type: ignore[method-assign]
-    client.create_alerts([{"alert_name": "Flare Exposure - High", "vendor": "flare"}])
+    client.create_alerts([{"alert_name": "Flare - High", "vendor": "flare"}])
     assert captured["url_suffix"] == "/public_api/v1/alerts/create_alert"
-    assert captured["json_data"] == {"request_data": {"alert": {"alert_name": "Flare Exposure - High", "vendor": "flare"}}}
+    assert captured["json_data"] == {"request_data": {"alert": {"alert_name": "Flare - High", "vendor": "flare"}}}
 
 
 def test_direct_promotion_requires_xsiam_credentials():
@@ -313,22 +317,28 @@ SAVED_ALERT = {
 
 def test_category_labels_expand_to_search_types():
     illicit = category_types(["Illicit Networks"])
-    assert illicit[0] == "illicit_networks"
-    assert "chat_message" in illicit
+    assert illicit == [
+        "listing",
+        "forum_content",
+        "blog_content",
+        "profile",
+        "chat_message",
+        "ransomleak",
+        "infected_devices",
+        "financial_data",
+    ]
+    assert category_types(["illicit_networks.listing"]) == ["listing"]
+    assert category_types(["open_web.paste"]) == ["paste"]
     assert "service" in category_types(["Open Web"])
     assert category_types(["Leaked Credentials"]) == [
-        "leaks",
         "leak",
         "valid_credential",
         "invalid_credential",
         "mitigated_credential",
     ]
-    assert category_types(["Look-alike Domains"])[0] == "lookalike_discovery"
-    assert "bot" in category_types(["Infected Devices"])
-    source_code = category_types(["Source Code"])
-    assert source_code == ["source_code", "stack_exchange", "source_code_files"]
-    assert "source_code_secret" not in source_code
-    assert category_types(["Intelligence Objects", "Emerging Source"]) == ["intelligence_object", "experimental"]
+    assert category_types(["leaks.valid_credential"]) == ["valid_credential"]
+    assert category_types(["Look-alike Domains"]) == ["lookalike_discovery"]
+    assert category_types(["lookalike_discovery.lookalike_discovery"]) == ["lookalike_discovery"]
     assert category_types([]) == []
 
 
@@ -374,6 +384,30 @@ class AlertClient:
         raise AssertionError(uid)
 
 
+def test_fetch_via_alerts_does_not_read_the_tenant_feed():
+    client = AlertClient()
+
+    def search_events(*_args, **_kwargs):
+        raise AssertionError("tenant feed search must not run")
+
+    client.search_events = search_events  # type: ignore[method-assign]
+    _state, events = fetch_events(
+        client,
+        {},
+        {
+            "tenants": "747671",
+            "fetch_alerts": True,
+            "severity": ["info"],
+            "event_types": ["paste"],
+            "first_fetch": "3 days",
+        },
+        10,
+    )
+    assert client.alert_calls
+    assert events[0]["flare_alert_id"] == "436059"
+    assert events[0]["flare_alert_name"] == "test"
+
+
 def test_fetch_alerts_ignores_instance_filters_and_tags_the_alert():
     client = AlertClient()
     _state, events = fetch_saved_alerts(
@@ -414,10 +448,18 @@ def test_event_ids_come_from_direct_and_correlation_descriptions():
     alerts = [
         {"description": f"Direct alert promotion. Flare critical event {event_id} (document) matched identifier x."},
         {"description": "Flare high event listing/alphabet_market/testbench_listing_2026-11-14 (listing) matched identifier y."},
+        {
+            "description": (
+                "Fetch via alert test. Flare low event "
+                "service/driller_shodan/testbench.qa.flared.io/2026-11-22 (service) "
+                "matched identifier testbench.qa.flared.io. Instance Flare_instance_tag_7."
+            )
+        },
     ]
     assert event_ids_from_alerts(alerts) == [
         event_id,
         "listing/alphabet_market/testbench_listing_2026-11-14",
+        "service/driller_shodan/testbench.qa.flared.io/2026-11-22",
     ]
 
 
@@ -455,7 +497,7 @@ def test_closed_case_remediates_its_events_once():
     event_id = "service/driller_shodan/testbench.qa.flared.io/2026-11-14"
     flare = WritebackFlare()
     xsiam = WritebackXsiam(
-        [{"incident_id": "223880", "incident_name": "Flare Exposure - High. Instance Custom-Index-1"}],
+        [{"incident_id": "223880", "incident_name": "Flare - High. Instance Custom-Index-1"}],
         {"223880": [{"description": f"Direct alert promotion. Flare high event {event_id} (service) matched identifier x."}]},
     )
     try:

@@ -10,9 +10,9 @@ from CommonServerPython import *
 urllib3.disable_warnings()
 
 VENDOR = "flare"
-PRODUCT = "exposure"
+PRODUCT = "events"
 DEFAULT_SERVER_URL = "https://api.flare.io"
-USER_AGENT = "CortexXSIAM-FlareExposureEventCollector"
+USER_AGENT = "CortexXSIAM-Flare"
 TOKEN_ENDPOINT = "/tokens/generate"
 TENANT_EVENTS_SEARCH_ENDPOINT = "/firework/v4/events/tenant/_search"
 EVENT_ENDPOINT = "/firework/v4/events/"
@@ -20,6 +20,8 @@ ALERTS_ENDPOINT = "/firework/v4/alerts/"
 EVENT_ACTIONS_ENDPOINT = "/firework/v4/events/actions"
 EVENT_FILTER_TYPES_ENDPOINT = "/firework/v4/events/filters/types"
 CREATE_ALERT_ENDPOINT = "/public_api/v1/alerts/create_alert"
+GET_INCIDENTS_ENDPOINT = "/public_api/v1/incidents/get_incidents"
+GET_INCIDENT_EXTRA_DATA_ENDPOINT = "/public_api/v1/incidents/get_incident_extra_data"
 ALERT_CREATE_BATCH = 20
 DATE_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 PAGE_SIZE = 10
@@ -47,12 +49,11 @@ RESOLVED_CASE_STATUSES = [
     "resolved_security_testing",
 ]
 RISK_SEVERITY = {1: "info", 2: "low", 3: "medium", 4: "high", 5: "critical"}
-# Labels for the instance category field. Values are the type filters published at
-# GET /firework/v4/events/filters/types. A category value also selects its base types.
-# https://api.docs.flare.io/advanced/event-source-filters
+# Instance category options from POST /firework/v4/events/filters/types.
+# A parent selects every subtype in that group. A dotted option selects one subtype.
 CATEGORY_TYPES = {
     "Illicit Networks": [
-        "illicit_networks",
+        "listing",
         "forum_content",
         "blog_content",
         "profile",
@@ -61,27 +62,28 @@ CATEGORY_TYPES = {
         "infected_devices",
         "financial_data",
     ],
-    "Open Web": ["open_web", "paste", "social_media", "source_code", "google", "service", "buckets"],
-    "Buckets": ["buckets", "bucket", "bucket_object"],
-    # source_code_secret is listed in the public docs, but tenant search returns 422 for it.
-    "Source Code": ["source_code", "stack_exchange", "source_code_files"],
-    "Leaked Credentials": ["leaks", "leak", "valid_credential", "invalid_credential", "mitigated_credential"],
-    "Domains": ["domains", "domain"],
-    "Forum Content": ["forum_content", "forum_post", "forum_topic"],
-    "Profile": ["profile", "forum_profile", "seller"],
-    "Infected Devices": ["infected_devices", "bot", "stealer_log"],
-    "Look-alike Domains": [
-        "lookalike_discovery",
-        "lookalike_title",
-        "lookalike_ip_address",
-        "lookalike_favicon",
-        "lookalike_screenshot",
-        "lookalike_dns",
-        "lookalike_whois_rdap",
-        "lookalike_ssl_certificate",
-    ],
-    "Intelligence Objects": ["intelligence_object"],
-    "Emerging Source": ["experimental"],
+    "illicit_networks.listing": ["listing"],
+    "illicit_networks.forum_content": ["forum_content"],
+    "illicit_networks.blog_content": ["blog_content"],
+    "illicit_networks.profile": ["profile"],
+    "illicit_networks.chat_message": ["chat_message"],
+    "illicit_networks.ransomleak": ["ransomleak"],
+    "illicit_networks.infected_devices": ["infected_devices"],
+    "illicit_networks.financial_data": ["financial_data"],
+    "Open Web": ["paste", "social_media", "source_code", "google", "service", "buckets"],
+    "open_web.paste": ["paste"],
+    "open_web.social_media": ["social_media"],
+    "open_web.source_code": ["source_code"],
+    "open_web.google": ["google"],
+    "open_web.service": ["service"],
+    "open_web.buckets": ["buckets"],
+    "Leaked Credentials": ["leak", "valid_credential", "invalid_credential", "mitigated_credential"],
+    "leaks.leak": ["leak"],
+    "leaks.valid_credential": ["valid_credential"],
+    "leaks.invalid_credential": ["invalid_credential"],
+    "leaks.mitigated_credential": ["mitigated_credential"],
+    "Look-alike Domains": ["lookalike_discovery"],
+    "lookalike_discovery.lookalike_discovery": ["lookalike_discovery"],
 }
 
 
@@ -586,7 +588,8 @@ def build_event(
         "domains": domains,
         "ip_addresses": ip_addresses,
         "raw_feed": json.dumps(strip_secrets(feed_item)),
-        "_time": matched_at or None,
+        # Arrival time, not the Flare match time. Correlation opens an issue for each event as it is stored.
+        "_time": datetime.now(UTC).strftime(DATE_FORMAT),
     }
 
 
@@ -865,6 +868,7 @@ class XsiamClient(BaseClient):
             "Authorization": api_key,
             "x-xdr-auth-id": api_key_id,
             "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
         }
         super().__init__(base_url=base_url, verify=verify, proxy=proxy, headers=headers)
 
@@ -892,9 +896,9 @@ class XsiamClient(BaseClient):
         return reply if isinstance(reply, dict) else {}
 
     def closed_flare_cases(self, since_ms: int) -> list[dict[str, Any]]:
-        """Closed cases whose name contains Flare Exposure and that changed since the last check."""
+        """Closed cases whose name starts with Flare and that changed since the last check."""
         reply = self.xdr_request(
-            "/public_api/v1/incidents/get_incidents",
+            GET_INCIDENTS_ENDPOINT,
             {
                 "filters": [
                     {"field": "status", "operator": "in", "value": RESOLVED_CASE_STATUSES},
@@ -912,13 +916,13 @@ class XsiamClient(BaseClient):
             if not isinstance(incident, dict):
                 continue
             name = str(incident.get("incident_name") or incident.get("name") or "")
-            if "Flare Exposure" in name:
+            if name.startswith("Flare - "):
                 cases.append(incident)
         return cases
 
     def case_alerts(self, incident_id: str) -> list[dict[str, Any]]:
         reply = self.xdr_request(
-            "/public_api/v1/incidents/get_incident_extra_data",
+            GET_INCIDENT_EXTRA_DATA_ENDPOINT,
             {"incident_id": str(incident_id), "alerts_limit": 100},
         )
         alerts = reply.get("alerts")
@@ -1014,7 +1018,7 @@ def events_to_parsed_alerts(events: list[dict[str, Any]]) -> list[dict[str, Any]
         severity_name = str(event.get("severity") or "info").lower()
         instance_tag = str(event.get("flare_instance_tag") or "").strip()
         event_id = str(event.get("flare_event_id") or "")
-        name = f"Flare Exposure - {severity_name.title()}"
+        name = f"Flare - {severity_name.title()}"
         identifier = str(event.get("grouping_name") or "").strip()
         if identifier:
             name = f"{name}. {identifier}"
@@ -1053,8 +1057,8 @@ def store_and_promote(
     promoting = direct_promotion_enabled(params)
     pending = [item for item in list(last_run.get("pending_alerts") or []) if isinstance(item, dict)] if promoting else []
     if events:
-        # Provided by CommonServerPython. vendor=flare and product=exposure
-        # store the events in the flare_exposure_events_raw dataset.
+        # Provided by CommonServerPython. vendor=flare and product=events
+        # store the events in the flare_events_raw dataset.
         send_events_to_xsiam(events, vendor=VENDOR, product=PRODUCT)
         if promoting:
             pending.extend(events_to_parsed_alerts(events))
@@ -1083,7 +1087,7 @@ def stamp_checkpoint(
 
 
 def sync_closed_cases(client: Client, params: dict[str, Any], xsiam: XsiamClient) -> list[str]:
-    """Mark Flare events remediated for Flare Exposure cases closed since the last check."""
+    """Mark Flare events remediated for Flare cases closed since the last check."""
     now_ms = int(datetime.now(UTC).timestamp() * 1000)
     since_ms, done_ids = load_writeback_state()
     if since_ms is None:
@@ -1126,7 +1130,7 @@ def update_event_status_command(client: Client, params: dict[str, Any], args: di
     rows = [{"EventID": event_id, "Status": "remediated"} for event_id in event_ids]
     return CommandResults(
         readable_output=tableToMarkdown("Flare events marked remediated", rows, headers=["EventID", "Status"]),
-        outputs_prefix="FlareExposure.Remediation",
+        outputs_prefix="Flare.Remediation",
         outputs={"EventIDs": event_ids, "Status": "remediated", "CaseID": case_id},
     )
 
