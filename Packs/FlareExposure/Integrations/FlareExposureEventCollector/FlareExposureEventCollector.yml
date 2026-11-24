@@ -168,7 +168,7 @@ script:
   isfetchevents: true
   dockerimage: demisto/python3:3.12.13.10116658
   commands:
-  - name: flare-exposure-get-events
+  - name: flare-get-events
     description: Retrieves Flare events on demand. Set should_push_events to true to also store them in XSIAM.
     arguments:
     - name: should_push_events
@@ -184,6 +184,26 @@ script:
       defaultValue: '10'
     - name: from
       description: How far back to read, for example 12 hours or 7 days. Defaults to the instance backfill.
+  - name: flare-get-event-details
+    description: Retrieves one Flare event, including its data block. Password fields are removed.
+    arguments:
+    - name: event_id
+      description: Flare event id.
+      required: true
+  - name: flare-get-profile
+    description: Retrieves the Flare account profile for the configured API key.
+  - name: flare-get-tenants
+    description: Lists the Flare tenants the configured API key can access.
+  - name: flare-get-credentials
+    description: Retrieves one page of leaked credentials for a Flare tenant. Password fields are removed.
+    arguments:
+    - name: tenant_id
+      description: Flare tenant id. Defaults to the first tenant configured on the instance.
+    - name: limit
+      description: Maximum number of credentials to return. Default is 20. Maximum is 100.
+      defaultValue: '20'
+    - name: from
+      description: Page cursor returned by the previous call. Leave empty to read the first page.
   - name: flare-update-event-status
     description: Marks Flare events remediated. Pass a Flare event id, or a case id to update every Flare event on that case.
     arguments:

@@ -18,6 +18,12 @@ from FlareExposureEventCollector import (
     remediate_batches,
     sync_closed_cases,
     fetch_events,
+    credential_page_size,
+    get_credentials_command,
+    get_event_details_command,
+    get_profile_command,
+    get_tenants_command,
+    tenant_records,
     fetch_saved_alerts,
     fetch_tenant_events,
     filter_fingerprint,
@@ -51,6 +57,92 @@ FULL_EVENT = {
         "features": {"emails": ["user@example.com"], "ip_addresses": ["203.0.113.10", "2001:db8::1"]},
     },
 }
+
+
+class FakeDetailsClient:
+    def __init__(self, event: dict | None):
+        self.event = event
+        self.calls: list[tuple[str, str]] = []
+
+    def get_event(self, tenant_key: str, uid: str) -> dict:
+        self.calls.append((tenant_key, uid))
+        return self.event or {}
+
+
+def test_get_event_details_returns_the_event_without_passwords():
+    client = FakeDetailsClient(FULL_EVENT)
+    result = get_event_details_command(client, {"tenants": "747671"}, {"event_id": FULL_EVENT["metadata"]["uid"]})
+    assert result.outputs_prefix == "Flare.Event"
+    assert "password" not in json.dumps(result.raw_response)
+    assert result.raw_response["data"]["url"] == "https://github.com/magic-repo-iodummy_url"
+    assert client.calls == [("747671", FULL_EVENT["metadata"]["uid"])]
+
+
+def test_get_event_details_requires_an_event_id():
+    with pytest.raises(Exception, match="Provide a Flare event id."):
+        get_event_details_command(FakeDetailsClient(FULL_EVENT), {"tenants": "747671"}, {})
+
+
+def test_get_event_details_reports_a_missing_event():
+    with pytest.raises(Exception, match="Flare did not return event missing-event."):
+        get_event_details_command(FakeDetailsClient({}), {"tenants": "747671"}, {"event_id": "missing-event"})
+
+
+class FakeAccountClient:
+    def __init__(self):
+        self.credential_calls: list[tuple[str, int, str | None]] = []
+
+    def get_profile(self) -> dict:
+        return {"profile": {"name": "Ada", "email": "ada@example.com", "password": "secret-value"}}
+
+    def list_user_tenants(self) -> dict:
+        return {"tenants": [{"id": 747671, "name": "QA", "type": "standard", "is_disabled": False}]}
+
+    def list_credentials(self, tenant_key: str, size: int, from_cursor: str | None) -> dict:
+        self.credential_calls.append((tenant_key, size, from_cursor))
+        return {
+            "next": "page-2",
+            "items": [{"id": 9, "identity_name": "ada@example.com", "domain": "example.com", "password": "secret-value"}],
+        }
+
+
+def test_get_profile_returns_the_account_without_passwords():
+    result = get_profile_command(FakeAccountClient())
+    assert result.outputs_prefix == "Flare.Profile"
+    assert result.outputs["email"] == "ada@example.com"
+    assert "password" not in json.dumps(result.outputs)
+
+
+def test_get_profile_reports_a_missing_profile():
+    client = FakeAccountClient()
+    client.get_profile = dict
+    with pytest.raises(Exception, match="Flare did not return a profile."):
+        get_profile_command(client)
+
+
+def test_get_tenants_returns_each_tenant():
+    result = get_tenants_command(FakeAccountClient())
+    assert result.outputs_prefix == "Flare.Tenant"
+    assert result.outputs[0]["id"] == 747671
+
+
+def test_tenant_records_accepts_one_tenant_object():
+    assert tenant_records({"tenants": {"id": 1, "name": "Only"}})[0]["name"] == "Only"
+
+
+def test_get_credentials_reads_the_requested_tenant_and_drops_passwords():
+    client = FakeAccountClient()
+    result = get_credentials_command(client, {"tenants": "747671"}, {"tenant_id": "12", "limit": "5", "from": "page-1"})
+    assert result.outputs_prefix == "Flare.Credential"
+    assert result.outputs[0]["identity_name"] == "ada@example.com"
+    assert "password" not in json.dumps(result.raw_response)
+    assert result.raw_response["next"] == "page-2"
+    assert client.credential_calls == [("12", 5, "page-1")]
+
+
+def test_credential_page_size_rejects_a_limit_above_100():
+    with pytest.raises(Exception, match="Credential limit must be between 1 and 100."):
+        credential_page_size(101)
 
 
 def test_strip_secrets_removes_nested_passwords():

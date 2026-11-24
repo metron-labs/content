@@ -1,1 +1,5 @@
-!flare-exposure-get-events should_push_events=false limit=10 from="7 days"
+!flare-get-events should_push_events=false limit=10 from="7 days"
+!flare-get-event-details event_id="driller/driller_github/testbench_source_code_2026-11-05"
+!flare-get-profile
+!flare-get-tenants
+!flare-get-credentials tenant_id="747671" limit=20
