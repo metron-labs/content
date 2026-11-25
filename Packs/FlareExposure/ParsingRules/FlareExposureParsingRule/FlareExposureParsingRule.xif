@@ -1,0 +1,3 @@
+[INGEST:vendor="flare", product="events", target_dataset="flare_events_raw", no_hit=keep]
+filter matched_at != null
+| alter _time = current_time();

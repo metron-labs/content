@@ -1,0 +1,7 @@
+fromversion: 8.15.0
+id: Flare_Modeling_Rule
+name: Flare Modeling Rule
+rules: ''
+schema: ''
+supportedModules:
+- xsiam
