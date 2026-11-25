@@ -53,13 +53,13 @@ The alert field **Actor Effective Username** is set to the Flare identifier name
 
 ## Commands
 
-### flare-exposure-get-events
+### flare-get-events
 
 Retrieves events on demand. This command does not move the scheduled fetch cursor.
 
 #### Base Command
 
-`flare-exposure-get-events`
+`flare-get-events`
 
 #### Input
 
@@ -75,4 +75,98 @@ There is no context output for this command.
 
 #### Command example
 
-`!flare-exposure-get-events should_push_events=false limit=10 from="7 days"`
+`!flare-get-events should_push_events=false limit=10 from="7 days"`
+
+### flare-get-event-details
+
+Retrieves one Flare event, including its data block. Password fields are removed.
+
+#### Base Command
+
+`flare-get-event-details`
+
+#### Input
+
+| **Argument Name** | **Description** | **Required** |
+| --- | --- | --- |
+| event_id | Flare event id. | Required |
+
+#### Context Output
+
+| **Path** | **Type** | **Description** |
+| --- | --- | --- |
+| Flare.Event | Unknown | The Flare event with password fields removed. |
+
+#### Command example
+
+`!flare-get-event-details event_id="driller/driller_github/testbench_source_code_2026-11-05"`
+
+### flare-get-profile
+
+Retrieves the Flare account profile for the configured API key.
+
+#### Base Command
+
+`flare-get-profile`
+
+#### Input
+
+There are no input arguments for this command.
+
+#### Context Output
+
+| **Path** | **Type** | **Description** |
+| --- | --- | --- |
+| Flare.Profile | Unknown | The Flare account profile. |
+
+#### Command example
+
+`!flare-get-profile`
+
+### flare-get-tenants
+
+Lists the Flare tenants the configured API key can access.
+
+#### Base Command
+
+`flare-get-tenants`
+
+#### Input
+
+There are no input arguments for this command.
+
+#### Context Output
+
+| **Path** | **Type** | **Description** |
+| --- | --- | --- |
+| Flare.Tenant | Unknown | Flare tenants the API key can access. |
+
+#### Command example
+
+`!flare-get-tenants`
+
+### flare-get-credentials
+
+Retrieves one page of leaked credentials for a Flare tenant. Password fields are removed. Pass the `from` value printed as "Next page" to read the following page.
+
+#### Base Command
+
+`flare-get-credentials`
+
+#### Input
+
+| **Argument Name** | **Description** | **Required** |
+| --- | --- | --- |
+| tenant_id | Flare tenant id. Defaults to the first tenant configured on the instance. | Optional |
+| limit | Maximum number of credentials to return. Default is 20. Maximum is 100. | Optional |
+| from | Page cursor returned by the previous call. Leave empty to read the first page. | Optional |
+
+#### Context Output
+
+| **Path** | **Type** | **Description** |
+| --- | --- | --- |
+| Flare.Credential | Unknown | Leaked credentials with password fields removed. |
+
+#### Command example
+
+`!flare-get-credentials tenant_id="747671" limit=20`

@@ -19,6 +19,11 @@ EVENT_ENDPOINT = "/firework/v4/events/"
 ALERTS_ENDPOINT = "/firework/v4/alerts/"
 EVENT_ACTIONS_ENDPOINT = "/firework/v4/events/actions"
 EVENT_FILTER_TYPES_ENDPOINT = "/firework/v4/events/filters/types"
+PROFILE_ENDPOINT = "/firework/v2/me/profile"
+USER_TENANTS_ENDPOINT = "/firework/v2/me/tenants"
+TENANT_CREDENTIALS_ENDPOINT = "/firework/v2/me/feed/credentials"
+CREDENTIAL_PAGE_SIZE = 20
+MAX_CREDENTIAL_PAGE_SIZE = 100
 CREATE_ALERT_ENDPOINT = "/public_api/v1/alerts/create_alert"
 GET_INCIDENTS_ENDPOINT = "/public_api/v1/incidents/get_incidents"
 GET_INCIDENT_EXTRA_DATA_ENDPOINT = "/public_api/v1/incidents/get_incident_extra_data"
@@ -195,6 +200,29 @@ class Client(BaseClient):
         except DemistoException:
             write_log("error", f"Flare full event lookup failed for event {uid}.")
             return {}
+        return response if isinstance(response, dict) else {}
+
+    def get_profile(self) -> dict[str, Any]:
+        """Return the Flare account profile for this API key."""
+        response = self._request("GET", PROFILE_ENDPOINT, headers=self.bearer_headers(DEFAULT_TENANT))
+        return response if isinstance(response, dict) else {}
+
+    def list_user_tenants(self) -> dict[str, Any]:
+        """Return the Flare tenants this API key can access."""
+        response = self._request("GET", USER_TENANTS_ENDPOINT, headers=self.bearer_headers(DEFAULT_TENANT))
+        return response if isinstance(response, dict) else {}
+
+    def list_credentials(self, tenant_key: str, size: int, from_cursor: str | None) -> dict[str, Any]:
+        """Return one page of leaked credentials for a tenant."""
+        params: dict[str, Any] = {"size": size, "order_type": "asc"}
+        if from_cursor:
+            params["from"] = from_cursor
+        response = self._request(
+            "GET",
+            TENANT_CREDENTIALS_ENDPOINT,
+            params=params,
+            headers=self.bearer_headers(tenant_key),
+        )
         return response if isinstance(response, dict) else {}
 
     def list_alerts(self, tenant_key: str, from_cursor: str | None) -> dict[str, Any]:
@@ -1359,6 +1387,163 @@ def test_module(client: Client, params: dict[str, Any]) -> str:
     return "ok"
 
 
+def get_event_details_command(client: Client, params: dict[str, Any], args: dict[str, Any]) -> CommandResults:
+    """Return one Flare event, including its data block. Password fields are removed."""
+    event_id = str(args.get("event_id") or "").strip()
+    if not event_id:
+        raise DemistoException("Provide a Flare event id.")
+    event: dict[str, Any] = {}
+    for tenant_key in parse_tenants(params.get("tenants")):
+        event = client.get_event(tenant_key, event_id)
+        if event:
+            break
+    if not event:
+        raise DemistoException(f"Flare did not return event {event_id}.")
+    cleaned = strip_secrets(event)
+    if not isinstance(cleaned, dict):
+        raise DemistoException(f"Flare did not return event {event_id}.")
+    metadata = as_dict(cleaned.get("metadata"))
+    data = as_dict(cleaned.get("data"))
+    return CommandResults(
+        readable_output=tableToMarkdown(
+            "Flare event",
+            [
+                {
+                    "EventID": str(metadata.get("uid") or event_id),
+                    "Type": str(metadata.get("type") or cleaned.get("event_type") or ""),
+                    "Severity": str(metadata.get("severity") or ""),
+                    "URL": str(metadata.get("flare_url") or data.get("url") or ""),
+                }
+            ],
+            headers=["EventID", "Type", "Severity", "URL"],
+        ),
+        outputs_prefix="Flare.Event",
+        outputs=cleaned,
+        raw_response=cleaned,
+    )
+
+
+def profile_record(response: dict[str, Any]) -> dict[str, Any]:
+    """Return the profile object from a Flare profile response."""
+    profile = response.get("profile")
+    if isinstance(profile, dict):
+        return profile
+    return response if response.get("email") else {}
+
+
+def tenant_records(response: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return tenant objects from a Flare tenant response."""
+    tenants = response.get("tenants")
+    if isinstance(tenants, list):
+        return [item for item in tenants if isinstance(item, dict)]
+    if isinstance(tenants, dict):
+        return [tenants]
+    return []
+
+
+def credential_page_size(value: Any) -> int:
+    """Return how many credentials one command call may read."""
+    size = arg_to_number(value, arg_name="limit")
+    if size is None:
+        return CREDENTIAL_PAGE_SIZE
+    if size < 1 or size > MAX_CREDENTIAL_PAGE_SIZE:
+        raise DemistoException(f"Credential limit must be between 1 and {MAX_CREDENTIAL_PAGE_SIZE}.")
+    return size
+
+
+def get_profile_command(client: Client) -> CommandResults:
+    """Return the Flare account profile for the configured API key."""
+    profile = profile_record(as_dict(strip_secrets(client.get_profile())))
+    if not profile:
+        raise DemistoException("Flare did not return a profile.")
+    return CommandResults(
+        readable_output=tableToMarkdown(
+            "Flare profile",
+            [
+                {
+                    "Name": str(profile.get("name") or ""),
+                    "Surname": str(profile.get("surname") or ""),
+                    "Email": str(profile.get("email") or ""),
+                    "OrganizationID": profile.get("organization_id") or "",
+                    "Domain": str(profile.get("domain") or ""),
+                }
+            ],
+            headers=["Name", "Surname", "Email", "OrganizationID", "Domain"],
+        ),
+        outputs_prefix="Flare.Profile",
+        outputs=profile,
+        raw_response=profile,
+    )
+
+
+def get_tenants_command(client: Client) -> CommandResults:
+    """Return the Flare tenants the configured API key can access."""
+    response = client.list_user_tenants()
+    if not response:
+        raise DemistoException("Flare did not return tenants.")
+    tenants = tenant_records(as_dict(strip_secrets(response)))
+    rows = [
+        {
+            "ID": tenant.get("id") or "",
+            "Name": str(tenant.get("name") or ""),
+            "Type": str(tenant.get("type") or ""),
+            "Disabled": tenant.get("is_disabled"),
+            "Archived": tenant.get("is_archived"),
+        }
+        for tenant in tenants
+    ]
+    return CommandResults(
+        readable_output=tableToMarkdown("Flare tenants", rows, headers=["ID", "Name", "Type", "Disabled", "Archived"]),
+        outputs_prefix="Flare.Tenant",
+        outputs=tenants,
+        outputs_key_field="id",
+        raw_response=response,
+    )
+
+
+def get_credentials_command(client: Client, params: dict[str, Any], args: dict[str, Any]) -> CommandResults:
+    """Return one page of leaked credentials for a configured tenant. Password fields are removed."""
+    requested_tenant = str(args.get("tenant_id") or "").strip()
+    tenant_key = requested_tenant or parse_tenants(params.get("tenants"))[0]
+    page = client.list_credentials(
+        tenant_key,
+        credential_page_size(args.get("limit")),
+        str(args.get("from") or "").strip() or None,
+    )
+    cleaned = strip_secrets(page)
+    if not isinstance(cleaned, dict):
+        cleaned = {}
+    items = [item for item in as_list(cleaned.get("items")) if isinstance(item, dict)]
+    rows = []
+    for item in items:
+        source = as_dict(item.get("source"))
+        rows.append(
+            {
+                "ID": item.get("id") or "",
+                "Identity": str(item.get("identity_name") or ""),
+                "Domain": str(item.get("domain") or ""),
+                "Imported": str(item.get("imported_at") or ""),
+                "Source": str(source.get("name") or item.get("source_id") or ""),
+                "Remediated": str(item.get("remediated_at") or ""),
+            }
+        )
+    next_cursor = str(cleaned.get("next") or "")
+    title = "Flare credentials"
+    if next_cursor:
+        title = f"{title}. Next page: {next_cursor}"
+    return CommandResults(
+        readable_output=tableToMarkdown(
+            title,
+            rows,
+            headers=["ID", "Identity", "Domain", "Imported", "Source", "Remediated"],
+        ),
+        outputs_prefix="Flare.Credential",
+        outputs=items,
+        outputs_key_field="id",
+        raw_response=cleaned,
+    )
+
+
 def get_events_command(
     client: Client,
     params: dict[str, Any],
@@ -1401,7 +1586,15 @@ def main() -> None:
     try:
         if command == "test-module":
             return_results(test_module(client, params))
-        elif command == "flare-exposure-get-events":
+        elif command == "flare-get-event-details":
+            return_results(get_event_details_command(client, params, args))
+        elif command == "flare-get-profile":
+            return_results(get_profile_command(client))
+        elif command == "flare-get-tenants":
+            return_results(get_tenants_command(client))
+        elif command == "flare-get-credentials":
+            return_results(get_credentials_command(client, params, args))
+        elif command == "flare-get-events":
             should_push = argToBoolean(args.get("should_push_events", False))
             events, results = get_events_command(client, params, args)
             return_results(results)
